@@ -72,8 +72,13 @@ Explicit versions and absolute installation directories are supported:
 ### Linux and macOS
 
 ```sh
-sh install.sh
-sudo sh install.sh --version v0.1.0 --install-dir /usr/local/bin
+# Install the latest release to a user-owned directory without sudo.
+curl -fsSL https://agent.peerimeter.app/install.sh | sh -s -- --install-dir "$HOME/.local/bin"
+
+# Select a version and install it system-wide.
+curl -fsSL https://agent.peerimeter.app/install.sh | sudo sh -s -- --version v0.1.0 --install-dir /usr/local/bin
+
+# Running the checked-out script also works:
 sh install.sh --version latest --install-dir "$HOME/.local/bin"
 ```
 
