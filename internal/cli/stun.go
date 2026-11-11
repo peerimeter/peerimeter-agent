@@ -36,6 +36,6 @@ func newStunCommand(app *application) *cobra.Command {
 			return json.NewEncoder(app.out).Encode(result)
 		}),
 	}
-	cmd.Flags().StringVar(&server, "server", "stun.l.google.com:19302", "STUN server host:port")
+	cmd.Flags().StringVar(&server, "server", "", "Use only this STUN server instead of the default Google fallback list")
 	return cmd
 }

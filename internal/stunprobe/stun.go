@@ -27,13 +27,32 @@ type Result struct {
 
 // Probe binds the requested local UDP port (zero asks the OS for an available
 // port), sends a Binding request, and closes the socket before returning.
+var DefaultServers = []string{
+	"stun.l.google.com:19302",
+	"stun1.l.google.com:19302",
+	"stun2.l.google.com:19302",
+}
+
 func Probe(port int, server string) (Result, error) {
 	if port < 0 || port > 65535 {
 		return Result{}, errors.New("UDP port must be between 0 and 65535")
 	}
-	if server == "" {
-		server = "stun.l.google.com:19302"
+	servers := DefaultServers
+	if server != "" {
+		servers = []string{server}
 	}
+	var failures []error
+	for _, candidate := range servers {
+		result, err := probeServer(port, candidate)
+		if err == nil {
+			return result, nil
+		}
+		failures = append(failures, fmt.Errorf("%s: %w", candidate, err))
+	}
+	return Result{}, fmt.Errorf("all STUN servers failed: %w", errors.Join(failures...))
+}
+
+func probeServer(port int, server string) (Result, error) {
 	remote, err := net.ResolveUDPAddr("udp", server)
 	if err != nil {
 		return Result{}, fmt.Errorf("resolve STUN server: %w", err)
@@ -60,7 +79,7 @@ func Probe(port int, server string) (Result, error) {
 	if _, err := conn.WriteToUDP(request, remote); err != nil {
 		return Result{}, fmt.Errorf("send STUN request: %w", err)
 	}
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	buf := make([]byte, 1500)
 	for {
 		n, source, err := conn.ReadFromUDP(buf)
