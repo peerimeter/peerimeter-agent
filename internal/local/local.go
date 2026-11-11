@@ -36,6 +36,9 @@ func DefaultDirectory() string {
 	}
 }
 
+// ErrBusy distinguishes a live manager from unsafe paths or unsupported locks.
+var ErrBusy = errors.New("agent coordination lock is busy")
+
 // Guard is an OS-held exclusive lock; the lock automatically releases on crash.
 type Guard struct {
 	f      *os.File

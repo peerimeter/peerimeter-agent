@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
 	"net"
@@ -125,7 +126,10 @@ func openStateLock(dir string, existing bool) (*os.File, error) {
 	var overlapped windows.Overlapped
 	if err := windows.LockFileEx(h, windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &overlapped); err != nil {
 		windows.CloseHandle(h)
-		return nil, errors.New("another agent already owns this state directory")
+		if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
+			return nil, fmt.Errorf("%w: another agent already owns this state directory", ErrBusy)
+		}
+		return nil, errors.New("cannot lock Windows agent coordination file")
 	}
 
 	return os.NewFile(uintptr(h), "agent-lock"), nil

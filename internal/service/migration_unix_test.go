@@ -4,12 +4,16 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/peerimeter/peerimeter-agent/internal/local"
+	"golang.org/x/sys/unix"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
@@ -171,5 +175,56 @@ func TestPreInventoryMigrationPlansBeforeConfigClaim(t *testing.T) {
 	}
 	if !planner.planned || !planner.claimed {
 		t.Fatal("legacy profile or protected config was not adopted")
+	}
+}
+
+func TestMigrationWaitsForLegacyLockAfterSupervisorReturns(t *testing.T) {
+	directory := t.TempDir()
+	file, err := os.OpenFile(filepath.Join(directory, "agent.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	released := make(chan struct{})
+	go func() { time.Sleep(150 * time.Millisecond); file.Close(); close(released) }()
+	guard, err := acquireMigrationState(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guard.Close()
+	<-released
+	if time.Since(start) < 100*time.Millisecond {
+		t.Fatal("migration bypassed a still-held legacy lock")
+	}
+	if other, err := local.TryAcquireExisting(directory); !errors.Is(err, local.ErrBusy) {
+		if other != nil {
+			other.Close()
+		}
+		t.Fatal("migration did not retain exclusive persistent ownership")
+	}
+}
+func TestMigrationShutdownTimeoutDoesNotReleaseAnotherManager(t *testing.T) {
+	directory := t.TempDir()
+	active, err := local.Acquire(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer active.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if guard, err := acquireMigrationState(ctx, directory); !errors.Is(err, context.DeadlineExceeded) {
+		if guard != nil {
+			guard.Close()
+		}
+		t.Fatal("migration ignored bounded shutdown wait")
+	}
+	if other, err := local.TryAcquireExisting(directory); !errors.Is(err, local.ErrBusy) {
+		if other != nil {
+			other.Close()
+		}
+		t.Fatal("timed-out migration bypassed or released the active manager")
 	}
 }

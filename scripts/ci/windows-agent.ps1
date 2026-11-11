@@ -117,11 +117,16 @@ function Invoke-Agent([string[]]$CommandArgs) {
     $errorPath = Join-Path $dir 'last-cli-error.json'
     $output = & $agentExe @CommandArgs 2>$errorPath
     if ($LASTEXITCODE -ne 0) {
+        Get-Content -LiteralPath $errorPath -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+        if ($CommandArgs[0] -eq 'service' -and $CommandArgs[1] -eq 'install') {
+            foreach ($path in @($env:ProgramData,$defaultState)) {
+                if (Test-Path -LiteralPath $path) { Write-Host "Service install ACL diagnostic: $path $((Get-Acl -LiteralPath $path).Sddl)" }
+            }
+        }
         if ($CommandArgs[0] -eq 'uninstall') {
-            Get-Content -LiteralPath $errorPath -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
             Show-RecentRemovalDiagnostics
         }
-        throw "Agent command failed: $($CommandArgs[0])"
+        throw "Agent command failed: $($CommandArgs[0]) $($CommandArgs[1])"
     }
     return $output
 }
@@ -499,7 +504,7 @@ try {
     if ($LASTEXITCODE -ne 0 -or $again.state -ne 'already_absent') { throw 'Repeated full uninstall was not safe and idempotent' }
     Write-Output 'PASS Windows actual installer inventory, read-only dry-run, live full removal, changed-file refusal, partial-state retry, idempotency and unrelated/source-key preservation'
 } catch {
-    foreach ($name in @('agent-error.log','reference.log','reference-error.log')) {
+    foreach ($name in @('last-cli-error.json','agent-error.log','reference.log','reference-error.log')) {
         $path = Join-Path $dir $name
         if (Test-Path -LiteralPath $path) { Get-Content -LiteralPath $path -Tail 20 }
     }
