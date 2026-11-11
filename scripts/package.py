@@ -24,7 +24,7 @@ parser.add_argument('--binary', help='existing binary built for the selected tar
 parser.add_argument('--resources-only', action='store_true', help='prepare notices and the Windows driver for GoReleaser')
 args = parser.parse_args()
 if args.target:
-    target = re.fullmatch(r'(linux|darwin|windows)_(amd64|arm64)(?:_v[0-9]+)?', args.target)
+    target = re.fullmatch(r'(linux|darwin|windows)_(amd64|arm64)(?:_v[0-9]+(?:\.[0-9]+)?)?', args.target)
     if not target:
         parser.error('--target must be a supported GoReleaser GOOS_GOARCH target')
     target_os, target_arch = target.groups()
