@@ -180,6 +180,9 @@ func TestPreInventoryMigrationPlansBeforeConfigClaim(t *testing.T) {
 
 func TestMigrationWaitsForLegacyLockAfterSupervisorReturns(t *testing.T) {
 	directory := t.TempDir()
+	if err := os.Chmod(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
 	file, err := os.OpenFile(filepath.Join(directory, "agent.lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		t.Fatal(err)
@@ -208,6 +211,9 @@ func TestMigrationWaitsForLegacyLockAfterSupervisorReturns(t *testing.T) {
 }
 func TestMigrationShutdownTimeoutDoesNotReleaseAnotherManager(t *testing.T) {
 	directory := t.TempDir()
+	if err := os.Chmod(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
 	active, err := local.Acquire(directory)
 	if err != nil {
 		t.Fatal(err)
