@@ -90,3 +90,20 @@ func (rejectBackend) Start(context.Context, platform.Desired) (platform.Session,
 func (rejectBackend) Inspect(context.Context) (platform.Snapshot, error) {
 	return platform.Snapshot{}, platform.ErrUnavailable
 }
+
+func TestCobraHelpAndCompletion(t *testing.T) {
+	for _, args := range [][]string{{"--help"}, {"run", "--help"}, {"service", "install", "--help"}, {"completion", "bash"}} {
+		code, out, err := invoke(t, args...)
+		if code != 0 || out == "" || err != "" {
+			t.Fatalf("%v: %d %s %s", args, code, out, err)
+		}
+	}
+	code, out, err := invoke(t, "run", "--config")
+	if code == 0 || out != "" || err == "" {
+		t.Fatal("missing flag value accepted")
+	}
+	code, _, err = invoke(t, "version", "SECRET-POSITIONAL")
+	if code == 0 || strings.Contains(err, "SECRET") {
+		t.Fatal("positional error leaked input")
+	}
+}

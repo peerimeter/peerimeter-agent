@@ -1,0 +1,72 @@
+name: Release packages and installers
+on:
+  push:
+    paths-ignore: ['**/*.md']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version embedded in packages (no release is published)
+        default: v0.1.0-dev
+        required: true
+permissions:
+  contents: read
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            os: linux
+            arch: amd64
+            native_test: true
+          - runner: ubuntu-24.04
+            os: linux
+            arch: arm64
+            native_test: false
+          - runner: macos-15
+            os: darwin
+            arch: arm64
+            native_test: true
+          - runner: macos-15
+            os: darwin
+            arch: amd64
+            native_test: false
+          - runner: windows-2022
+            os: windows
+            arch: amd64
+            native_test: true
+          - runner: windows-2022
+            os: windows
+            arch: arm64
+            native_test: false
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    env:
+      RELEASE_VERSION: ${{ inputs.version || 'v0.1.0-dev' }}
+      GOTOOLCHAIN: local
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build complete package with licenses and bundled Windows driver
+        shell: bash
+        run: python scripts/package.py --os '${{ matrix.os }}' --arch '${{ matrix.arch }}' --version "$RELEASE_VERSION"
+      - name: Unix installer latest/pin/offline/custom-path tests
+        if: matrix.native_test && runner.os != 'Windows'
+        shell: bash
+        run: bash scripts/ci/unix-installer.sh
+      - name: Windows installer latest/pin/offline/custom-path tests
+        if: matrix.native_test && runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/ci/windows-installer.ps1 -PackageDirectory ./dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14

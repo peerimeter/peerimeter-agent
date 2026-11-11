@@ -105,9 +105,12 @@ On Windows run the same commands from an elevated terminal. Output is JSON.
 `status`/`peers` read actual local adapter state through a protected Unix socket
 or Windows named pipe. `running` indicates interface state, not proven peer
 connectivity; inspect real handshake timestamps and byte counters. A stopped or
-unreachable agent returns an error. Control is restricted to the runtime identity
-and, on Windows, SYSTEM/Administrators; general unprivileged operator access is
-not implemented.
+unreachable agent returns an error. Control defaults to the runtime identity and, on Windows, SYSTEM/Administrators.
+To delegate control without administrator privileges, start/install with
+`--operator <username-or-UID>` on Unix or `--operator <account-or-SID>` on Windows.
+The authorized operator can use `status`, `peers`, `sync` and `stop` without sudo
+or elevation; secret files stay private. On Unix the state directory and its
+parents must permit traversal; only the socket owner receives control access.
 
 `--state-dir <absolute-directory>` selects a separate protected instance for
 `run`, `status`, `peers`, `sync` and `stop`. Defaults are `/var/lib/peerimeter-agent`
@@ -138,7 +141,7 @@ Install the executable in a protected stable directory first. System service
 installation requires administrator/root privileges and absolute paths:
 
 ```sh
-sudo peerimeter-agent service install --config /absolute/path/to/peer.json
+sudo peerimeter-agent service install --config /absolute/path/to/peer.json --operator alice
 sudo peerimeter-agent service start
 sudo peerimeter-agent status
 sudo peerimeter-agent service stop
@@ -148,8 +151,10 @@ sudo peerimeter-agent service uninstall
 Windows uses the same subcommands in an elevated terminal. Installation snapshots
 the validated config/key into protected `service.json` and `service.key` under
 the selected state directory; the original files stay unchanged. Edit the
-protected installed config and use `sync` for later updates. Installed secrets
-are not silently overwritten on reinstall. Uninstall preserves config, keys and
+protected installed config and use `sync` for later updates. Identical protected snapshots can be reused when reinstalling; different config
+or key material requires an explicit migration. Failed registration rolls back
+only snapshots created by that attempt. Installed secrets are never silently
+overwritten. Uninstall preserves config, keys and
 interface selection. Boot activation and restart on failure use the native OS
 supervisor; foreground and service modes use the same tunnel runtime. One named
 system service is currently supported per machine.

@@ -61,3 +61,36 @@ func TestLinuxServiceOwnershipAndAtomicWrite(t *testing.T) {
 		t.Fatal("accepted symlinked service path")
 	}
 }
+
+func TestLinuxServiceOperatorIsExplicitAndSafelyQuoted(t *testing.T) {
+	cfg := Config{ConfigPath: "/config.json", StateDirectory: "/state"}
+	without, err := linuxServiceUnit("/agent", cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(without), "--operator") {
+		t.Fatal("service implicitly delegated operator access")
+	}
+	cfg.Operator = "nobody"
+	with, err := linuxServiceUnit("/agent", cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(with), `--operator "nobody"`) {
+		t.Fatal("service did not persist explicit operator")
+	}
+	cfg.Operator = `operator"$x%y`
+	quoted, err := linuxServiceUnit("/agent", cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(quoted), `--operator "operator\"$$x%%y"`) {
+		t.Fatal("operator was not safely quoted")
+	}
+	for _, bad := range []string{"nobody\nExecStart=/bad", "nobody\x00bad", " nobody"} {
+		cfg.Operator = bad
+		if _, err := linuxServiceUnit("/agent", cfg); err == nil {
+			t.Fatal("accepted unsafe operator identity")
+		}
+	}
+}

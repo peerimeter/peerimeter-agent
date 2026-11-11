@@ -6,8 +6,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
+	"github.com/spf13/cobra"
 	"io"
 	"os"
 	"path/filepath"
@@ -39,151 +39,186 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer, backend 
 	}
 	return 1
 }
-func flags(name string) *flag.FlagSet {
-	f := flag.NewFlagSet(name, flag.ContinueOnError)
-	f.SetOutput(io.Discard)
-	return f
-}
 func command(ctx context.Context, args []string, out io.Writer, backend platform.Backend) error {
-	if len(args) == 0 {
-		return errors.New("command required: version, generate-example, validate-config, run, status, peers")
+	root := &cobra.Command{Use: "peerimeter-agent", Short: "Offline cross-platform WireGuard agent", SilenceUsage: true, SilenceErrors: true, DisableSuggestions: true}
+	root.SetOut(out)
+	root.SetErr(io.Discard)
+	ran := false
+	noArgs := func(_ *cobra.Command, args []string) error {
+		if len(args) != 0 {
+			return errors.New("unexpected positional arguments")
+		}
+		return nil
 	}
-	switch args[0] {
-	case "version":
-		if len(args) != 1 {
-			return errors.New("version accepts no arguments")
-		}
+	wrap := func(handler func(*cobra.Command) error) func(*cobra.Command, []string) error {
+		return func(cmd *cobra.Command, _ []string) error { ran = true; return handler(cmd) }
+	}
+	root.RunE = wrap(func(*cobra.Command) error { return errors.New("command required; use --help") })
+	root.SetFlagErrorFunc(func(*cobra.Command, error) error { return errors.New("invalid command flags; use --help") })
+	root.SetHelpCommand(&cobra.Command{Use: "help", Short: "Show root command help (use subcommand --help for details)", Args: noArgs, RunE: wrap(func(*cobra.Command) error { return root.Help() })})
+	version := &cobra.Command{Use: "version", Short: "Print agent and Go version as JSON", Args: noArgs, RunE: wrap(func(*cobra.Command) error {
 		return json.NewEncoder(out).Encode(map[string]string{"version": Version, "go_version": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH})
-	case "generate-example":
-		f := flags(args[0])
-		directory := f.String("directory", "", "new destination directory")
-		if f.Parse(args[1:]) != nil || f.NArg() != 0 || *directory == "" {
-			return errors.New("usage: generate-example --directory <new-directory>")
-		}
-		if err := generate(*directory); err != nil {
+	})}
+	root.AddCommand(version)
+	var directory string
+	example := &cobra.Command{Use: "generate-example", Short: "Create paired configs and fresh protected local keys", Args: noArgs, RunE: wrap(func(*cobra.Command) error {
+		if err := generate(directory); err != nil {
 			return err
 		}
 		return json.NewEncoder(out).Encode(map[string]string{"state": "example_generated", "credentials": "protected local key files; keep private"})
-	case "validate-config", "run":
-		f := flags(args[0])
-		path := f.String("config", "", "static config path")
-		stateDir := f.String("state-dir", local.DefaultDirectory(), "protected local agent state directory")
-		override := f.String("interface", "", "Linux local name override")
-		if f.Parse(args[1:]) != nil || f.NArg() != 0 || *path == "" {
-			return errors.New("usage: validate-config|run --config <path> [--interface <Linux-name>]")
+	})}
+	example.Flags().StringVar(&directory, "directory", "", "New destination directory (must not exist)")
+	_ = example.MarkFlagRequired("directory")
+	root.AddCommand(example)
+	for _, name := range []string{"validate-config", "run"} {
+		var path, override, operator string
+		stateDir := local.DefaultDirectory()
+		cmd := &cobra.Command{Use: name, Short: map[string]string{"validate-config": "Validate static JSON and protected key without OS changes", "run": "Run the native WireGuard agent in the foreground"}[name], Args: noArgs}
+		cmd.Flags().StringVar(&path, "config", "", "Static JSON configuration file")
+		_ = cmd.MarkFlagRequired("config")
+		cmd.Flags().StringVar(&override, "interface", "", "Linux-only initial local interface name override")
+		if name == "run" {
+			cmd.Flags().StringVar(&stateDir, "state-dir", stateDir, "Protected local agent state directory")
+			cmd.Flags().StringVar(&operator, "operator", "", "Authorized local username/UID or Windows account/SID")
 		}
-		cfg, err := config.Load(*path)
-		if err != nil {
-			return err
-		}
-		if *override != "" {
-			if runtime.GOOS != "linux" {
-				return errors.New("--interface is supported only on Linux")
+		cmd.RunE = wrap(func(cmd *cobra.Command) error {
+			if path == "" {
+				return errors.New("config path is required")
 			}
-			cfg.Interface.Name = *override
-			if err := config.Validate(cfg, runtime.GOOS); err != nil {
-				return err
-			}
-		}
-		private, err := secret.Load(cfg.Interface.PrivateKeyFile)
-		if err != nil {
-			return err
-		}
-		public, err := secret.Public(private)
-		if err != nil {
-			return err
-		}
-		for _, p := range cfg.Peers {
-			if p.PublicKey == base64.StdEncoding.EncodeToString(public[:]) {
-				return errors.New("peer public key matches the local interface key")
-			}
-		}
-		name := ""
-		if runtime.GOOS == "linux" {
-			name, err = ifname.Resolve(cfg.Network.ID, cfg.Network.Name, cfg.Interface.Name)
-			if err != nil {
-				return err
-			}
-		}
-		if args[0] == "validate-config" {
-			return json.NewEncoder(out).Encode(map[string]any{"state": "valid", "version": cfg.Version, "network_id": cfg.Network.ID, "peer_count": len(cfg.Peers), "interface_name": name})
-		}
-		guard, err := local.Acquire(*stateDir)
-		if err != nil {
-			return err
-		}
-		defer guard.Close()
-		if runtime.GOOS == "linux" {
-			name, err = guard.InterfaceChoice(cfg.Network.ID, cfg.Network.Name, cfg.Interface.Name)
-			if err != nil {
-				return err
-			}
-		}
-		token, err := guard.OwnershipToken()
-		if err != nil {
-			return err
-		}
-		desired := platform.Desired{Config: cfg, InterfaceName: name, PrivateKey: private, OwnershipToken: token}
-		reload := func() (platform.Desired, error) {
-			next, err := config.Load(*path)
-			if err != nil {
-				return platform.Desired{}, err
-			}
-			if *override != "" {
-				next.Interface.Name = *override
-			}
-			if err = config.Validate(next, runtime.GOOS); err != nil {
-				return platform.Desired{}, err
-			}
-			if runtime.GOOS == "linux" {
-				if next.Interface.Name != "" && next.Interface.Name != name {
-					return platform.Desired{}, errors.New("reload cannot rename a persisted local interface")
-				}
-			}
-			key, err := secret.Load(next.Interface.PrivateKeyFile)
-			if err != nil {
-				return platform.Desired{}, err
-			}
-			pub, err := secret.Public(key)
-			if err != nil {
-				return platform.Desired{}, err
-			}
-			for _, peer := range next.Peers {
-				if peer.PublicKey == base64.StdEncoding.EncodeToString(pub[:]) {
-					return platform.Desired{}, errors.New("peer public key matches the local interface key")
-				}
-			}
-			return platform.Desired{Config: next, InterfaceName: name, PrivateKey: key, OwnershipToken: token}, nil
-		}
-		return agent.RunManaged(ctx, backend, desired, *stateDir, reload)
-	case "status", "peers", "sync", "stop":
-		f := flags(args[0])
-		dir := f.String("state-dir", local.DefaultDirectory(), "local agent state directory")
-		if f.Parse(args[1:]) != nil || f.NArg() != 0 {
-			return errors.New("usage: status|peers|sync|stop [--state-dir <path>]")
-		}
-		operation := args[0]
-		if operation == "sync" {
-			operation = "reload"
-		}
-		return local.Request(ctx, *dir, operation, out)
-	case "service":
-		if len(args) < 2 {
-			return errors.New("usage: service install|start|stop|uninstall")
-		}
-		f := flags("service")
-		path := f.String("config", "", "absolute config path")
-		dir := f.String("state-dir", local.DefaultDirectory(), "absolute state directory")
-		if f.Parse(args[2:]) != nil || f.NArg() != 0 {
-			return errors.New("invalid service arguments")
-		}
-		if err := service.Manage(args[1], service.Config{ConfigPath: *path, StateDirectory: *dir}); err != nil {
-			return err
-		}
-		return json.NewEncoder(out).Encode(map[string]string{"state": args[1]})
-	default:
-		return errors.New("unknown command; use version, generate-example, validate-config, run, status or peers")
+			return staticCommand(cmd.Context(), cmd.Name(), path, override, stateDir, operator, out, backend)
+		})
+		root.AddCommand(cmd)
 	}
+	for _, name := range []string{"status", "peers", "sync", "stop"} {
+		var dir string
+		cmd := &cobra.Command{Use: name, Short: map[string]string{"status": "Read actual local tunnel status as JSON", "peers": "Read actual local peer handshake/counters as JSON", "sync": "Validate and reconcile the running agent's original static config", "stop": "Gracefully stop the local agent and remove its owned tunnel"}[name], Args: noArgs}
+		cmd.Flags().StringVar(&dir, "state-dir", local.DefaultDirectory(), "Local agent state directory")
+		cmd.RunE = wrap(func(cmd *cobra.Command) error {
+			operation := cmd.Name()
+			if operation == "sync" {
+				operation = "reload"
+			}
+			return local.Request(cmd.Context(), dir, operation, out)
+		})
+		root.AddCommand(cmd)
+	}
+	group := &cobra.Command{Use: "service", Short: "Manage the native system service", Args: noArgs, RunE: wrap(func(*cobra.Command) error { return errors.New("service action required; use service --help") })}
+	for _, name := range []string{"install", "start", "stop", "uninstall"} {
+		cfg := service.Config{StateDirectory: local.DefaultDirectory()}
+		cmd := &cobra.Command{Use: name, Short: map[string]string{"install": "Register service with protected snapshots and boot activation", "start": "Start the installed native service", "stop": "Stop the installed native service", "uninstall": "Remove service registration while preserving config and keys"}[name], Args: noArgs}
+		if name == "install" {
+			cmd.Flags().StringVar(&cfg.ConfigPath, "config", "", "Absolute static JSON path")
+			_ = cmd.MarkFlagRequired("config")
+			cmd.Flags().StringVar(&cfg.StateDirectory, "state-dir", cfg.StateDirectory, "Absolute protected state directory")
+			cmd.Flags().StringVar(&cfg.Operator, "operator", "", "Authorized local username/UID or Windows account/SID")
+		}
+		cmd.RunE = wrap(func(cmd *cobra.Command) error {
+			if err := service.Manage(cmd.Name(), cfg); err != nil {
+				return err
+			}
+			return json.NewEncoder(out).Encode(map[string]string{"state": cmd.Name()})
+		})
+		group.AddCommand(cmd)
+	}
+	root.AddCommand(group)
+	root.SetArgs(args)
+	err := root.ExecuteContext(ctx)
+	// Cobra/pflag parse errors can contain raw flag values or unknown commands.
+	// Preserve operational errors, but never echo untrusted arguments on failure.
+	if err != nil && !ran {
+		return errors.New("invalid command or arguments; use --help")
+	}
+	return err
+}
+
+func staticCommand(ctx context.Context, commandName, path, override, stateDir, operator string, out io.Writer, backend platform.Backend) error {
+	cfg, err := config.Load(path)
+	if err != nil {
+		return err
+	}
+	if override != "" {
+		if runtime.GOOS != "linux" {
+			return errors.New("--interface is supported only on Linux")
+		}
+		cfg.Interface.Name = override
+		if err := config.Validate(cfg, runtime.GOOS); err != nil {
+			return err
+		}
+	}
+	private, err := secret.Load(cfg.Interface.PrivateKeyFile)
+	if err != nil {
+		return err
+	}
+	public, err := secret.Public(private)
+	if err != nil {
+		return err
+	}
+	for _, p := range cfg.Peers {
+		if p.PublicKey == base64.StdEncoding.EncodeToString(public[:]) {
+			return errors.New("peer public key matches the local interface key")
+		}
+	}
+	name := ""
+	if runtime.GOOS == "linux" {
+		name, err = ifname.Resolve(cfg.Network.ID, cfg.Network.Name, cfg.Interface.Name)
+		if err != nil {
+			return err
+		}
+	}
+	if commandName == "validate-config" {
+		return json.NewEncoder(out).Encode(map[string]any{"state": "valid", "version": cfg.Version, "network_id": cfg.Network.ID, "peer_count": len(cfg.Peers), "interface_name": name})
+	}
+	if err := local.ValidateOperator(operator); err != nil {
+		return err
+	}
+	guard, err := local.Acquire(stateDir)
+	if err != nil {
+		return err
+	}
+	defer guard.Close()
+	if runtime.GOOS == "linux" {
+		name, err = guard.InterfaceChoice(cfg.Network.ID, cfg.Network.Name, cfg.Interface.Name)
+		if err != nil {
+			return err
+		}
+	}
+	token, err := guard.OwnershipToken()
+	if err != nil {
+		return err
+	}
+	desired := platform.Desired{Config: cfg, InterfaceName: name, PrivateKey: private, OwnershipToken: token}
+	reload := func() (platform.Desired, error) {
+		next, err := config.Load(path)
+		if err != nil {
+			return platform.Desired{}, err
+		}
+		if override != "" {
+			next.Interface.Name = override
+		}
+		if err = config.Validate(next, runtime.GOOS); err != nil {
+			return platform.Desired{}, err
+		}
+		if runtime.GOOS == "linux" {
+			if next.Interface.Name != "" && next.Interface.Name != name {
+				return platform.Desired{}, errors.New("reload cannot rename a persisted local interface")
+			}
+		}
+		key, err := secret.Load(next.Interface.PrivateKeyFile)
+		if err != nil {
+			return platform.Desired{}, err
+		}
+		pub, err := secret.Public(key)
+		if err != nil {
+			return platform.Desired{}, err
+		}
+		for _, peer := range next.Peers {
+			if peer.PublicKey == base64.StdEncoding.EncodeToString(pub[:]) {
+				return platform.Desired{}, errors.New("peer public key matches the local interface key")
+			}
+		}
+		return platform.Desired{Config: next, InterfaceName: name, PrivateKey: key, OwnershipToken: token}, nil
+	}
+	return agent.RunManaged(ctx, backend, desired, stateDir, reload, operator)
 }
 
 func generate(directory string) error {

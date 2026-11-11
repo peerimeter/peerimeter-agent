@@ -134,3 +134,36 @@ Local diagnostic Go 1.26.4 with an external alternate manifest and CGO disabled
 passed unit tests and Windows/macOS cross-builds. Exact Go 1.27.4 native unit/race,
 real traffic/restart/cleanup and native service tests are required next. Installer,
 release packaging and README work are in progress. No Phase 1 pass is claimed yet.
+
+## Phase 1 first native runs and review fixes — 2026-11-11
+
+- Native Go 1.27.4 unit/build/CLI jobs passed on all three platforms at
+  `f4ac9a9bd4eee664560424b40b7776f265bd8678`
+  ([run](https://github.com/peerimeter/peerimeter-agent/actions/runs/42947273846)).
+- Actual macOS agent/utun traffic, reload/restart/cleanup and launchd lifecycle
+  passed at `97875e80090541b0bd4687803f4b65b3abacdfa5`
+  ([job](https://github.com/peerimeter/peerimeter-agent/actions/runs/42946353008/job/130280013296)).
+- Initial Linux agent startup failed because RTM_NEWLINK omitted the interface
+  alias. Explicit LinkSetAlias plus a regression fake fixed it. Actual two-agent
+  traffic, in-place updates, invalid config preservation, graceful/SIGKILL recovery
+  and systemd lifecycle passed at `b9feda7569396167d934d6c7b0b96318db8e5d83`
+  ([job](https://github.com/peerimeter/peerimeter-agent/actions/runs/42947133477/job/130282512144)).
+- Initial Windows build used nonexistent FILE_ADD_* constants; aliases corrected.
+  The next actual agent/WireGuardNT and SCM traffic/restart assertions passed,
+  but final cleanup failed on SYSTEM-owned metadata. The job remains **failed**
+  ([job](https://github.com/peerimeter/peerimeter-agent/actions/runs/42947133477/job/130282511680)).
+  Follow-up inherits admin ACLs for metadata and bounds privileged test cleanup.
+- Independent reviewer `/root/phase1_review` (parent model inherited; concrete
+  model identifier unavailable) found two P2 acceptance/correctness issues:
+  failed service registration prevented retry/reinstall, and nonadmin operator
+  control was unavailable. Implemented protected snapshot reuse/rollback with
+  regression tests, plus explicit `--operator` delegation retaining private keys.
+  Unix verifies peer UID even if socket permissions are widened; Windows uses
+  client-only pipe rights. Final independent re-review is pending.
+- Cobra v1.10.2 now owns CLI subcommands/flags/help/completion; parse errors remain
+  redacted. Unix/PowerShell installers and six target release packages are ready
+  for native CI, including pinned signed offline WireGuardNT and license notices.
+- New native unit/integration/installer checks are pending after these changes.
+  ✅ Phase 0 remains complete; 🔄 Phase 1 is not closed before native verification
+  and independent follow-up review. Mixed-OS VM links remain not run. No release
+  has been published; latest/pinned installer URL tests use explicit local fixtures.
