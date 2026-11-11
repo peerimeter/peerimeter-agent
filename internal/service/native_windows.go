@@ -73,22 +73,25 @@ func serviceSecureObject(path string, directory, private bool) error {
 		if trusted((*windows.SID)(unsafe.Pointer(&ace.SidStart))) {
 			continue
 		}
-		mask := uint32(ace.Mask)
-		const readOnly = windows.GENERIC_READ | windows.GENERIC_EXECUTE | windows.READ_CONTROL | windows.SYNCHRONIZE |
-			windows.FILE_READ_DATA | windows.FILE_READ_ATTRIBUTES | windows.FILE_READ_EA | windows.FILE_EXECUTE
-		allowedMask := uint32(readOnly)
-		// Windows volume roots and ProgramData normally allow unprivileged
-		// identities to create new children, while ownership/DELETE_CHILD and
-		// existing protected child ACLs prevent replacement of installed paths.
-		clean := filepath.Clean(path)
-		if directory && !private && (filepath.Dir(clean) == clean || strings.EqualFold(clean, filepath.Clean(os.Getenv("ProgramData")))) {
-			allowedMask |= windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA
-		}
-		if mask != 0 && (private || mask&^allowedMask != 0) {
+		if !serviceAllowedUntrustedAccess(uint32(ace.Mask), path, directory, private) {
 			return errors.New("Windows service resources must not grant write access outside SYSTEM/Administrators; private key and state must grant no other access")
 		}
 	}
 	return nil
+}
+
+// Standard volume/ProgramData roots permit new children and their own metadata
+// updates. These rights cannot delete or replace an existing protected child.
+// They never apply to private service files or ordinary installation folders.
+func serviceAllowedUntrustedAccess(mask uint32, path string, directory, private bool) bool {
+	const readOnly = windows.GENERIC_READ | windows.GENERIC_EXECUTE | windows.READ_CONTROL | windows.SYNCHRONIZE |
+		windows.FILE_READ_DATA | windows.FILE_READ_ATTRIBUTES | windows.FILE_READ_EA | windows.FILE_EXECUTE
+	allowed := uint32(readOnly)
+	clean := filepath.Clean(path)
+	if directory && !private && (filepath.Dir(clean) == clean || strings.EqualFold(clean, filepath.Clean(os.Getenv("ProgramData")))) {
+		allowed |= windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA | windows.FILE_WRITE_EA | windows.FILE_WRITE_ATTRIBUTES
+	}
+	return mask == 0 || !private && mask & ^allowed == 0
 }
 
 func serviceArguments(cfg Config) []string {

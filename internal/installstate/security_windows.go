@@ -53,12 +53,7 @@ func checkACL(path string, private, directory bool) error {
 	if e != nil || acl == nil {
 		return errors.New("installation resource requires a restrictive Windows ACL")
 	}
-	const readonly = windows.GENERIC_READ | windows.GENERIC_EXECUTE | windows.READ_CONTROL | windows.SYNCHRONIZE | windows.FILE_READ_DATA | windows.FILE_READ_ATTRIBUTES | windows.FILE_READ_EA | windows.FILE_EXECUTE
-	mask := uint32(readonly)
-	clean := filepath.Clean(path)
-	if directory && (filepath.Dir(clean) == clean || strings.EqualFold(clean, filepath.Clean(os.Getenv("ProgramData")))) {
-		mask |= windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA
-	}
+
 	for i := uint32(0); i < uint32(acl.AceCount); i++ {
 		var a *windows.ACCESS_ALLOWED_ACE
 		if windows.GetAce(acl, i, &a) != nil {
@@ -73,12 +68,24 @@ func checkACL(path string, private, directory bool) error {
 		if trusted((*windows.SID)(unsafe.Pointer(&a.SidStart)), all) {
 			continue
 		}
-		if a.Mask != 0 && (private || uint32(a.Mask)&^mask != 0) {
+		if !allowedUntrustedAccess(uint32(a.Mask), path, directory, private) {
 			return errors.New("installation resource grants unsafe Windows access")
 		}
 	}
 	return nil
 }
+func allowedUntrustedAccess(mask uint32, path string, directory, private bool) bool {
+	const readOnly = windows.GENERIC_READ | windows.GENERIC_EXECUTE | windows.READ_CONTROL | windows.SYNCHRONIZE | windows.FILE_READ_DATA | windows.FILE_READ_ATTRIBUTES | windows.FILE_READ_EA | windows.FILE_EXECUTE
+	allowed := uint32(readOnly)
+	clean := filepath.Clean(path)
+	// Standard shared system roots grant child creation and root metadata writes,
+	// but must never grant deletion of protected children or ACL/owner changes.
+	if directory && !private && (filepath.Dir(clean) == clean || strings.EqualFold(clean, filepath.Clean(os.Getenv("ProgramData")))) {
+		allowed |= windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA | windows.FILE_WRITE_EA | windows.FILE_WRITE_ATTRIBUTES
+	}
+	return mask == 0 || !private && mask & ^allowed == 0
+}
+
 func checkTrust(path string, info os.FileInfo, directory bool) error {
 	if !directory {
 		name, err := windows.UTF16PtrFromString(path)
