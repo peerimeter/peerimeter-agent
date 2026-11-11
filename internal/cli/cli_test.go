@@ -11,6 +11,7 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/secret"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -110,7 +111,11 @@ func TestCobraHelpAndCompletion(t *testing.T) {
 }
 
 func TestPeerHumanAndJSONUseSamePublicSnapshot(t *testing.T) {
-	dir, err := os.MkdirTemp("/tmp", "pmpeer-")
+	base := ""
+	if runtime.GOOS != "windows" {
+		base = "/tmp"
+	}
+	dir, err := os.MkdirTemp(base, "pmpeer-")
 	if err != nil {
 		t.Fatal(err)
 	}

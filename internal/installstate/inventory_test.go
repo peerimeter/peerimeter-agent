@@ -211,3 +211,110 @@ func TestRuntimeClaimCannotTakeAnotherProfile(t *testing.T) {
 		t.Fatal("failed runtime claim was persisted as owned")
 	}
 }
+
+func TestUnregisteredSourceCannotAdoptInstalledState(t *testing.T) {
+	installed := fixtureInstall(t)
+	p := fixtureProfile(t)
+	if err := RegisterProfile(installed, p); err != nil {
+		t.Fatal(err)
+	}
+	sourceDir := t.TempDir()
+	source, err := CaptureStartup(sourceDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	before, err := os.ReadFile(filepath.Join(p.StateDir, MarkerFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := source.RegisterProfile(Profile{StateDir: p.StateDir, RuntimeDir: p.RuntimeDir}); err == nil {
+		t.Fatal("source build adopted installed ownership state")
+	}
+	after, err := os.ReadFile(filepath.Join(p.StateDir, MarkerFilename))
+	if err != nil || string(before) != string(after) {
+		t.Fatal("source build changed another installation's state")
+	}
+}
+func TestConfigOwnershipCannotBeClaimedByPlannedForeignProfile(t *testing.T) {
+	a, b := fixtureInstall(t), fixtureInstall(t)
+	pa, pb := fixtureProfile(t), fixtureProfile(t)
+	pb.ConfigDir = pa.ConfigDir
+	for _, name := range []string{"service.json", "service.key"} {
+		if err := os.WriteFile(filepath.Join(pa.ConfigDir, name), []byte("private installed snapshot"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := RegisterProfile(a, pa); err != nil {
+		t.Fatal(err)
+	}
+	pa.ClaimConfig = true
+	if err := RegisterProfile(a, pa); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterProfile(b, pb); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateConfigClaim(b, pb.StateDir, pb.ConfigDir); err == nil {
+		t.Fatal("foreign config passed pre-provision validation")
+	}
+	pb.ClaimConfig = true
+	if err := RegisterProfile(b, pb); err == nil {
+		t.Fatal("foreign planned profile claimed config")
+	}
+	ia, _ := Load(a)
+	ib, _ := Load(b)
+	if owned, e := VerifyConfig(ia, ia.Profiles[0]); e != nil || !owned {
+		t.Fatal("first installation lost config ownership")
+	}
+	if owned, e := VerifyConfig(ib, ib.Profiles[0]); e != nil || owned {
+		t.Fatal("second planned installation owns foreign config")
+	}
+}
+
+func TestMigrationClaimTracksProvisionalConfigWithoutChangingActivePaths(t *testing.T) {
+	dir := fixtureInstall(t)
+	old := fixtureProfile(t)
+	if err := RegisterProfile(dir, old); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := Load(dir)
+	next := fixtureProfile(t)
+	next.StateDir = old.StateDir
+	for _, name := range []string{"service.json", "service.key"} {
+		if err := os.WriteFile(filepath.Join(next.ConfigDir, name), []byte("private migrated snapshot"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	startup, err := CaptureStartup(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer startup.Close()
+	if err := startup.ClaimMigrationConfig(next); err != nil {
+		t.Fatal(err)
+	}
+	after, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := after.Profiles[0]
+	cfg, _ := Canonical(next.ConfigDir)
+	runtime, _ := Canonical(next.RuntimeDir)
+	if p.ID != before.Profiles[0].ID || p.ConfigDir != before.Profiles[0].ConfigDir || p.RuntimeDir != before.Profiles[0].RuntimeDir || p.PendingConfigDir != cfg || p.PendingRuntimeDir != runtime {
+		t.Fatal("provisional claim changed the active profile or lost its pending target")
+	}
+	if owned, err := VerifyConfigDirectory(after, p, p.PendingConfigDir); err != nil || !owned {
+		t.Fatalf("pending config is not bound to the existing profile: %v", err)
+	}
+	if err := MarkRemoving(after); err != nil {
+		t.Fatal(err)
+	}
+	if err := startup.Close(); err != nil {
+		t.Fatal(err)
+	}
+	next.ClaimConfig = true
+	if err := MigrateProfile(dir, old, next); err == nil {
+		t.Fatal("migration changed a removing installation")
+	}
+}

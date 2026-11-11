@@ -51,15 +51,27 @@ type report struct {
 
 func resources(p installstate.Profile) []removalFile {
 	var files []removalFile
-	if p.LegacyConfigDir != "" && p.LegacyConfigDir != p.ConfigDir {
+	if p.LegacyConfigOwned && p.LegacyConfigDir != "" && p.LegacyConfigDir != p.ConfigDir {
 		for _, name := range []string{"service.json", "service.key"} {
 			files = append(files, removalFile{Path: filepath.Join(p.LegacyConfigDir, name)})
 		}
 	}
-	if p.ConfigDir != "" {
+	if p.PendingConfigOwned && p.PendingConfigDir != "" && p.PendingConfigDir != p.ConfigDir {
+		for _, name := range []string{"service.json", "service.key"} {
+			files = append(files, removalFile{Path: filepath.Join(p.PendingConfigDir, name)})
+		}
+		files = append(files, removalFile{Path: filepath.Join(p.PendingConfigDir, installstate.ConfigMarkerFilename), Marker: true})
+	}
+	if p.ConfigOwned && p.ConfigDir != "" {
 		for _, name := range []string{"service.json", "service.key"} {
 			files = append(files, removalFile{Path: filepath.Join(p.ConfigDir, name)})
 		}
+	}
+	if p.ConfigOwned {
+		files = append(files, removalFile{Path: filepath.Join(p.ConfigDir, installstate.ConfigMarkerFilename), Marker: true})
+	}
+	if p.LegacyConfigOwned && p.LegacyConfigDir != p.ConfigDir {
+		files = append(files, removalFile{Path: filepath.Join(p.LegacyConfigDir, installstate.ConfigMarkerFilename), Marker: true})
 	}
 	for _, name := range []string{"network.json", "ownership", "agent.lock"} {
 		files = append(files, removalFile{Path: filepath.Join(p.StateDir, name)})
@@ -81,7 +93,16 @@ func makePlan(inv installstate.Inventory) removalPlan {
 				seen[f.Path] = true
 			}
 		}
-		ownedDirs := []string{profile.ConfigDir, profile.LegacyConfigDir, profile.StateDir}
+		ownedDirs := []string{profile.StateDir}
+		if profile.PendingConfigOwned {
+			ownedDirs = append(ownedDirs, profile.PendingConfigDir)
+		}
+		if profile.ConfigOwned {
+			ownedDirs = append(ownedDirs, profile.ConfigDir)
+		}
+		if profile.LegacyConfigOwned {
+			ownedDirs = append(ownedDirs, profile.LegacyConfigDir)
+		}
 		if profile.RuntimeOwned {
 			ownedDirs = append(ownedDirs, profile.RuntimeDir)
 		}
@@ -157,7 +178,16 @@ func preflight(inv installstate.Inventory, p removalPlan) error {
 		if err := verifyProfile(inv, profile); err != nil {
 			return err
 		}
-		ownedDirs := []string{profile.ConfigDir, profile.LegacyConfigDir, profile.StateDir}
+		ownedDirs := []string{profile.StateDir}
+		if profile.PendingConfigOwned {
+			ownedDirs = append(ownedDirs, profile.PendingConfigDir)
+		}
+		if profile.ConfigOwned {
+			ownedDirs = append(ownedDirs, profile.ConfigDir)
+		}
+		if profile.LegacyConfigOwned {
+			ownedDirs = append(ownedDirs, profile.LegacyConfigDir)
+		}
 		if profile.RuntimeOwned {
 			ownedDirs = append(ownedDirs, profile.RuntimeDir)
 		}
@@ -202,7 +232,18 @@ func removeServices(ctx context.Context, exe string, profiles []installstate.Pro
 	var failed []installstate.Profile
 	var problems []error
 	removed := false
+	candidates := append([]installstate.Profile{}, profiles...)
 	for _, p := range profiles {
+		if p.Service && p.PendingConfigOwned && p.PendingConfigDir != "" {
+			pending := p
+			pending.ConfigDir = p.PendingConfigDir
+			if p.PendingRuntimeDir != "" {
+				pending.RuntimeDir = p.PendingRuntimeDir
+			}
+			candidates = append(candidates, pending)
+		}
+	}
+	for _, p := range candidates {
 		if !p.Service {
 			continue
 		}
@@ -303,6 +344,21 @@ func Execute(ctx context.Context, opts Options, out io.Writer) error {
 			return e
 		}
 		inv.Profiles[i].RuntimeOwned = owned
+		configOwned, configErr := installstate.VerifyConfig(inv, p)
+		if configErr != nil {
+			return configErr
+		}
+		inv.Profiles[i].ConfigOwned = configOwned
+		legacyOwned, legacyErr := installstate.VerifyConfigDirectory(inv, p, p.LegacyConfigDir)
+		if legacyErr != nil {
+			return legacyErr
+		}
+		inv.Profiles[i].LegacyConfigOwned = legacyOwned
+		pendingOwned, pendingErr := installstate.VerifyConfigDirectory(inv, p, p.PendingConfigDir)
+		if pendingErr != nil {
+			return pendingErr
+		}
+		inv.Profiles[i].PendingConfigOwned = pendingOwned
 	}
 	plan := makePlan(inv)
 	if err := preflight(inv, plan); err != nil {
@@ -340,6 +396,21 @@ func Execute(ctx context.Context, opts Options, out io.Writer) error {
 			return e
 		}
 		inv.Profiles[i].RuntimeOwned = owned
+		configOwned, configErr := installstate.VerifyConfig(inv, p)
+		if configErr != nil {
+			return configErr
+		}
+		inv.Profiles[i].ConfigOwned = configOwned
+		legacyOwned, legacyErr := installstate.VerifyConfigDirectory(inv, p, p.LegacyConfigDir)
+		if legacyErr != nil {
+			return legacyErr
+		}
+		inv.Profiles[i].LegacyConfigOwned = legacyOwned
+		pendingOwned, pendingErr := installstate.VerifyConfigDirectory(inv, p, p.PendingConfigDir)
+		if pendingErr != nil {
+			return pendingErr
+		}
+		inv.Profiles[i].PendingConfigOwned = pendingOwned
 	}
 	plan = makePlan(inv)
 	if err := preflight(inv, plan); err != nil {
@@ -382,6 +453,21 @@ func Execute(ctx context.Context, opts Options, out io.Writer) error {
 			return e
 		}
 		inv.Profiles[i].RuntimeOwned = owned
+		configOwned, configErr := installstate.VerifyConfig(inv, p)
+		if configErr != nil {
+			return configErr
+		}
+		inv.Profiles[i].ConfigOwned = configOwned
+		legacyOwned, legacyErr := installstate.VerifyConfigDirectory(inv, p, p.LegacyConfigDir)
+		if legacyErr != nil {
+			return legacyErr
+		}
+		inv.Profiles[i].LegacyConfigOwned = legacyOwned
+		pendingOwned, pendingErr := installstate.VerifyConfigDirectory(inv, p, p.PendingConfigDir)
+		if pendingErr != nil {
+			return pendingErr
+		}
+		inv.Profiles[i].PendingConfigOwned = pendingOwned
 	}
 	plan = makePlan(inv)
 	if runtime.GOOS != "windows" {

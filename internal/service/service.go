@@ -100,7 +100,10 @@ func registerService(cfg Config) error {
 
 // provision snapshots operator-supplied data before a privileged service uses it.
 // It never changes the original files and refuses to overwrite installed secrets.
-func provision(cfg *Config, secure func(...string) error) (bool, error) {
+func provision(cfg *Config, secure func(...string) error) (copied bool, resultError error) {
+	if err := validateConfigOwnership(*cfg); err != nil {
+		return false, err
+	}
 	desired, err := config.Load(cfg.ConfigPath)
 	if err != nil {
 		return false, err
@@ -154,10 +157,12 @@ func provision(cfg *Config, secure func(...string) error) (bool, error) {
 		return false, err
 	}
 	success := false
+	jsonCreated := false
 	defer func() {
 		if !success {
-			_ = os.Remove(keyPath)
-			_ = os.Remove(destination)
+			owned := *cfg
+			owned.ConfigPath = destination
+			resultError = errors.Join(resultError, rollbackSnapshotFiles(owned, jsonCreated))
 		}
 	}()
 	desired.Interface.PrivateKeyFile = keyPath
@@ -169,6 +174,7 @@ func provision(cfg *Config, secure func(...string) error) (bool, error) {
 	if err != nil {
 		return false, errors.New("cannot create protected service configuration")
 	}
+	jsonCreated = true
 	if _, err = f.Write(append(data, '\n')); err != nil {
 		f.Close()
 		return false, errors.New("cannot write protected service configuration")
@@ -206,25 +212,32 @@ func install(cfg Config, register func(Config) error, secure func(...string) err
 	}
 	// Record planned paths while removal is still excluded by the startup
 	// lease. Service ownership is claimed only after native registration succeeds.
-	if err := local.PrepareDirectory(snapshotDirectory(cfg)); err != nil {
-		return err
-	}
 	if err := startup.RegisterProfile(installstate.Profile{ConfigDir: snapshotDirectory(cfg), StateDir: cfg.StateDirectory, RuntimeDir: serviceRuntime(cfg), Service: false}); err != nil {
 		return err
 	}
-	// Registration obtains the inventory lock itself. Keep the state guard while
-	// releasing this short startup lease, so removal cannot delete live snapshots.
-	if err := startup.Close(); err != nil {
-		return err
-	}
-	// Keep exclusive ownership across snapshot creation, registration and rollback.
+	// Provision and claim configuration while the startup lease still excludes
+	// removal. Intent alone must never authorize deleting another profile's keys.
 	created, err := provision(&cfg, secure)
 	if err != nil {
 		return err
 	}
+	if err := startup.RegisterProfile(installstate.Profile{ConfigDir: snapshotDirectory(cfg), StateDir: cfg.StateDirectory, RuntimeDir: serviceRuntime(cfg), ClaimConfig: true}); err != nil {
+		if created {
+			return errors.Join(err, rollbackSnapshots(cfg))
+		}
+		return err
+	}
+	// Native registration obtains its own registry lock. Retain persistent state
+	// ownership while releasing the short lease before that separate operation.
+	if err := startup.Close(); err != nil {
+		if created {
+			return errors.Join(err, rollbackSnapshots(cfg))
+		}
+		return err
+	}
 	if err := register(cfg); err != nil {
 		if created {
-			return errors.Join(err, os.Remove(cfg.ConfigPath), os.Remove(filepath.Join(snapshotDirectory(cfg), "service.key")))
+			return errors.Join(err, rollbackSnapshots(cfg))
 		}
 		return err
 	}
@@ -274,7 +287,10 @@ func migrate(cfg Config, unregister func(Config) error, register func(Config) er
 	if _, err := secret.Load(legacyKey); err != nil {
 		return err
 	}
-	// Validate target conflicts before stopping an otherwise working service.
+	// Validate target ownership and conflicts before stopping a working service.
+	if err := validateConfigOwnership(cfg); err != nil {
+		return err
+	}
 	for _, name := range []string{"service.json", "service.key"} {
 		if _, err := os.Lstat(filepath.Join(snapshotDirectory(cfg), name)); err == nil {
 			return errors.New("migration destination already contains service configuration or keys; refusing to overwrite")
@@ -286,6 +302,9 @@ func migrate(cfg Config, unregister func(Config) error, register func(Config) er
 	old.ConfigDirectory = cfg.StateDirectory
 	old.ConfigPath = legacyJSON
 	old.RuntimeDirectory = cfg.StateDirectory
+	if err := validateConfigOwnership(old); err != nil {
+		return err
+	}
 	if err := startup.Check(); err != nil {
 		return err
 	}
@@ -315,7 +334,9 @@ func migrate(cfg Config, unregister func(Config) error, register func(Config) er
 	if err := startup.Check(); err != nil {
 		return err
 	}
-	if err := lease.Close(); err != nil {
+	// Only after native registration ownership was verified and the old
+	// supervisor stopped may this installation adopt the protected legacy data.
+	if err := lease.RegisterProfile(installstate.Profile{ConfigDir: old.ConfigDirectory, StateDir: old.StateDirectory, RuntimeDir: old.RuntimeDirectory, ClaimConfig: true}); err != nil {
 		return err
 	}
 	cfg.ConfigPath = legacyJSON
@@ -323,9 +344,21 @@ func migrate(cfg Config, unregister func(Config) error, register func(Config) er
 	if err != nil {
 		return err
 	}
+	if err := lease.ClaimMigrationConfig(installstate.Profile{ConfigDir: snapshotDirectory(cfg), StateDir: cfg.StateDirectory, RuntimeDir: serviceRuntime(cfg)}); err != nil {
+		if created {
+			return errors.Join(err, rollbackSnapshots(cfg))
+		}
+		return err
+	}
+	if err := lease.Close(); err != nil {
+		if created {
+			return errors.Join(err, rollbackSnapshots(cfg))
+		}
+		return err
+	}
 	if err := register(cfg); err != nil {
 		if created {
-			return errors.Join(err, os.Remove(cfg.ConfigPath), os.Remove(filepath.Join(snapshotDirectory(cfg), "service.key")))
+			return errors.Join(err, rollbackSnapshots(cfg))
 		}
 		return err
 	}
@@ -334,6 +367,11 @@ func migrate(cfg Config, unregister func(Config) error, register func(Config) er
 	var cleanup []error
 	for _, path := range []string{legacyJSON, legacyKey, filepath.Join(cfg.StateDirectory, "agent.lock")} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			cleanup = append(cleanup, err)
+		}
+	}
+	if len(cleanup) == 0 {
+		if err := releaseConfigMarker(cfg, cfg.StateDirectory); err != nil {
 			cleanup = append(cleanup, err)
 		}
 	}

@@ -21,10 +21,33 @@ case "$(uname -m)" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch=arm64;; *) 
 work=$(mktemp -d)
 staged=
 staged_notice=
+changed=0
+completed=0
+old_binary=0
+old_notice=0
+rollback_failed=0
+rollback_file() {
+ target=$1
+ original=$2
+ existed=$3
+ if [ "$existed" -eq 1 ]; then
+  restore=$(mktemp "$install_dir/.peerimeter-restore.XXXXXX") || return 1
+  cp -p "$original" "$restore" && mv -f "$restore" "$target" || { rm -f "$restore"; return 1; }
+ else
+  rm -f "$target" || return 1
+ fi
+}
 cleanup() {
- rm -rf "$work"
+ status=$?
+ if [ "$changed" -eq 1 ] && [ "$completed" -eq 0 ]; then
+  rollback_file "$install_dir/peerimeter-agent" "$work/original-agent" "$old_binary" || { echo 'Installer rollback could not restore the previous executable.' >&2; status=1; rollback_failed=1; }
+  rollback_file "$install_dir/peerimeter-agent.NOTICES.txt" "$work/original-notices" "$old_notice" || { echo 'Installer rollback could not restore the previous notice file.' >&2; status=1; rollback_failed=1; }
+ fi
+ if [ "$rollback_failed" -eq 0 ]; then rm -rf "$work"; else printf 'Previous package backups retained for recovery: %s\n' "$work" >&2; fi
  if [ -n "$staged" ]; then rm -f "$staged"; fi
  if [ -n "$staged_notice" ]; then rm -f "$staged_notice"; fi
+ trap - EXIT
+ exit "$status"
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
@@ -65,11 +88,20 @@ tar -xzf "$archive" -C "$work" peerimeter-agent peerimeter-agent.NOTICES.txt
 mkdir -p "$install_dir" || { echo 'Cannot create destination; choose a writable directory or run with sudo.' >&2; exit 1; }
 [ ! -d "$install_dir/peerimeter-agent" ] || { echo 'Binary destination is a directory.' >&2; exit 1; }
 [ ! -d "$install_dir/peerimeter-agent.NOTICES.txt" ] || { echo 'Notice destination is a directory.' >&2; exit 1; }
+# Preserve existing ordinary package members before any replacement. Never
+# dereference a pre-existing link into another application's files.
+for destination in "$install_dir/peerimeter-agent" "$install_dir/peerimeter-agent.NOTICES.txt"; do
+ [ ! -L "$destination" ] || { echo 'Installed package members must not be symbolic links.' >&2; exit 1; }
+ [ ! -e "$destination" ] || [ -f "$destination" ] || { echo 'Installed package member is not a regular file.' >&2; exit 1; }
+done
+if [ -f "$install_dir/peerimeter-agent" ]; then cp -p "$install_dir/peerimeter-agent" "$work/original-agent"; old_binary=1; fi
+if [ -f "$install_dir/peerimeter-agent.NOTICES.txt" ]; then cp -p "$install_dir/peerimeter-agent.NOTICES.txt" "$work/original-notices"; old_notice=1; fi
 staged=$(mktemp "$install_dir/.peerimeter-agent.XXXXXX")
 staged_notice=$(mktemp "$install_dir/.peerimeter-notices.XXXXXX")
 install -m 0755 "$work/peerimeter-agent" "$staged"
 # Notices precede the atomic executable replacement; no config or keys are touched.
 install -m 0644 "$work/peerimeter-agent.NOTICES.txt" "$staged_notice"
+changed=1
 mv -f "$staged_notice" "$install_dir/peerimeter-agent.NOTICES.txt"
 staged_notice=
 mv -f "$staged" "$install_dir/peerimeter-agent"
@@ -78,4 +110,5 @@ staged=
 # ownership/path rules as full uninstall. Source configs and keys are not claimed.
 "$install_dir/peerimeter-agent" register-installation --install-dir "$install_dir" >/dev/null
 [ -f "$install_dir/.peerimeter-agent.install.json" ] && [ ! -L "$install_dir/.peerimeter-agent.install.json" ] || { echo 'Installation inventory registration failed.' >&2; exit 1; }
+completed=1
 printf 'Installed %s/peerimeter-agent (%s/%s). Config and services are managed separately.\n' "$install_dir" "$os" "$arch"

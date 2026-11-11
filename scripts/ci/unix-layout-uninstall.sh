@@ -40,6 +40,20 @@ cleanup() {
  # Only this freshly created test tree is recursively removed. Product removal
  # below must preserve unrelated files in every shared managed parent.
  rm -f "$default_sentinel"
+ if [[ -f "$base/default-parent-permissions.json" ]]; then
+  if ! python3 - "$base/default-parent-permissions.json" <<'PYRESTORE'
+import json,os,stat,sys
+for item in reversed(json.load(open(sys.argv[1]))):
+ current=os.lstat(item['path'])
+ if (current.st_uid,current.st_gid)!=(item['uid'],item['gid']):os.chown(item['path'],item['uid'],item['gid'])
+ current=os.lstat(item['path'])
+ if stat.S_IMODE(current.st_mode)!=item['mode']:os.chmod(item['path'],item['mode'])
+PYRESTORE
+  then
+   echo 'CI default-prefix permission restoration failed.' >&2
+   result=1
+  fi
+ fi
  rm -rf "$base"
  exit "$result"
 }
@@ -146,6 +160,24 @@ PY
 snapshot "$base/original credentials" >"$base/original-before.json"
 
 program_default=/usr/local/bin
+# Hosted images deliberately permit runner/convenience-group writes to
+# /usr/local. A system-service executable requires trusted ancestors. Prepare
+# only this fixed prefix on the disposable VM and restore its original metadata
+# on exit; no product permission checks are weakened by the fixture.
+python3 - "$program_default" "$base/default-parent-permissions.json" <<'PYTRUST'
+import json,os,pathlib,stat,sys
+p=pathlib.Path(sys.argv[1]);records=[]
+for directory in [p]+list(p.parents):
+ s=directory.lstat()
+ print('CI default program ancestor:',directory,'uid='+str(s.st_uid),'mode='+oct(stat.S_IMODE(s.st_mode)))
+ assert stat.S_ISDIR(s.st_mode),'default install ancestor must be an existing real directory'
+ assert s.st_uid==0 or str(directory) in ('/usr/local','/usr/local/bin'),'unexpected ownership outside the disposable test prefix'
+ records.append(dict(path=str(directory),uid=s.st_uid,gid=s.st_gid,mode=stat.S_IMODE(s.st_mode)))
+with open(sys.argv[2],'w') as f:json.dump(records,f)
+for item in records:
+ if item['uid']!=0:os.chown(item['path'],0,item['gid'])
+ if item['mode']&0o022:os.chmod(item['path'],item['mode']&~0o022)
+PYTRUST
 for member in peerimeter-agent peerimeter-agent.NOTICES.txt .peerimeter-agent.install.json .peerimeter-agent.install.lock; do
  [[ ! -e "$program_default/$member" && ! -L "$program_default/$member" ]] || { echo 'Default program install destination is already occupied.' >&2; exit 1; }
 done
@@ -162,6 +194,7 @@ check_layout "$defaults_config" "$defaults_state" "$defaults_runtime"
 as_operator "$agent" status >"$base/default-operator.json"
 as_operator "$agent" peers --json >"$base/default-operator-peers.json"
 as_operator "$agent" sync
+bash "$repo/scripts/ci/unix-config-collision.sh" "$agent" "$source_config" "$defaults_config" "$defaults_runtime" "$base"
 snapshot "$defaults_config" "$defaults_state" >"$base/default-durable.json"
 "$agent" service stop
 wait_interface_gone "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["interface_name"])' "$base/default-status.json")"

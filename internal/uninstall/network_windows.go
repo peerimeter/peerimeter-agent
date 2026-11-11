@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
 	"golang.org/x/sys/windows"
@@ -37,7 +39,14 @@ func scheduleRemoval(plan removalPlan) (string, error) {
 	if !windows.GetCurrentProcessToken().IsElevated() {
 		return "", errors.New("full Windows uninstall requires an elevated administrator terminal")
 	}
-	work, err := os.MkdirTemp("", "peerimeter-uninstall-")
+	// Keep deferred code and diagnostics beneath the already-validated
+	// installation parent, outside the tree being removed. A private child ACL
+	// alone cannot protect a helper beneath a hostile TEMP ancestor.
+	helperParent := filepath.Dir(filepath.Dir(plan.Inventory))
+	if err := installstate.CheckDirectory(helperParent); err != nil {
+		return "", err
+	}
+	work, err := os.MkdirTemp(helperParent, ".peerimeter-uninstall-")
 	if err != nil {
 		return "", err
 	}
@@ -71,20 +80,74 @@ func scheduleRemoval(plan removalPlan) (string, error) {
 	if systemRoot == "" {
 		systemRoot = `C:\Windows`
 	}
-	cmd := exec.Command(filepath.Join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "-Plan", planPath)
+	cmd := exec.Command(filepath.Join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "-Plan", planPath, "-Receipt", plan.ResultFile)
 	cmd.SysProcAttr = helperProcessAttributes()
+	logPath := work + ".helper.log"
+	if err := installstate.WritePrivate(logPath, nil); err != nil {
+		return "", err
+	}
+	logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		return "", err
+	}
+	defer logFile.Close()
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
 		return "", err
 	}
-	// No inherited pipe handles tie the helper to CLI output. The helper has a
-	// bounded deadline and communicates only through its private receipt file.
+	// Confirm PowerShell parsed/initialized while the parent still owns all
+	// removal guards. The helper cannot delete installation data before parent
+	// exit, so terminating an uninitialized child leaves managed data untouched.
+	ready := false
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		var response struct {
+			State string `json:"state"`
+			Ready bool   `json:"helper_ready"`
+		}
+		raw, readErr := os.ReadFile(plan.ResultFile)
+		if readErr == nil && json.Unmarshal(raw, &response) == nil {
+			if response.Ready {
+				ready = true
+				break
+			}
+			if response.State == "failed" {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !ready {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		remaining := []string{}
+		for _, f := range plan.Files {
+			if _, e := os.Lstat(f.Path); e == nil {
+				remaining = append(remaining, f.Path)
+			}
+		}
+		for _, path := range []string{plan.Inventory, plan.Lock} {
+			if _, e := os.Lstat(path); e == nil {
+				remaining = append(remaining, path)
+			}
+		}
+		failed, _ := json.Marshal(report{State: "failed", Remaining: remaining, Message: "Removal helper could not initialize; managed files were preserved. Inspect the sibling .helper.log for the cause."})
+		_ = installstate.WritePrivate(plan.ResultFile, append(failed, '\n'))
+		return "", fmt.Errorf("Windows removal helper could not initialize; installation remains incomplete; inspect %s and %s", plan.ResultFile, logPath)
+	}
+	// No inherited output pipes tie the helper to the invoking shell.
 	_ = cmd.Process.Release()
 	success = true
 	return plan.ResultFile, nil
 }
 
-const windowsRemovalScript = `param([Parameter(Mandatory=$true)][string]$Plan)
+const windowsRemovalScript = `param([Parameter(Mandatory=$true)][string]$Plan,[Parameter(Mandatory=$true)][string]$Receipt)
 $ErrorActionPreference = 'Stop'
+trap {
+    try { [IO.File]::WriteAllText($Receipt,(@{state='failed';remaining=@($Plan);message=$_.Exception.Message} | ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false)) } catch {}
+    exit 1
+}
 $p = Get-Content -LiteralPath $Plan -Raw | ConvertFrom-Json
 $work = Split-Path -Parent $Plan
 $handles = [Collections.Generic.List[IO.FileStream]]::new()
@@ -108,11 +171,12 @@ function Remove-Leaf([string]$Path) {
 function Lock-Existing([string]$Path) {
     if (-not [IO.File]::Exists($Path)) { return }
     No-Reparse $Path
-    $f = [IO.FileStream]::new($Path,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::ReadWrite)
+    $f = [IO.FileStream]::new($Path,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
     try { $f.Lock(0,1) } catch { $f.Dispose(); throw 'A manager or installer is still using the recorded resources' }
     $handles.Add($f)
 }
 try {
+    [IO.File]::WriteAllText($Receipt,(@{state='pending';helper_ready=$true;remaining=@()} | ConvertTo-Json),[Text.UTF8Encoding]::new($false))
     $parent = Get-Process -Id $p.parent_pid -ErrorAction SilentlyContinue
     if ($parent -and -not $parent.WaitForExit(30000)) { throw 'Initiating agent did not exit within 30 seconds; files preserved' }
     Lock-Existing $p.lock
@@ -139,11 +203,14 @@ try {
         if ($f.marker -or [IO.Path]::GetFileName($f.path) -eq 'agent.lock') { continue }
         Remove-Leaf $f.path
     }
-    foreach ($h in $handles) { $h.Dispose() }; $handles.Clear()
+    # Delete the coordination names while their exclusive ranges remain held.
+    # FILE_SHARE_DELETE makes deletion pending, so new openers cannot replace a
+    # live manager's lock between guard release and unlink.
     foreach ($f in $p.files) { if ([IO.Path]::GetFileName($f.path) -eq 'agent.lock') { Remove-Leaf $f.path } }
     foreach ($f in $p.files) { if ($f.marker) { Remove-Leaf $f.path } }
     Remove-Leaf $p.lock
     Remove-Leaf $p.inventory
+    foreach ($h in $handles) { $h.Dispose() }; $handles.Clear()
     foreach ($dir in $p.directories) {
         if (Test-Path -LiteralPath $dir) {
             No-Reparse $dir
