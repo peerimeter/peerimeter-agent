@@ -1,4 +1,3 @@
-
 .PHONY: test lint build test-integration test-network
 
 test:
