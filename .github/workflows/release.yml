@@ -28,7 +28,7 @@ jobs:
           noNewCommitBehavior: current
           noVersionBumpBehavior: current
 
-  build:
+  native-tests:
     needs: version
     if: needs.version.outputs.bump != 'none'
     strategy:
@@ -38,27 +38,12 @@ jobs:
           - runner: ubuntu-24.04
             os: linux
             arch: amd64
-            native_test: true
-          - runner: ubuntu-24.04
-            os: linux
-            arch: arm64
-            native_test: false
           - runner: macos-15
             os: darwin
             arch: arm64
-            native_test: true
-          - runner: macos-15
-            os: darwin
-            arch: amd64
-            native_test: false
           - runner: windows-2022
             os: windows
             arch: amd64
-            native_test: true
-          - runner: windows-2022
-            os: windows
-            arch: arm64
-            native_test: false
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
     env:
@@ -71,11 +56,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Build release asset with licenses and bundled Windows driver
+      - name: Build package for native installer checks
         shell: bash
         run: python scripts/package.py --os '${{ matrix.os }}' --arch '${{ matrix.arch }}' --version "$RELEASE_VERSION"
       - name: Unix installer latest/pin/offline/custom-path checks
-        if: matrix.native_test && runner.os != 'Windows'
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           bash scripts/ci/unix-installer.sh
@@ -87,37 +72,34 @@ jobs:
           "$RUNNER_TEMP/real package install/bin/peerimeter-agent" version --json > "$RUNNER_TEMP/installed-version.json"
           python -c 'import json,os; p=json.load(open(os.environ["RUNNER_TEMP"]+"/installed-version.json")); assert p["version"]==os.environ["RELEASE_VERSION"] and p["go_version"]=="go1.27.4"'
       - name: Windows installer latest/pin/offline/custom-path checks
-        if: matrix.native_test && runner.os == 'Windows'
+        if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/ci/windows-installer.ps1 -PackageDirectory ./dist
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release-package-${{ matrix.os }}-${{ matrix.arch }}
-          path: dist/peerimeter-agent-*
-          if-no-files-found: error
-          retention-days: 3
 
-  publish:
-    needs: [version, build]
+  release:
+    needs: [version, native-tests]
     if: needs.version.outputs.bump != 'none'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+    timeout-minutes: 30
+    env:
+      RELEASE_TAG: ${{ needs.version.outputs.tag }}
+      GOTOOLCHAIN: local
     steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          pattern: release-package-*
-          path: dist
-          merge-multiple: true
-      - name: Create checksums and publish tag/release
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Create local release tag for GoReleaser
+        run: git tag "$RELEASE_TAG" "$GITHUB_SHA"
+      - name: Build and publish with GoReleaser
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          version: v2.20.1
+          args: release --clean
         env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.version.outputs.tag }}
-          REPOSITORY: ${{ github.repository }}
-          TARGET_SHA: ${{ github.sha }}
-        run: |
-          cd dist
-          sha256sum peerimeter-agent-* > SHA256SUMS
-          cd ..
-          gh release create "$RELEASE_TAG" dist/peerimeter-agent-* dist/SHA256SUMS \
-            --repo "$REPOSITORY" --target "$TARGET_SHA" --title "$RELEASE_TAG" --generate-notes
+          GITHUB_TOKEN: ${{ github.token }}
