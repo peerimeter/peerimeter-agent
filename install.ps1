@@ -45,10 +45,10 @@ function Assert-InstallerAncestors([string]$Path) {
             $acl = Get-Acl -LiteralPath $parent.FullName
             if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $trusted) { throw 'Installation ancestors must be machine-owned trusted directories' }
             [long]$allowed = [long][Security.AccessControl.FileSystemRights]::ReadAndExecute -bor [long][Security.AccessControl.FileSystemRights]::Synchronize
-            # Windows volume roots and ProgramData permit creating new children;
-            # they must still prohibit deleting/replacing existing protected ones.
+            # Windows volume roots and ProgramData permit child creation and root
+            # metadata updates; protected children must remain irreplaceable.
             if ($null -eq $parent.Parent -or $parent.FullName.TrimEnd('\') -eq $env:ProgramData.TrimEnd('\')) {
-                $allowed = $allowed -bor [long][Security.AccessControl.FileSystemRights]::CreateFiles -bor [long][Security.AccessControl.FileSystemRights]::CreateDirectories
+                $allowed = $allowed -bor [long][Security.AccessControl.FileSystemRights]::CreateFiles -bor [long][Security.AccessControl.FileSystemRights]::CreateDirectories -bor [long][Security.AccessControl.FileSystemRights]::WriteExtendedAttributes -bor [long][Security.AccessControl.FileSystemRights]::WriteAttributes
             }
             foreach ($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
                 if ($rule.AccessControlType -eq 'Deny' -or $rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly -or $rule.IdentityReference.Value -in $trusted) { continue }
