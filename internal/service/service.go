@@ -63,11 +63,6 @@ func provision(cfg *Config, secure func(...string) error) (bool, error) {
 			return false, errors.New("peer public key matches the local interface key")
 		}
 	}
-	guard, err := local.Acquire(cfg.StateDirectory)
-	if err != nil {
-		return false, err
-	}
-	defer guard.Close()
 	destination := filepath.Join(cfg.StateDirectory, "service.json")
 	keyPath := filepath.Join(cfg.StateDirectory, "service.key")
 	if _, err := os.Lstat(destination); err == nil {
@@ -137,6 +132,12 @@ func provision(cfg *Config, secure func(...string) error) (bool, error) {
 // install is separated from OS registration so partial-registration failures and
 // safe secret-preserving retry can be tested without a privileged service manager.
 func install(cfg Config, register func(Config) error, secure func(...string) error) error {
+	guard, err := local.Acquire(cfg.StateDirectory)
+	if err != nil {
+		return err
+	}
+	defer guard.Close()
+	// Keep exclusive ownership across snapshot creation, registration and rollback.
 	created, err := provision(&cfg, secure)
 	if err != nil {
 		return err

@@ -41,8 +41,8 @@ cleanup() {
     done
   fi
   if [[ "$service_installed" == true ]]; then
-    "$AGENT" service stop --state-dir "$work/service-state" >/dev/null 2>&1
-    "$AGENT" service uninstall --state-dir "$work/service-state" >/dev/null 2>&1
+    "$AGENT" service stop >/dev/null 2>&1
+    "$AGENT" service uninstall >/dev/null 2>&1
     if [[ -e /etc/systemd/system/peerimeter-agent.service ]] || ip link show dev pm-service >/dev/null 2>&1; then
       echo 'Cleanup failed: the temporary systemd unit or its adapter remains.' >&2
       outcome=1
@@ -305,18 +305,18 @@ PY
 "$AGENT" service install --config "$work/service-config/peer-a.json" --state-dir "$work/service-state" --operator "$operator"
 service_installed=true
 systemctl is-enabled peerimeter-agent.service
-"$AGENT" service start --state-dir "$work/service-state"
+"$AGENT" service start
 wait_running '' "$work/service-state" "$work/service-status.json"
 operator_control '' "$work/service-state" status >"$work/service-operator-status.json"
 operator_control '' "$work/service-state" peers >"$work/service-operator-peers.json"
 operator_control '' "$work/service-state" sync
-"$AGENT" service stop --state-dir "$work/service-state"
+"$AGENT" service stop
 if ip link show dev pm-service >/dev/null 2>&1; then echo 'systemd stop left its interface behind.' >&2; exit 1; fi
-"$AGENT" service start --state-dir "$work/service-state"
+"$AGENT" service start
 wait_running '' "$work/service-state" "$work/service-restarted.json"
 operator_control '' "$work/service-state" status >"$work/service-operator-restarted.json"
-"$AGENT" service stop --state-dir "$work/service-state"
-"$AGENT" service uninstall --state-dir "$work/service-state"
+"$AGENT" service stop
+"$AGENT" service uninstall
 service_installed=false
 [[ ! -e /etc/systemd/system/peerimeter-agent.service ]]
 [[ -f "$work/service-state/service.json" && -f "$work/service-state/service.key" ]]
