@@ -63,11 +63,13 @@ required before the default latest-release install can succeed.
 Linux and macOS releases provide a direct executable and a checksummed license
 notices file (for example, `peerimeter-agent-linux-x86_64`). Windows releases
 provide a ZIP with the executable, signed WireGuardNT DLL and notices (for
-example, `peerimeter-agent-windows-x86_64.zip`). Asset names do not include the
-release version; the installer selects the version from the release tag.
+example, `peerimeter-agent-windows-x86_64.zip`).
 
 The installers default to the latest stable release and detect OS/architecture.
-Explicit versions and absolute installation directories are supported:
+Release asset names follow the Nix system naming convention (`x86_64` and
+`aarch64`) and do not include the version; the installer selects the version
+from the release tag. Explicit versions and absolute installation directories
+are supported:
 
 ### Linux and macOS
 
@@ -114,10 +116,11 @@ Start **Actions → Publish release → Run workflow** on `main`. The workflow
 uses the pinned `ietf-tools/semver-action` to read Conventional Commits since
 the latest stable tag: `feat` bumps minor, patch-level changes bump patch, and
 breaking changes bump major. If commits do not call for a version bump, package
-and release jobs are skipped. It builds and checks Linux, macOS and Windows
-packages, then creates the matching version tag and release with platform
-assets and `SHA256SUMS`. It does not reject or rewrite commits during normal
-CI.
+and release jobs are skipped. Native installer checks run on Linux, macOS and
+Windows; GoReleaser cross-builds both `x86_64` and `aarch64` assets for all
+three platforms, creates the Windows ZIP and `SHA256SUMS`, and publishes the
+matching version tag and release. It does not reject or rewrite commits during
+normal CI.
 
 ## Offline configuration
 

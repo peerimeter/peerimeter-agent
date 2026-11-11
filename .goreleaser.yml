@@ -1,0 +1,65 @@
+version: 2
+project_name: peerimeter-agent
+
+builds:
+  - id: agent
+    main: ./cmd/peerimeter-agent
+    binary: peerimeter-agent
+    env:
+      - CGO_ENABLED=0
+      - GOTOOLCHAIN=local
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/peerimeter/peerimeter-agent/internal/cli.Version={{ .Tag }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    hooks:
+      post:
+        - cmd: >-
+            python3 scripts/package.py --resources-only --target {{ .Target }}
+            --version {{ .Tag }}
+          output: true
+
+archives:
+  - id: agent
+    ids:
+      - agent
+    formats:
+      - binary
+    name_template: >-
+      peerimeter-agent-{{ .Os }}-{{ if eq .Arch "amd64" }}x86_64{{ else }}aarch64{{ end }}
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - src: 'dist/wireguard-{{ .Arch }}.dll'
+        dst: wireguard.dll
+      - src: 'dist/peerimeter-agent-{{ .Os }}-{{ if eq .Arch "amd64" }}x86_64{{ else }}aarch64{{ end }}.NOTICES.txt'
+        dst: peerimeter-agent.NOTICES.txt
+    wrap_in_directory: false
+
+checksum:
+  name_template: SHA256SUMS
+  algorithm: sha256
+  extra_files:
+    - glob: dist/peerimeter-agent-linux-*.NOTICES.txt
+    - glob: dist/peerimeter-agent-darwin-*.NOTICES.txt
+
+release:
+  github:
+    owner: peerimeter
+    name: peerimeter-agent
+  name_template: '{{ .Tag }}'
+  target_commitish: '{{ .Commit }}'
+  prerelease: auto
+  make_latest: true
+  extra_files:
+    - glob: dist/peerimeter-agent-linux-*.NOTICES.txt
+    - glob: dist/peerimeter-agent-darwin-*.NOTICES.txt

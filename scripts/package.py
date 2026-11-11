@@ -16,11 +16,23 @@ NT_URL = 'https://download.wireguard.com/wireguard-nt/wireguard-nt-1.1.zip'
 NT_SHA = 'dceb30a9bc4be48cce0f74160fc88a585a2c2627366e8f846fc6658f9038dace'
 parser = argparse.ArgumentParser()
 parser.add_argument('--version', required=True)
-parser.add_argument('--os', choices=['linux', 'darwin', 'windows'], required=True)
-parser.add_argument('--arch', choices=['amd64', 'arm64'], required=True)
+parser.add_argument('--os', choices=['linux', 'darwin', 'windows'])
+parser.add_argument('--arch', choices=['amd64', 'arm64'])
+parser.add_argument('--target', help='GoReleaser target in GOOS_GOARCH form')
 parser.add_argument('--output', default='dist')
 parser.add_argument('--binary', help='existing binary built for the selected target')
+parser.add_argument('--resources-only', action='store_true', help='prepare notices and the Windows driver for GoReleaser')
 args = parser.parse_args()
+if args.target:
+    try:
+        target_os, target_arch = args.target.split('_', 1)
+    except ValueError:
+        parser.error('--target must use GOOS_GOARCH form')
+    if args.os and args.os != target_os or args.arch and args.arch != target_arch:
+        parser.error('--target conflicts with --os or --arch')
+    args.os, args.arch = target_os, target_arch
+if args.os not in ('linux', 'darwin', 'windows') or args.arch not in ('amd64', 'arm64'):
+    parser.error('provide a supported --os/--arch pair or --target')
 if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', args.version):
     parser.error('version must be a v-prefixed release tag')
 env = dict(os.environ, GOOS=args.os, GOARCH=args.arch, CGO_ENABLED='0')
@@ -32,13 +44,14 @@ with tempfile.TemporaryDirectory(prefix='peerimeter-package-') as tmp:
     root = Path(tmp)
     binary_name = 'peerimeter-agent' + ('.exe' if args.os == 'windows' else '')
     binary = root / binary_name
-    if args.binary:
-        binary.write_bytes(Path(args.binary).read_bytes())
-    else:
-        subprocess.run(['go', 'build', '-mod=readonly', '-trimpath', '-ldflags',
-                        '-s -w -X github.com/peerimeter/peerimeter-agent/internal/cli.Version=' + args.version,
-                        '-o', str(binary), './cmd/peerimeter-agent'], env=env, check=True)
-    binary.chmod(0o755)
+    if not args.resources_only:
+        if args.binary:
+            binary.write_bytes(Path(args.binary).read_bytes())
+        else:
+            subprocess.run(['go', 'build', '-mod=readonly', '-trimpath', '-ldflags',
+                            '-s -w -X github.com/peerimeter/peerimeter-agent/internal/cli.Version=' + args.version,
+                            '-o', str(binary), './cmd/peerimeter-agent'], env=env, check=True)
+        binary.chmod(0o755)
     # Include license notices for every module present in this target's build.
     raw = subprocess.check_output(['go', 'list', '-deps', '-json', './cmd/peerimeter-agent'], env=env, text=True, encoding="utf-8")
     decoder = json.JSONDecoder()
@@ -83,6 +96,13 @@ with tempfile.TemporaryDirectory(prefix='peerimeter-package-') as tmp:
                 notices.append(archive.read(name).decode(errors='replace') + '\n')
     (root / 'peerimeter-agent.NOTICES.txt').write_text(''.join(notices))
     asset_arch = {'amd64': 'x86_64', 'arm64': 'aarch64'}[args.arch]
+    if args.resources_only:
+        (output / f'peerimeter-agent-{args.os}-{asset_arch}.NOTICES.txt').write_bytes(
+            (root / 'peerimeter-agent.NOTICES.txt').read_bytes()
+        )
+        if args.os == 'windows':
+            (output / f'wireguard-{args.arch}.dll').write_bytes((root / 'wireguard.dll').read_bytes())
+        raise SystemExit(0)
     suffix = '.zip' if args.os == 'windows' else ''
     asset = output / f'peerimeter-agent-{args.os}-{asset_arch}{suffix}'
     if args.os == 'windows':
