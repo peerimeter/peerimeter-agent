@@ -14,9 +14,10 @@ var ErrUnavailable = errors.New("native WireGuard agent runtime is unavailable i
 
 // Desired includes private material only in memory; never serialize or log it.
 type Desired struct {
-	Config        config.Config
-	InterfaceName string
-	PrivateKey    [32]byte
+	Config         config.Config
+	InterfaceName  string
+	PrivateKey     [32]byte
+	OwnershipToken string
 }
 type PeerState struct {
 	PublicKey     string    `json:"public_key"`
@@ -47,10 +48,5 @@ type Session interface {
 	Close(context.Context) error
 }
 
-// Native makes the incomplete implementation explicit; no fake running tunnel.
-func Native() Backend { return unavailable{} }
-
-type unavailable struct{}
-
-func (unavailable) Start(context.Context, Desired) (Session, error) { return nil, ErrUnavailable }
-func (unavailable) Inspect(context.Context) (Snapshot, error)       { return Snapshot{}, ErrUnavailable }
+// Native selects this OS's real WireGuard adapter implementation.
+func Native() Backend { return nativeBackend{} }

@@ -1,15 +1,17 @@
-name: WireGuard backend feasibility
+name: Native agent WireGuard integration
 on:
+  push:
+    paths-ignore: ['**/*.md']
   pull_request:
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: backend-feasibility-${{ github.ref }}
+  group: agent-integration-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  backend:
-    name: Backend / ${{ matrix.os }}
+  agent:
+    name: Agent / ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -18,6 +20,8 @@ jobs:
     timeout-minutes: 20
     env:
       GOTOOLCHAIN: local
+      CGO_ENABLED: '0'
+      AGENT_EXE: peerimeter-agent${{ matrix.os == 'windows-2022' && '.exe' || '' }}
       PROBE_EXE: pmprobe${{ matrix.os == 'windows-2022' && '.exe' || '' }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -25,40 +29,38 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Build reference peer (separate test module)
-        if: runner.os != 'Linux'
+      - name: Build actual agent and reference peer
         shell: bash
         run: |
           test "$(go env GOVERSION | tr -d '\r')" = go1.27.4
-          go build -C tests/backendprobe -mod=readonly -o "$RUNNER_TEMP/$PROBE_EXE" .
-      - name: Build pinned official Unix backend tools
-        if: runner.os != 'Windows'
-        shell: bash
-        run: bash scripts/ci/install-unix-backend.sh "$RUNNER_TEMP/backend-tools"
-      - name: Install verified official Windows test prerequisites
+          go build -mod=readonly -o "$RUNNER_TEMP/$AGENT_EXE" ./cmd/peerimeter-agent
+          if [ "$RUNNER_OS" != Linux ]; then
+            go build -C tests/backendprobe -mod=readonly -o "$RUNNER_TEMP/$PROBE_EXE" .
+          fi
+      - name: Prepare bundled signed Windows driver
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/ci/install-windows-backend.ps1
-      - name: Probe Linux kernel backend
+        run: ./scripts/ci/prepare-wireguardnt.ps1 -Destination $env:RUNNER_TEMP
+      - name: Two Linux agents and systemd lifecycle
         if: runner.os == 'Linux'
         id: linux
         shell: bash
-        run: sudo env PATH="$RUNNER_TEMP/backend-tools:$PATH" bash scripts/ci/linux-backend.sh
-      - name: Probe macOS native utun backend
+        run: sudo bash scripts/ci/linux-agent.sh "$RUNNER_TEMP/$AGENT_EXE"
+      - name: macOS agent traffic and launchd lifecycle
         if: runner.os == 'macOS'
         id: macos
         shell: bash
-        run: sudo env PATH="$RUNNER_TEMP/backend-tools:$PATH" bash scripts/ci/macos-backend.sh "$RUNNER_TEMP/pmprobe"
-      - name: Probe Windows native WireGuardNT backend
+        run: sudo bash scripts/ci/macos-agent.sh "$RUNNER_TEMP/$AGENT_EXE" "$RUNNER_TEMP/$PROBE_EXE"
+      - name: Windows agent traffic and SCM lifecycle
         if: runner.os == 'Windows'
         id: windows
         shell: pwsh
-        run: ./scripts/ci/windows-backend.ps1 -Helper "$env:RUNNER_TEMP/pmprobe.exe"
-      - name: Record backend evidence
+        run: ./scripts/ci/windows-agent.ps1 -Agent "$env:RUNNER_TEMP/$env:AGENT_EXE" -Helper "$env:RUNNER_TEMP/$env:PROBE_EXE"
+      - name: Record native agent evidence
         if: always()
         shell: bash
         env:
-          PROBE_KIND: native-backend-feasibility-not-agent-integration
+          PROBE_KIND: native-agent-integration-v1
           PROBE_OUTCOME: ${{ steps.linux.outcome == 'success' || steps.macos.outcome == 'success' || steps.windows.outcome == 'success' }}
         run: |
           if [ "$PROBE_OUTCOME" = true ]; then export PROBE_OUTCOME=success; fi
@@ -66,7 +68,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: backend-result-${{ matrix.os }}
+          name: agent-result-${{ matrix.os }}
           path: ${{ runner.temp }}/peerimeter-result.json
           if-no-files-found: error
           retention-days: 14
