@@ -13,6 +13,8 @@ $pinned = Join-Path $base 'pinned custom path'
 $badTarget = Join-Path $base 'must not install'
 $defaultTarget = Join-Path $env:ProgramFiles 'Peerimeter'
 $defaultInstalled = $false
+$programDataTarget = Join-Path $env:ProgramData ('Peerimeter Installer CI ' + [guid]::NewGuid().ToString('N') + ' custom path')
+$programDataCreated = $false
 $arch = switch ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()) { 'x64' {'amd64'} 'arm64' {'arm64'} default {throw 'Unsupported test architecture'} }
 if (-not $Archive) {
     if (-not $PackageDirectory) { throw 'Supply -PackageDirectory or -Archive' }
@@ -117,6 +119,11 @@ try {
     & $Installer -Archive $Archive -SHA256 $checksum -InstallDir $offline
     Assert-Package $offline
     Write-Output 'PASS offline local ZIP install, custom path with spaces, complete signed WireGuardNT bundle and native CLI'
+    if (Test-Path -LiteralPath $programDataTarget) { throw 'Random ProgramData fixture destination is already occupied' }
+    $programDataCreated = $true
+    & $Installer -Archive $Archive -SHA256 $checksum -InstallDir $programDataTarget
+    Assert-Package $programDataTarget
+    Write-Output 'PASS actual custom ProgramData installer path with standard shared-root metadata ACL and protected package/inventory'
 
     # Add a deliberately unsafe explicit grant; an upgrade must construct a
     # fresh directory/file ACL instead of retaining unrelated icacls grants.
@@ -179,7 +186,7 @@ try {
 
     $externalCLI = Join-Path $base 'uninstall verifier.exe'
     Copy-Item -LiteralPath (Join-Path $offline 'peerimeter-agent.exe') -Destination $externalCLI
-    foreach ($directory in @($offline,$latest,$pinned,$defaultTarget)) { Remove-InstalledPackage $directory $externalCLI }
+    foreach ($directory in @($offline,$latest,$pinned,$defaultTarget,$programDataTarget)) { Remove-InstalledPackage $directory $externalCLI }
     $defaultInstalled = $false
     Write-Output 'PASS native installed packages full uninstall, read-only dry-run, bounded self-removal and unrelated-file/idempotency checks'
 } finally {
@@ -193,6 +200,7 @@ try {
         Remove-Item -LiteralPath (Join-Path $defaultTarget 'unrelated.txt') -Force
         if (-not @(Get-ChildItem -LiteralPath $defaultTarget -Force).Count) { Remove-Item -LiteralPath $defaultTarget }
     }
+    if ($programDataCreated -and (Test-Path -LiteralPath $programDataTarget)) { Remove-Item -LiteralPath $programDataTarget -Recurse -Force }
     if (Test-Path -LiteralPath $base) { Remove-Item -LiteralPath $base -Recurse -Force }
 }
 Write-Output 'PASS Windows installer test cleanup'
