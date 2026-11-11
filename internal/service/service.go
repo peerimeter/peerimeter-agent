@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
@@ -326,7 +327,7 @@ func migrate(cfg Config, unregister func(Config) error, register func(Config) er
 	if err := startup.Check(); err != nil {
 		return err
 	}
-	guard, err := local.Acquire(cfg.StateDirectory)
+	guard, err := acquireMigrationState(context.Background(), cfg.StateDirectory)
 	if err != nil {
 		return err
 	}
@@ -399,4 +400,31 @@ func planAndClaimLegacy(startup profilePlanner, legacy Config) error {
 	}
 	planned.ClaimConfig = true
 	return startup.RegisterProfile(planned)
+}
+
+// Native supervisor removal can return before the old process releases its
+// kernel lock (notably launchd bootout). Wait for proof instead of unlinking or
+// bypassing the live legacy lock; malformed paths fail immediately.
+func acquireMigrationState(ctx context.Context, directory string) (*local.Guard, error) {
+	bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		guard, err := local.TryAcquireExisting(directory)
+		if err == nil {
+			if guard == nil {
+				return nil, errors.New("legacy persistent state disappeared during supervisor shutdown")
+			}
+			return guard, nil
+		}
+		if !errors.Is(err, local.ErrBusy) {
+			return nil, err
+		}
+		select {
+		case <-bounded.Done():
+			return nil, errors.Join(errors.New("legacy manager shutdown was not established; migration data was preserved"), bounded.Err(), err)
+		case <-ticker.C:
+		}
+	}
 }

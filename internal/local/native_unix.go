@@ -5,6 +5,7 @@ package local
 import (
 	"context"
 	"errors"
+	"fmt"
 	"golang.org/x/sys/unix"
 	"net"
 	"os"
@@ -41,9 +42,12 @@ func openStateLock(dir string, existing bool) (*os.File, error) {
 		unix.Close(fd)
 		return nil, errors.New("state lock requires an owned directory without group/other read or write permissions")
 	}
-	if unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB) != nil {
+	if err := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		unix.Close(fd)
-		return nil, errors.New("another agent already owns this state directory")
+		if err == unix.EWOULDBLOCK || err == unix.EAGAIN {
+			return nil, fmt.Errorf("%w: another agent already owns this state directory", ErrBusy)
+		}
+		return nil, errors.New("cannot lock protected state directory")
 	}
 	return os.NewFile(uintptr(fd), "agent-state-directory-lock"), nil
 }
@@ -201,9 +205,12 @@ func compatibilityLock(dir string) (*os.File, error) {
 		unix.Close(fd)
 		return nil, errors.New("legacy agent lock has unsafe ownership or permissions")
 	}
-	if unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB) != nil {
+	if err := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		unix.Close(fd)
-		return nil, errors.New("a legacy agent still owns this state directory")
+		if err == unix.EWOULDBLOCK || err == unix.EAGAIN {
+			return nil, fmt.Errorf("%w: a legacy agent still owns this state directory", ErrBusy)
+		}
+		return nil, errors.New("cannot lock protected legacy coordination file")
 	}
 	return os.NewFile(uintptr(fd), "legacy-agent-lock"), nil
 }
