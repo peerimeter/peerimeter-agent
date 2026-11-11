@@ -16,6 +16,9 @@ func trustedSystemAlias(path string, info os.FileInfo) bool {
 	return runtime.GOOS == "darwin" && ok && st.Uid == 0 && (path == "/etc" || path == "/var" || path == "/tmp")
 }
 func checkTrust(path string, info os.FileInfo, directory bool) error {
+	return checkTrustWithPolicy(path, info, directory, false)
+}
+func checkTrustWithPolicy(path string, info os.FileInfo, directory, allowInsecureDirectory bool) error {
 	st, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return errors.New("cannot verify installation resource ownership")
@@ -31,7 +34,7 @@ func checkTrust(path string, info os.FileInfo, directory bool) error {
 		return errors.New("installation files must not have hard links")
 	}
 	sticky := directory && st.Uid == 0 && info.Mode()&os.ModeSticky != 0
-	if info.Mode().Perm()&0022 != 0 && !sticky {
+	if info.Mode().Perm()&0022 != 0 && !sticky && !(directory && allowInsecureDirectory) {
 		return errors.New("installation resource grants group or other write access")
 	}
 	return checkExtendedTrust(path, false, directory)

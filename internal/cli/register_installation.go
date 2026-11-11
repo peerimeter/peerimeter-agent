@@ -13,6 +13,7 @@ import (
 
 func newRegisterInstallationCommand(app *application) *cobra.Command {
 	var dir string
+	var allowInsecureInstallDir bool
 	cmd := &cobra.Command{Use: "register-installation", Hidden: true, Args: noArguments, RunE: app.handle(func(*cobra.Command) error {
 		exe, err := os.Executable()
 		if err != nil {
@@ -33,12 +34,13 @@ func newRegisterInstallationCommand(app *application) *cobra.Command {
 		if !same {
 			return errors.New("installation registration must run from the selected installed program directory")
 		}
-		if err := installstate.Register(dir); err != nil {
+		if err := installstate.RegisterWithPolicy(dir, allowInsecureInstallDir); err != nil {
 			return err
 		}
 		return json.NewEncoder(app.out).Encode(map[string]string{"state": "registered"})
 	})}
 	cmd.Flags().StringVar(&dir, "install-dir", "", "Absolute installed program directory")
+	cmd.Flags().BoolVar(&allowInsecureInstallDir, "allow-insecure-install-dir", false, "Allow group/other writable installation directories (keeps owner and link checks)")
 	_ = cmd.MarkFlagRequired("install-dir")
 	return cmd
 }

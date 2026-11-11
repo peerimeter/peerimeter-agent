@@ -78,6 +78,10 @@ curl -fsSL https://agent.peerimeter.app/install.sh | sh -s -- --install-dir "$HO
 # Select a version and install it system-wide.
 curl -fsSL https://agent.peerimeter.app/install.sh | sudo sh -s -- --version v0.1.0 --install-dir /usr/local/bin
 
+# Termux: explicitly allow writable shared /data ancestors. Owner and
+# symbolic-link/reparse-point checks remain enabled.
+curl -fsSL https://agent.peerimeter.app/install.sh | sh -s -- --install-dir "$PREFIX/bin" --allow-insecure-install-dir
+
 # Running the checked-out script also works:
 sh install.sh --version latest --install-dir "$HOME/.local/bin"
 ```
@@ -89,6 +93,8 @@ sh install.sh --version latest --install-dir "$HOME/.local/bin"
 .\install.ps1
 .\install.ps1 -Version v0.1.0 -InstallDir 'C:\Program Files\Peerimeter'
 .\install.ps1 -Version latest -InstallDir 'D:\Tools\Peerimeter Agent'
+# Explicitly allow writable installation ancestors when needed.
+.\install.ps1 -InstallDir 'D:\Tools\Peerimeter Agent' -AllowInsecureInstallDir
 ```
 
 ### Package verification

@@ -37,6 +37,9 @@ func trusted(sid *windows.SID, all []*windows.SID) bool {
 	return false
 }
 func checkACL(path string, private, directory bool) error {
+	return checkACLWithPolicy(path, private, directory, false)
+}
+func checkACLWithPolicy(path string, private, directory, allowInsecureDirectory bool) error {
 	sd, e := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if e != nil {
 		return errors.New("installation security descriptor unavailable")
@@ -68,6 +71,9 @@ func checkACL(path string, private, directory bool) error {
 		if trusted((*windows.SID)(unsafe.Pointer(&a.SidStart)), all) {
 			continue
 		}
+		if allowInsecureDirectory && directory && !private {
+			continue
+		}
 		if !allowedUntrustedAccess(uint32(a.Mask), path, directory, private) {
 			return errors.New("installation resource grants unsafe Windows access")
 		}
@@ -87,6 +93,9 @@ func allowedUntrustedAccess(mask uint32, path string, directory, private bool) b
 }
 
 func checkTrust(path string, info os.FileInfo, directory bool) error {
+	return checkTrustWithPolicy(path, info, directory, false)
+}
+func checkTrustWithPolicy(path string, info os.FileInfo, directory, allowInsecureDirectory bool) error {
 	if !directory {
 		name, err := windows.UTF16PtrFromString(path)
 		if err != nil {
@@ -102,6 +111,9 @@ func checkTrust(path string, info os.FileInfo, directory bool) error {
 		if err != nil || metadata.NumberOfLinks != 1 || metadata.FileAttributes&(windows.FILE_ATTRIBUTE_REPARSE_POINT|windows.FILE_ATTRIBUTE_DIRECTORY) != 0 {
 			return errors.New("installation files must not have hard links or reparse points")
 		}
+	}
+	if allowInsecureDirectory && directory {
+		return checkACLWithPolicy(path, false, directory, true)
 	}
 	return checkACL(path, false, directory)
 }
