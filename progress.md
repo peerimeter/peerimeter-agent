@@ -2,7 +2,7 @@
 
 ## Current status
 
-Phase 0 in progress. First native Go 1.27.4 CI run passed Linux/macOS and failed Windows; backend feasibility passed all three OSes.
+Phase 0 baseline natively verified on all three platforms with Go 1.27.4. Backend feasibility also passed all three. Phase 0 remains open for operational run/status/peers, delivered with the Phase 1 native/IPC backends.
 No agent-managed WireGuard tunnel or service implementation is claimed.
 
 ## Phase checklist
@@ -44,7 +44,7 @@ No agent-managed WireGuard tunnel or service implementation is claimed.
 - All three workflows pass actionlint; Bash scripts pass `bash -n`.
 - Pinned official Unix `wg` source built locally successfully.
 - Local race check is unavailable: ThreadSanitizer rejects this ARM64 VMA layout.
-- No native runner result is recorded until the actual workflow runs complete.
+- Native runner results are recorded below with the exact tested code commit.
 
 ## Verification matrix
 
@@ -52,7 +52,7 @@ No agent-managed WireGuard tunnel or service implementation is claimed.
 |---|---|---|---|
 | ubuntu-24.04 | passed | passed | not run |
 | macos-15 | passed | passed | not run |
-| windows-2022 | failed | passed | not run |
+| windows-2022 | passed | passed | not run |
 
 ## Limitations and next actions
 
@@ -83,3 +83,25 @@ Go 1.27.4 is pinned by project requirement. Self-update belongs to Phase 7.
   backend feasibility, not agent integration or mixed-OS connectivity.
 - Follow-up adds macOS opened-descriptor extended ACL checks and native ACL tests.
   All modified code needs a new native CI run before claiming verification.
+
+## Follow-up native evidence — 2026-11-11
+
+[Native CI](https://github.com/peerimeter/peerimeter-agent/actions/runs/42943244505)
+passed on **all three** runners at tested commit
+`ef0abfcf23c385355f383eeda69509eb33dc2962`: exact Go 1.27.4, formatting,
+vet, race/unit tests, build, version, fresh protected example generation and
+both configurations validated offline. The Windows gate failure from the initial
+run is resolved. macOS extended-ACL tests pass natively, including inherited
+read ACL rejection before key bytes are written. Windows DACL positive/negative
+tests also pass natively.
+
+Backend feasibility remains verified at
+`ebb4a1f880e39e2ca1003d9551c185a76ee81069`, separate from the CLI test commit.
+Ubuntu x64 image `20261101.360.1`, macOS ARM64 image `20261104.0514.1`, Windows x64
+image `20261101.353.1`. Backend prerequisites and exact source/MSI pins are in
+`tests/backendprobe/README.md`; evidence artifacts contain no secret material.
+No agent connectivity, service lifecycle or cross-OS connectivity pass is claimed.
+
+Next: implement the real Phase 1 adapters/IPC so `run`, `status`, `peers` and
+service commands become operational. The other Phase 0 checklist items are
+implemented and natively tested. The service repository remains unstarted.
