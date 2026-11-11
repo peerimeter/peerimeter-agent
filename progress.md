@@ -302,3 +302,8 @@ segfaults in this Termux/Nix environment, so native Go 1.27.4 CI is pending.
 No live STUN request or native per-OS port test was run in this turn. Phase 1's
 original accepted scope remains complete; STUN add-on native review/verification
 is pending.
+
+Default STUN fallback now tries Google's `stun.l.google.com`, `stun1.l.google.com`
+and `stun2.l.google.com` on UDP 19302 in sequence. `--server` selects a single
+custom server. A diagnostic local build passed; native CI and live fallback
+behavior remain pending.

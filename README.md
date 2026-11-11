@@ -300,6 +300,8 @@ peerimeter-agent stun 51820
 peerimeter-agent stun --server stun.l.google.com:19302 51820
 ```
 
-The JSON result includes the bound local address and the mapped public address.
-A STUN mapping alone does not establish WireGuard connectivity or promise NAT
-traversal.
+By default, the command tries `stun.l.google.com:19302`, `stun1.l.google.com:19302`,
+and `stun2.l.google.com:19302` in order, advancing when a server fails. The
+`--server` option selects one server and disables fallback. The JSON result
+includes the bound local address and the mapped public address. A STUN mapping
+alone does not establish WireGuard connectivity or promise NAT traversal.
