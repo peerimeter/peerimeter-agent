@@ -18,16 +18,16 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--version', required=True)
 parser.add_argument('--os', choices=['linux', 'darwin', 'windows'])
 parser.add_argument('--arch', choices=['amd64', 'arm64'])
-parser.add_argument('--target', help='GoReleaser target in GOOS_GOARCH form')
+parser.add_argument('--target', help='GoReleaser target in GOOS_GOARCH[_variant] form')
 parser.add_argument('--output', default='dist')
 parser.add_argument('--binary', help='existing binary built for the selected target')
 parser.add_argument('--resources-only', action='store_true', help='prepare notices and the Windows driver for GoReleaser')
 args = parser.parse_args()
 if args.target:
-    try:
-        target_os, target_arch = args.target.split('_', 1)
-    except ValueError:
-        parser.error('--target must use GOOS_GOARCH form')
+    target = re.fullmatch(r'(linux|darwin|windows)_(amd64|arm64)(?:_v[0-9]+)?', args.target)
+    if not target:
+        parser.error('--target must be a supported GoReleaser GOOS_GOARCH target')
+    target_os, target_arch = target.groups()
     if args.os and args.os != target_os or args.arch and args.arch != target_arch:
         parser.error('--target conflicts with --os or --arch')
     args.os, args.arch = target_os, target_arch
