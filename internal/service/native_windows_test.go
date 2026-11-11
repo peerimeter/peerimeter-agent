@@ -68,3 +68,16 @@ func TestWindowsServiceArgumentsDelegateOperator(t *testing.T) {
 		t.Fatal("Windows service must preserve the explicit local operator identity")
 	}
 }
+
+func TestWindowsReadOnlyProbeRejectsAmbiguousUnquotedServicePath(t *testing.T) {
+	executable := `C:\Program Files\Peerimeter\peerimeter-agent.exe`
+	if owned, err := windowsRegistrationUsesExecutable(`"`+executable+`" run --config C:\config.json`, executable); err != nil || !owned {
+		t.Fatal("quoted own service was not detected", err)
+	}
+	if owned, err := windowsRegistrationUsesExecutable(executable+` run`, executable); err == nil || owned {
+		t.Fatal("ambiguous unquoted spaced executable was treated as foreign")
+	}
+	if owned, err := windowsRegistrationUsesExecutable(`C:\Windows\System32\svchost.exe -k LocalService`, executable); err != nil || owned {
+		t.Fatal("unrelated unambiguous service executable was changed", err)
+	}
+}

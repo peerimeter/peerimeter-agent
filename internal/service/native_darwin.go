@@ -203,3 +203,101 @@ func RemoveOwned(ctx context.Context, expectedExe string, cfg Config) error {
 	}
 	return nativeManage("uninstall", cfg)
 }
+
+func HasOwnedRegistration(ctx context.Context, expectedExe string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	data, err := os.ReadFile(darwinServicePlist)
+	if os.IsNotExist(err) {
+		if darwinLaunchctl("print", "system/"+darwinServiceLabel) == nil {
+			return false, errors.New("a loaded launchd registration has no inspectable plist; program files were preserved")
+		}
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if len(data) > 65536 {
+		return false, errors.New("launchd registration is oversized")
+	}
+	return darwinRegistrationUsesExecutable(data, expectedExe)
+}
+func darwinRegistrationUsesExecutable(data []byte, expectedExe string) (bool, error) {
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	depth := 0
+	dictionary := 0
+	key := ""
+	seen := map[string]bool{}
+	program := ""
+	argumentZero := ""
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return false, errors.New("cannot inspect launchd executable registration")
+		}
+		switch token := token.(type) {
+		case xml.StartElement:
+			depth++
+			if token.Name.Local == "dict" && dictionary == 0 {
+				dictionary = depth
+				continue
+			}
+			if depth != dictionary+1 {
+				continue
+			}
+			if token.Name.Local == "key" {
+				if err := decoder.DecodeElement(&key, &token); err != nil {
+					return false, err
+				}
+				depth--
+				if seen[key] {
+					return false, errors.New("ambiguous duplicate launchd registration key")
+				}
+				seen[key] = true
+				continue
+			}
+			if key == "Program" {
+				if token.Name.Local != "string" {
+					return false, errors.New("invalid launchd Program registration")
+				}
+				if err := decoder.DecodeElement(&program, &token); err != nil {
+					return false, err
+				}
+				depth--
+				key = ""
+				continue
+			}
+			if key == "ProgramArguments" {
+				if token.Name.Local != "array" {
+					return false, errors.New("invalid launchd ProgramArguments registration")
+				}
+				var args struct {
+					Values []string `xml:"string"`
+				}
+				if err := decoder.DecodeElement(&args, &token); err != nil {
+					return false, err
+				}
+				depth--
+				if len(args.Values) > 0 {
+					argumentZero = args.Values[0]
+				}
+				key = ""
+			}
+		case xml.EndElement:
+			depth--
+		}
+	}
+	// launchd executes Program when present; argv[0] may deliberately differ.
+	executable := program
+	if executable == "" {
+		executable = argumentZero
+	}
+	if executable == "" || !filepath.IsAbs(executable) {
+		return false, errors.New("launchd registration does not expose an unambiguous absolute executable")
+	}
+	return equalServicePath(executable, expectedExe), nil
+}

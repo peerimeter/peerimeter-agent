@@ -162,18 +162,22 @@ snapshot "$base/original credentials" >"$base/original-before.json"
 program_default=/usr/local/bin
 # Hosted images deliberately permit runner/convenience-group writes to
 # /usr/local. A system-service executable requires trusted ancestors. Prepare
-# only this fixed prefix on the disposable VM and restore its original metadata
+# only the default resource ancestors on the disposable VM and restore metadata
 # on exit; no product permission checks are weakened by the fixture.
-python3 - "$program_default" "$base/default-parent-permissions.json" <<'PYTRUST'
+python3 - "$base/default-parent-permissions.json" "$program_default" "$defaults_config" "$defaults_state" "$defaults_runtime" <<'PYTRUST'
 import json,os,pathlib,stat,sys
-p=pathlib.Path(sys.argv[1]);records=[]
-for directory in [p]+list(p.parents):
- s=directory.lstat()
- print('CI default program ancestor:',directory,'uid='+str(s.st_uid),'mode='+oct(stat.S_IMODE(s.st_mode)))
- assert stat.S_ISDIR(s.st_mode),'default install ancestor must be an existing real directory'
- assert s.st_uid==0 or str(directory) in ('/usr/local','/usr/local/bin'),'unexpected ownership outside the disposable test prefix'
- records.append(dict(path=str(directory),uid=s.st_uid,gid=s.st_gid,mode=stat.S_IMODE(s.st_mode)))
-with open(sys.argv[2],'w') as f:json.dump(records,f)
+records=[];seen=set()
+for target in sys.argv[2:]:
+ p=pathlib.Path(target).resolve()
+ for directory in [p]+list(p.parents):
+  if directory in seen or not directory.exists():continue
+  seen.add(directory)
+  s=directory.lstat()
+  print('CI default resource ancestor:',directory,'uid='+str(s.st_uid),'mode='+oct(stat.S_IMODE(s.st_mode)))
+  assert stat.S_ISDIR(s.st_mode),'default resource ancestor must be an existing real directory'
+  assert s.st_uid==0 or str(directory) in ('/usr/local','/usr/local/bin'),'unexpected ownership outside the disposable test prefix'
+  records.append(dict(path=str(directory),uid=s.st_uid,gid=s.st_gid,mode=stat.S_IMODE(s.st_mode)))
+with open(sys.argv[1],'w') as f:json.dump(records,f)
 for item in records:
  if item['uid']!=0:os.chown(item['path'],0,item['gid'])
  if item['mode']&0o022:os.chmod(item['path'],item['mode']&~0o022)

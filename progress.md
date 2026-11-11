@@ -3,7 +3,7 @@
 ## Current status
 
 ✅ Phase 0 complete. 🔄 Phase 1 in progress after native verification and independent
-review. ⬜ Phase 2 has not started. Final reviewed code: `4246c6b`; exact native
+review. ⬜ Phase 2 has not started. Last fully verified core: `4246c6b`; exact native
 unit/package and agent integration SHAs, run links and limitations below.
 
 ## Phase checklist
@@ -218,3 +218,23 @@ CGO disabled and a private logical /tmp (the Termux physical TMPDIR ancestors ar
 correctly rejected as writable). Windows/macOS builds passed. These are not the
 required native Go 1.27.4 evidence: new native CI and final independent review are
 pending. ✅ Phase 0 remains complete; 🔄 Phase 1 remains open until those gates pass.
+
+## Closing review and native follow-up — 2026-11-11
+
+At `8f247070fb6c4ff571c0de58b8c85196f4d1d9da`,
+[Native CI](https://github.com/peerimeter/peerimeter-agent/actions/runs/42998147614)
+passed exact Go 1.27.4 vet/race/unit/build/CLI checks on all three platforms.
+[Integration](https://github.com/peerimeter/peerimeter-agent/actions/runs/42998147627)
+and [package/installer tests](https://github.com/peerimeter/peerimeter-agent/actions/runs/42998147753)
+failed; follow-up corrects legacy profile planning before configuration claim,
+Windows helper SHA-256 hashing without PowerShell module dependencies, Unix
+installer symlink expectations and macOS default resource ancestor preparation.
+Product trusted-path checks remain enforced.
+
+Independent reviewer `/root/phase1_review` reviewed exact `8f24707` (inherited
+parent model; concrete model identifier unavailable). Config ownership, runtime
+identity, migration tracking and held Windows deletion guards passed review.
+The remaining blocker requires detecting service registrations belonging to this
+executable even when an upgraded pre-inventory installation has no service
+profile. Follow-up adds a conservative pre-deletion guard and regression tests.
+Final independent delta review and fresh native runs are still required.

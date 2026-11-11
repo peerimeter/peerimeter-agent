@@ -127,3 +127,28 @@ func TestLinuxInstallNeverReplacesAnotherPeerimeterUnit(t *testing.T) {
 		t.Fatal("identical installation needlessly rewrote the service unit")
 	}
 }
+
+func TestLinuxReadOnlyRegistrationMatchesExactExecutable(t *testing.T) {
+	executable := `/opt/Peerimeter Agent/bin/peerimeter-agent$literal%name`
+	unit, err := linuxServiceUnit(executable, Config{ConfigPath: "/etc/peerimeter/service.json", StateDirectory: "/var/lib/peerimeter-agent", RuntimeDirectory: "/run/peerimeter-agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owned, err := linuxRegistrationUsesExecutable(unit, executable); err != nil || !owned {
+		t.Fatalf("own pre-inventory registration was not found: %v", err)
+	}
+	if owned, err := linuxRegistrationUsesExecutable(unit, executable+"-other"); err != nil || owned {
+		t.Fatal("foreign executable matched service ownership")
+	}
+	if owned, err := linuxRegistrationUsesExecutable([]byte("ExecStart=\"unterminated\n"), executable); err == nil || owned {
+		t.Fatal("ambiguous executable inspection did not fail closed")
+	}
+}
+
+func TestLinuxReadOnlyProbeRejectsUnsupportedUnquotedEscapes(t *testing.T) {
+	for _, command := range []string{`/opt/Peerimeter\x20Agent/peerimeter-agent run`, `/opt/%n/peerimeter-agent run`, `/opt/$INSTALL/peerimeter-agent run`} {
+		if owned, err := linuxRegistrationUsesExecutable([]byte("ExecStart="+command+"\n"), "/opt/Peerimeter Agent/peerimeter-agent"); err == nil || owned {
+			t.Fatal("ambiguous unquoted executable was classified as safely foreign")
+		}
+	}
+}

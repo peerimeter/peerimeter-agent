@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -305,5 +306,75 @@ func TestFailedForeignConfigIntentDoesNotDeleteInstalledCredentials(t *testing.T
 	}
 	if _, err := installstate.Load(owner); err != nil {
 		t.Fatal("another installation's registry was removed")
+	}
+}
+
+func TestUntrackedNativeRegistrationBlocksProgramAndIdentityDeletion(t *testing.T) {
+	dir, p := prepareUninstall(t)
+	inv, err := installstate.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv.Profiles = nil // Legacy upgrade / registration succeeded before profile save.
+	data, _ := json.Marshal(inv)
+	if err := installstate.WritePrivate(filepath.Join(dir, installstate.Filename), data); err != nil {
+		t.Fatal(err)
+	}
+	originalManifest, err := os.ReadFile(filepath.Join(dir, installstate.Filename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	calls := 0
+	probe := func(ctx context.Context, executable string) (bool, error) {
+		calls++
+		canonical, _ := installstate.Canonical(dir)
+		if executable != filepath.Join(canonical, "peerimeter-agent") {
+			t.Fatal("registration probe checked another installation")
+		}
+		return true, nil
+	}
+	err = executeWithRegistrationProbe(context.Background(), Options{InstallDir: dir}, &out, probe)
+	if err == nil || !strings.Contains(err.Error(), "untracked native service") {
+		t.Fatalf("untracked registration was not reported incomplete: %v", err)
+	}
+	if calls != 1 || bytes.Contains(out.Bytes(), []byte(`"state":"removed"`)) {
+		t.Fatal("untracked service was ignored or removal was falsely reported")
+	}
+	for _, path := range []string{filepath.Join(dir, "peerimeter-agent"), filepath.Join(dir, "peerimeter-agent.NOTICES.txt"), filepath.Join(p.ConfigDir, "service.json"), filepath.Join(p.ConfigDir, "service.key"), filepath.Join(p.StateDir, "network.json")} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("registration guard deleted preserved resource %s", path)
+		}
+	}
+	pending, err := installstate.Load(dir)
+	if err != nil || pending.Removing {
+		t.Fatal("read-only untracked-service refusal blocked later migration")
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, installstate.Filename))
+	if !bytes.Equal(after, originalManifest) {
+		t.Fatal("untracked-registration refusal changed inventory bytes")
+	}
+}
+func TestForeignRegistrationDoesNotBlockRemovalAndInspectionFailureDoes(t *testing.T) {
+	for _, inspectionError := range []bool{true, false} {
+		dir, _ := prepareUninstall(t)
+		failure := errors.New("native service query denied")
+		probe := func(context.Context, string) (bool, error) {
+			if inspectionError {
+				return false, failure
+			}
+			return false, nil
+		}
+		err := executeWithRegistrationProbe(context.Background(), Options{InstallDir: dir}, &bytes.Buffer{}, probe)
+		if inspectionError {
+			if !errors.Is(err, failure) {
+				t.Fatal("inspection failure was ignored")
+			}
+			if _, err := os.Stat(filepath.Join(dir, "peerimeter-agent")); err != nil {
+				t.Fatal("failed inspection deleted executable")
+			}
+		} else if err != nil {
+			t.Fatal("foreign executable registration blocked unrelated installation cleanup", err)
+		}
 	}
 }
