@@ -34,7 +34,10 @@ func (f *fakeLinuxLinks) LinkByName(name string) (netlink.Link, error) {
 func (f *fakeLinuxLinks) LinkAdd(link netlink.Link) error {
 	f.adds++
 	link.Attrs().Index = 42
-	f.link = link
+	// Model the real kernel: RTM_NEWLINK ignores an initial interface alias.
+	attrs := *link.Attrs()
+	attrs.Alias = ""
+	f.link = &netlink.Wireguard{LinkAttrs: attrs}
 	return nil
 }
 func (f *fakeLinuxLinks) LinkDel(netlink.Link) error {
@@ -42,6 +45,10 @@ func (f *fakeLinuxLinks) LinkDel(netlink.Link) error {
 	f.link = nil
 	f.addrs = nil
 	f.routes = nil
+	return nil
+}
+func (f *fakeLinuxLinks) LinkSetAlias(_ netlink.Link, alias string) error {
+	f.link.Attrs().Alias = alias
 	return nil
 }
 func (f *fakeLinuxLinks) LinkSetUp(link netlink.Link) error {

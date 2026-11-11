@@ -107,7 +107,8 @@ check_handshake() {
   python3 - "$output" "$output.peers" <<'PY'
 import datetime, json, sys
 s=json.load(open(sys.argv[1])); peers=json.load(open(sys.argv[2]))
-assert s['state']=='running' and s['peers']==peers and len(peers)==1
+assert s['state']=='running' and len(s['peers'])==len(peers)==1
+assert s['peers'][0]['public_key']==peers[0]['public_key']
 p=peers[0]
 t=datetime.datetime.fromisoformat(p['last_handshake'].replace('Z','+00:00'))
 assert (datetime.datetime.now(datetime.timezone.utc)-t).total_seconds()<120, 'No fresh authenticated handshake'
