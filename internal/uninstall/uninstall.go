@@ -307,7 +307,12 @@ func acquireStopped(ctx context.Context, inv installstate.Inventory, p installst
 	}
 }
 
+type registrationProbe func(context.Context, string) (bool, error)
+
 func Execute(ctx context.Context, opts Options, out io.Writer) error {
+	return executeWithRegistrationProbe(ctx, opts, out, service.HasOwnedRegistration)
+}
+func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writer, probe registrationProbe) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -363,6 +368,13 @@ func Execute(ctx context.Context, opts Options, out io.Writer) error {
 	plan := makePlan(inv)
 	if err := preflight(inv, plan); err != nil {
 		return err
+	}
+	// Refuse an untracked native registration before any tombstone or lock-file
+	// mutation, so legacy service migration remains available after refusal.
+	if !hasTrackedService(inv.Profiles) {
+		if err := requireNoOwnedRegistration(ctx, registrationExecutable(dir), probe); err != nil {
+			return err
+		}
 	}
 	if opts.DryRun {
 		r := report{State: "dry_run", Message: "Deletes the installed identity, configuration, credentials and inventoried program files; original source files are preserved."}
@@ -420,11 +432,19 @@ func Execute(ctx context.Context, opts Options, out io.Writer) error {
 	if runtime.GOOS == "windows" {
 		exeName += ".exe"
 	}
+	if !hasTrackedService(inv.Profiles) {
+		if err := requireNoOwnedRegistration(ctx, filepath.Join(dir, exeName), probe); err != nil {
+			return err
+		}
+	}
 	if err := installstate.MarkRemoving(inv); err != nil {
 		return err
 	}
 	if err := removeServices(ctx, filepath.Join(dir, exeName), inv.Profiles); err != nil {
 		return fmt.Errorf("owned service registration could not be removed: %w", err)
+	}
+	if err := requireNoOwnedRegistration(ctx, filepath.Join(dir, exeName), probe); err != nil {
+		return err
 	}
 	var guards []*local.Guard
 	defer func() {
@@ -599,4 +619,31 @@ func removeEmptyDirectory(path string) error {
 		return nil
 	}
 	return os.Remove(path)
+}
+
+func requireNoOwnedRegistration(ctx context.Context, executable string, probe registrationProbe) error {
+	owned, err := probe(ctx, executable)
+	if err != nil {
+		return fmt.Errorf("incomplete uninstall: native registration could not be verified; managed data and program files were preserved: %w", err)
+	}
+	if owned {
+		return errors.New("incomplete uninstall: an untracked native service still references this executable; migrate its legacy profile or remove its registration before retrying; managed data and program files were preserved")
+	}
+	return nil
+}
+
+func hasTrackedService(profiles []installstate.Profile) bool {
+	for _, profile := range profiles {
+		if profile.Service {
+			return true
+		}
+	}
+	return false
+}
+func registrationExecutable(dir string) string {
+	name := "peerimeter-agent"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(dir, name)
 }

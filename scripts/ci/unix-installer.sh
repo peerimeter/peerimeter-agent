@@ -91,14 +91,21 @@ expect_failure 'exactly one binary' sh "$installer" --archive "$work/duplicate.t
 expect_failure 'Unexpected package member' sh "$installer" --archive "$work/traversal.tar.gz" --sha256 "$(sha256 "$work/traversal.tar.gz")" --install-dir "$destination"
 test "$(cat "$work/victim")" = 'outside archive extraction directory'
 echo 'PASS: symlink, hardlink, duplicate and traversal packages rejected before installation'
-# Existing destination links are replaced as directory entries, never followed.
+# Existing destination links are rejected before package members are replaced.
 rm -f "$destination/peerimeter-agent.NOTICES.txt"
 ln -s "$work/victim" "$destination/peerimeter-agent.NOTICES.txt"
-sh "$installer" --archive "$work/package.tar.gz" --sha256 "$hash" --install-dir "$destination"
-test ! -L "$destination/peerimeter-agent.NOTICES.txt"
+if sh "$installer" --archive "$work/package.tar.gz" --sha256 "$hash" --install-dir "$destination" >"$work/failure.log" 2>&1; then
+  echo 'FAIL: existing destination symlink was accepted' >&2
+  exit 1
+fi
+grep -Fq 'must not be symbolic links' "$work/failure.log"
+test -L "$destination/peerimeter-agent.NOTICES.txt"
 test "$(cat "$work/victim")" = 'outside archive extraction directory'
-cmp "$work/original.notices" "$destination/peerimeter-agent.NOTICES.txt"
-echo 'PASS: existing destination notice symlink replaced without following it'
+cmp "$work/original.agent" "$destination/peerimeter-agent"
+cmp "$work/original.inventory" "$destination/.peerimeter-agent.install.json"
+rm "$destination/peerimeter-agent.NOTICES.txt"
+cp "$work/original.notices" "$destination/peerimeter-agent.NOTICES.txt"
+echo 'PASS: existing destination symlink rejected without changing its target or installed binary'
 
 # This fake curl is a deterministic fixture transport. The installer still uses
 # its real fixed HTTPS URLs; there is no untrusted HTTP/base-URL bypass in it.

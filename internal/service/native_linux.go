@@ -252,3 +252,87 @@ func installLinuxService(path string, contents []byte) ([]byte, bool, error) {
 	}
 	return nil, false, nil
 }
+
+// HasOwnedRegistration is read-only and deliberately ignores inventory flags:
+// upgrades and interrupted registration can leave a legitimate native unit
+// before any profile was recorded. Such a unit must block executable removal.
+func HasOwnedRegistration(ctx context.Context, expectedExe string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	data, err := os.ReadFile(linuxServicePath)
+	if os.IsNotExist(err) {
+		if info, e := os.Stat("/run/systemd/system"); e == nil && info.IsDir() {
+			bounded, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			state, e := exec.CommandContext(bounded, "systemctl", "show", "--property=LoadState", "--value", linuxServiceName).Output()
+			if e != nil {
+				return false, errors.New("cannot verify whether an untracked systemd registration remains")
+			}
+			if strings.TrimSpace(string(state)) != "not-found" {
+				return false, errors.New("a loaded systemd registration has no inspectable unit; program files were preserved")
+			}
+		}
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if len(data) > 65536 {
+		return false, errors.New("systemd registration is oversized")
+	}
+	return linuxRegistrationUsesExecutable(data, expectedExe)
+}
+func linuxRegistrationUsesExecutable(data []byte, expectedExe string) (bool, error) {
+	owned := false
+	for _, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(raw)
+		if !strings.HasPrefix(line, "ExecStart=") {
+			continue
+		}
+		command := strings.TrimSpace(strings.TrimPrefix(line, "ExecStart="))
+		if command == "" {
+			owned = false
+			continue
+		}
+		command = strings.TrimLeft(command, "-+!:@")
+		var executable string
+		if strings.HasPrefix(command, `"`) {
+			end := 1
+			for ; end < len(command); end++ {
+				if command[end] == '\\' {
+					end++
+					continue
+				}
+				if command[end] == '"' {
+					break
+				}
+			}
+			if end >= len(command) {
+				return false, errors.New("cannot parse systemd executable registration")
+			}
+			value, err := strconv.Unquote(command[:end+1])
+			if err != nil {
+				return false, errors.New("cannot decode systemd executable registration")
+			}
+			executable = value
+		} else {
+			fields := strings.Fields(command)
+			if len(fields) > 0 && strings.ContainsAny(fields[0], "\\%$") {
+				return false, errors.New("unsupported escaped or dynamic unquoted systemd executable; program files were preserved")
+			}
+			if len(fields) == 0 {
+				return false, errors.New("systemd executable registration is missing")
+			}
+			executable = fields[0]
+		}
+		executable = strings.ReplaceAll(strings.ReplaceAll(executable, "$$", "$"), "%%", "%")
+		if !filepath.IsAbs(executable) {
+			return false, errors.New("cannot establish exact executable ownership for systemd registration")
+		}
+		if equalServicePath(executable, expectedExe) {
+			owned = true
+		}
+	}
+	return owned, nil
+}

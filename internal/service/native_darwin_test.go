@@ -65,3 +65,29 @@ func TestDarwinPlistRejectsControlCharacters(t *testing.T) {
 		t.Fatal("launchd should use normal foreground execution")
 	}
 }
+
+func TestDarwinReadOnlyRegistrationMatchesExactExecutable(t *testing.T) {
+	executable := "/opt/Peerimeter Agent/bin/peerimeter-agent"
+	plist, err := darwinPlist(executable, Config{ConfigPath: "/etc/peerimeter/service.json", StateDirectory: "/Library/Application Support/Peerimeter", RuntimeDirectory: "/var/run/peerimeter-agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owned, err := darwinRegistrationUsesExecutable(plist, executable); err != nil || !owned {
+		t.Fatalf("own pre-inventory registration was not found: %v", err)
+	}
+	if owned, err := darwinRegistrationUsesExecutable(plist, executable+"-other"); err != nil || owned {
+		t.Fatal("foreign executable matched launchd ownership")
+	}
+}
+
+func TestDarwinReadOnlyProbeHonorsProgramOverCustomArgvZero(t *testing.T) {
+	executable := "/opt/Peerimeter Agent/peerimeter-agent"
+	plist := []byte(`<plist version="1.0"><dict><key>ProgramArguments</key><array><string>custom-argv-zero</string><string>run</string></array><key>Program</key><string>/opt/Peerimeter Agent/peerimeter-agent</string></dict></plist>`)
+	if owned, err := darwinRegistrationUsesExecutable(plist, executable); err != nil || !owned {
+		t.Fatal("Program was ignored after custom argv[0]", err)
+	}
+	duplicate := []byte(`<plist version="1.0"><dict><key>Program</key><string>/foreign</string><key>Program</key><string>/opt/Peerimeter Agent/peerimeter-agent</string></dict></plist>`)
+	if owned, err := darwinRegistrationUsesExecutable(duplicate, executable); err == nil || owned {
+		t.Fatal("duplicate executable definitions did not fail closed")
+	}
+}

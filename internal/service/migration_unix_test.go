@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/peerimeter/peerimeter-agent/internal/config"
+	"github.com/peerimeter/peerimeter-agent/internal/installstate"
 	"github.com/peerimeter/peerimeter-agent/internal/secret"
 )
 
@@ -141,5 +142,34 @@ func TestUnixMigrationRegistrationFailureRetainsRecoverableLegacy(t *testing.T) 
 		if _, err := os.Stat(filepath.Join(cfg.ConfigDirectory, name)); !os.IsNotExist(err) {
 			t.Fatal("failed registration left conflicting new snapshots")
 		}
+	}
+}
+
+type legacyPlannerCheck struct {
+	planned bool
+	claimed bool
+}
+
+func (p *legacyPlannerCheck) RegisterProfile(profile installstate.Profile) error {
+	if profile.Service || profile.ClaimRuntime {
+		return errors.New("legacy adoption must not claim supervisor/runtime before migration")
+	}
+	if !profile.ClaimConfig {
+		p.planned = true
+		return nil
+	}
+	if !p.planned {
+		return errors.New("claim requires registered persistent-state profile")
+	}
+	p.claimed = true
+	return nil
+}
+func TestPreInventoryMigrationPlansBeforeConfigClaim(t *testing.T) {
+	planner := &legacyPlannerCheck{}
+	if err := planAndClaimLegacy(planner, Config{ConfigDirectory: "/legacy", StateDirectory: "/legacy", RuntimeDirectory: "/legacy"}); err != nil {
+		t.Fatal(err)
+	}
+	if !planner.planned || !planner.claimed {
+		t.Fatal("legacy profile or protected config was not adopted")
 	}
 }

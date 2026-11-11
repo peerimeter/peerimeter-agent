@@ -168,6 +168,12 @@ function Remove-Leaf([string]$Path) {
         }
     }
 }
+function File-SHA256([string]$Path) {
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    $stream = [IO.File]::OpenRead($Path)
+    try { return [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-','').ToLowerInvariant() }
+    finally { $stream.Dispose(); $algorithm.Dispose() }
+}
 function Lock-Existing([string]$Path) {
     if (-not [IO.File]::Exists($Path)) { return }
     No-Reparse $Path
@@ -196,7 +202,7 @@ try {
     foreach ($f in $p.files) {
         if (Exists $f.path) {
             No-Reparse $f.path
-            if ($f.sha256 -and (Get-FileHash -LiteralPath $f.path -Algorithm SHA256).Hash -ne $f.sha256) { throw 'Inventoried program changed before deferred removal' }
+            if ($f.sha256 -and (File-SHA256 $f.path) -ne $f.sha256) { throw 'Inventoried program changed before deferred removal' }
         }
     }
     foreach ($f in $p.files) {

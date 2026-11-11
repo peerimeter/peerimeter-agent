@@ -336,7 +336,7 @@ func migrate(cfg Config, unregister func(Config) error, register func(Config) er
 	}
 	// Only after native registration ownership was verified and the old
 	// supervisor stopped may this installation adopt the protected legacy data.
-	if err := lease.RegisterProfile(installstate.Profile{ConfigDir: old.ConfigDirectory, StateDir: old.StateDirectory, RuntimeDir: old.RuntimeDirectory, ClaimConfig: true}); err != nil {
+	if err := planAndClaimLegacy(lease, old); err != nil {
 		return err
 	}
 	cfg.ConfigPath = legacyJSON
@@ -386,4 +386,17 @@ func serviceRuntime(cfg Config) string {
 		return cfg.RuntimeDirectory
 	}
 	return cfg.StateDirectory
+}
+
+type profilePlanner interface {
+	RegisterProfile(installstate.Profile) error
+}
+
+func planAndClaimLegacy(startup profilePlanner, legacy Config) error {
+	planned := installstate.Profile{ConfigDir: legacy.ConfigDirectory, StateDir: legacy.StateDirectory, RuntimeDir: legacy.RuntimeDirectory}
+	if err := startup.RegisterProfile(planned); err != nil {
+		return err
+	}
+	planned.ClaimConfig = true
+	return startup.RegisterProfile(planned)
 }

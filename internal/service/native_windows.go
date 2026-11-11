@@ -410,3 +410,59 @@ func RemoveOwned(ctx context.Context, expectedExe string, cfg Config) error {
 	}
 	return registered.Delete()
 }
+
+func HasOwnedRegistration(ctx context.Context, expectedExe string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	manager, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
+	if err != nil {
+		return false, err
+	}
+	defer windows.CloseServiceHandle(manager)
+	name, err := windows.UTF16PtrFromString(windowsServiceName)
+	if err != nil {
+		return false, err
+	}
+	handle, err := windows.OpenService(manager, name, windows.SERVICE_QUERY_CONFIG)
+	if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	registered := &mgr.Service{Name: windowsServiceName, Handle: handle}
+	defer registered.Close()
+	settings, err := registered.Config()
+	if err != nil {
+		return false, err
+	}
+	return windowsRegistrationUsesExecutable(settings.BinaryPathName, expectedExe)
+}
+func windowsRegistrationUsesExecutable(command, expectedExe string) (bool, error) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return false, errors.New("Windows service executable registration is empty")
+	}
+	if !strings.HasPrefix(command, `"`) {
+		fields := strings.Fields(command)
+		if len(fields) == 0 || !strings.HasSuffix(strings.ToLower(fields[0]), ".exe") {
+			return false, errors.New("ambiguous unquoted Windows service executable; program files were preserved")
+		}
+	}
+	if strings.HasPrefix(command, `"`) {
+		end := strings.Index(command[1:], `"`)
+		if end < 0 {
+			return false, errors.New("unterminated Windows service executable registration")
+		}
+		end++
+		if end+1 < len(command) && command[end+1] != ' ' && command[end+1] != '\t' {
+			return false, errors.New("ambiguous Windows service executable quoting")
+		}
+	}
+	arguments, err := windows.DecomposeCommandLine(command)
+	if err != nil || len(arguments) == 0 || !filepath.IsAbs(arguments[0]) {
+		return false, errors.New("cannot inspect exact Windows service executable registration")
+	}
+	return equalServicePath(arguments[0], expectedExe), nil
+}
