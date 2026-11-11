@@ -11,11 +11,10 @@ API server, enrollment, MQTT or STUN. No relay or desktop application.
 
 ## Project status
 
-**✅ Phase 0 complete · 🔄 Phase 1 in progress · ⬜ Phase 2 not started**
+**✅ Phase 0 complete · ✅ Phase 1 complete · ⬜ Phase 2 not started**
 
-The Phase 1 native runtime/service/installer core passed native tests and
-independent review. Directory separation, migration and full uninstall are
-implemented; their final integration checks and review are in progress.
+The offline agent, directory separation, migration, services, installers and full
+uninstall passed native tests and independent review.
 Linux/macOS/Windows agent links, local control, native services and installers
 are verified for the CI architectures below. Exact code SHAs, run links and
 remaining limitations are tracked in [progress.md](progress.md).
@@ -244,9 +243,9 @@ configs, stops the owned service/agent first, and verifies ownership/locks
 before deletion. Windows uses a bounded helper after the running executable
 exits; a `pending` result names a temporary receipt reporting eventual removal
 or remaining failures. The shared system WireGuard driver is preserved. Repeated
-removal is safe; partial failures remain reportable and retryable. These
-expanded removal/migration paths are under native verification; see
-[progress.md](progress.md) for the current acceptance status.
+removal is safe; partial failures remain reportable and retryable. Removal and
+migration are natively verified; see [progress.md](progress.md) for exact tested
+commits and remaining limits.
 
 ## CLI output
 
