@@ -1,5 +1,7 @@
 name: Publish release
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
@@ -18,10 +20,15 @@ jobs:
           fetch-depth: 0
       - id: version
         name: Calculate next version from Conventional Commits
-        run: echo "tag=$(python scripts/release/version.py)" >> "$GITHUB_OUTPUT"
+        shell: bash
+        run: |
+          tag=$(python scripts/release/version.py)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ -z "$tag" ]; then echo 'No release-worthy commits; skipping package and publish jobs.'; fi
 
   build:
     needs: version
+    if: needs.version.outputs.tag != ''
     strategy:
       fail-fast: false
       matrix:
@@ -90,6 +97,7 @@ jobs:
 
   publish:
     needs: [version, build]
+    if: needs.version.outputs.tag != ''
     runs-on: ubuntu-24.04
     permissions:
       contents: write

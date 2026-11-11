@@ -34,7 +34,7 @@ for record in raw.split("\x1e"):
         if sha.strip():
             commits.append((sha.strip(), message.strip()))
 if not commits:
-    raise SystemExit(f"No commits found after {previous}")
+    raise SystemExit(0)
 
 bump = 0  # 0: no release, 1: patch, 2: minor, 3: major
 invalid = []
@@ -60,7 +60,7 @@ for sha, message in commits:
         bump = max(bump, 1)
 
 if bump == 0:
-    raise SystemExit("No feat, fix, perf, revert, or breaking change requires a release")
+    raise SystemExit(0)
 
 major, minor, patch = base
 if bump == 3:
