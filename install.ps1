@@ -2,7 +2,8 @@ param(
     [string]$Version = 'latest',
     [string]$InstallDir = (Join-Path $env:ProgramFiles 'Peerimeter'),
     [string]$Archive,
-    [string]$SHA256
+    [string]$SHA256,
+    [switch]$AllowInsecureInstallDir
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -35,7 +36,7 @@ function Set-InstallerACL([string]$Path,[bool]$Private=$false) {
     }
     Set-Acl -LiteralPath $Path -AclObject $acl
 }
-function Assert-InstallerAncestors([string]$Path) {
+function Assert-InstallerAncestors([string]$Path,[bool]$AllowInsecure) {
     $trusted = @('S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
     $parent = [IO.Directory]::GetParent($Path)
     while ($null -ne $parent) {
@@ -52,13 +53,13 @@ function Assert-InstallerAncestors([string]$Path) {
             }
             foreach ($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
                 if ($rule.AccessControlType -eq 'Deny' -or $rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly -or $rule.IdentityReference.Value -in $trusted) { continue }
-                if (([long]$rule.FileSystemRights -band (-bnot $allowed)) -ne 0) { throw 'Installation ancestor grants unsafe write access' }
+                if (-not $AllowInsecure -and ([long]$rule.FileSystemRights -band (-bnot $allowed)) -ne 0) { throw 'Installation ancestor grants unsafe write access' }
             }
         }
         $parent = $parent.Parent
     }
 }
-Assert-InstallerAncestors $InstallDir
+Assert-InstallerAncestors $InstallDir $AllowInsecureInstallDir.IsPresent
 $work = Join-Path ([IO.Path]::GetTempPath()) ('peerimeter-install-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $work | Out-Null
 Set-InstallerACL $work $true
@@ -119,7 +120,9 @@ try {
             Move-Item -LiteralPath $staged[$i] -Destination $dest
             $installed += $dest
         }
-        & (Join-Path $InstallDir 'peerimeter-agent.exe') register-installation --install-dir $InstallDir | Out-Null
+        $registerArgs = @('register-installation','--install-dir',$InstallDir)
+        if ($AllowInsecureInstallDir) { $registerArgs += '--allow-insecure-install-dir' }
+        & (Join-Path $InstallDir 'peerimeter-agent.exe') @registerArgs | Out-Null
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $InstallDir '.peerimeter-agent.install.json') -PathType Leaf)) { throw 'Installation inventory registration failed' }
     } catch {
         $failure = $_

@@ -193,7 +193,7 @@ func preflight(inv installstate.Inventory, p removalPlan) error {
 		}
 		for _, dir := range ownedDirs {
 			if dir != "" {
-				if err := installstate.CheckDirectory(dir); err != nil {
+				if err := installstate.CheckDirectoryWithPolicy(dir, inv.AllowInsecureInstallDir); err != nil {
 					return err
 				}
 			}

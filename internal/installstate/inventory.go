@@ -44,12 +44,13 @@ type Profile struct {
 	ClaimRuntime       bool   `json:"-"`
 }
 type Inventory struct {
-	Version    int       `json:"version"`
-	Removing   bool      `json:"removing,omitempty"`
-	ID         string    `json:"id"`
-	InstallDir string    `json:"install_dir"`
-	Files      []File    `json:"files"`
-	Profiles   []Profile `json:"profiles"`
+	Version                 int       `json:"version"`
+	Removing                bool      `json:"removing,omitempty"`
+	AllowInsecureInstallDir bool      `json:"allow_insecure_install_dir,omitempty"`
+	ID                      string    `json:"id"`
+	InstallDir              string    `json:"install_dir"`
+	Files                   []File    `json:"files"`
+	Profiles                []Profile `json:"profiles"`
 }
 type marker struct {
 	Version   int    `json:"version"`
@@ -121,6 +122,9 @@ func Canonical(path string) (string, error) {
 }
 
 func CheckDirectory(path string) error {
+	return CheckDirectoryWithPolicy(path, false)
+}
+func CheckDirectoryWithPolicy(path string, allowInsecure bool) error {
 	canonical, err := Canonical(path)
 	if err != nil {
 		return err
@@ -131,7 +135,7 @@ func CheckDirectory(path string) error {
 			if !info.IsDir() {
 				return errors.New("installation resource parent is not a directory")
 			}
-			if err := checkTrust(p, info, true); err != nil {
+			if err := checkTrustWithPolicy(p, info, true, allowInsecure); err != nil {
 				return err
 			}
 		} else if !os.IsNotExist(e) {
@@ -183,7 +187,10 @@ func readPrivate(path string) ([]byte, error) {
 	return data, nil
 }
 func WritePrivate(path string, data []byte) error {
-	if err := CheckDirectory(filepath.Dir(path)); err != nil {
+	return WritePrivateWithPolicy(path, data, false)
+}
+func WritePrivateWithPolicy(path string, data []byte, allowInsecure bool) error {
+	if err := CheckDirectoryWithPolicy(filepath.Dir(path), allowInsecure); err != nil {
 		return err
 	}
 	if _, err := os.Lstat(path); err == nil {
@@ -237,12 +244,17 @@ func Hash(path string) (string, error) {
 }
 
 func Load(dir string) (Inventory, error) {
+	return load(dir, false)
+}
+func load(dir string, allowInsecureOverride bool) (Inventory, error) {
 	var inv Inventory
 	canonical, err := Canonical(dir)
 	if err != nil {
 		return inv, err
 	}
-	if err := CheckDirectory(canonical); err != nil {
+	// The inventory itself is private and trusted. Read it before applying its
+	// persisted directory policy so a caller cannot opt out of validation.
+	if err := CheckDirectoryWithPolicy(canonical, true); err != nil {
 		return inv, err
 	}
 	data, err := readPrivate(filepath.Join(canonical, Filename))
@@ -256,6 +268,9 @@ func Load(dir string) (Inventory, error) {
 	}
 	if inv.Version != 1 || !validID(inv.ID) || inv.InstallDir != canonical {
 		return inv, errors.New("installation inventory identity or directory does not match")
+	}
+	if err := CheckDirectoryWithPolicy(canonical, inv.AllowInsecureInstallDir || allowInsecureOverride); err != nil {
+		return inv, err
 	}
 	names := map[string]bool{}
 	for _, n := range ProgramNames() {
@@ -298,12 +313,19 @@ func save(inv Inventory) error {
 	if err != nil {
 		return err
 	}
-	return WritePrivate(filepath.Join(inv.InstallDir, Filename), append(data, '\n'))
+	return WritePrivateWithPolicy(filepath.Join(inv.InstallDir, Filename), append(data, '\n'), inv.AllowInsecureInstallDir)
 }
 
 // Lock serializes inventory mutations. Dry-run must never call this function.
 func Lock(dir string) (io.Closer, error) {
-	if err := CheckDirectory(dir); err != nil {
+	inv, err := Load(dir)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	return LockWithPolicy(dir, err == nil && inv.AllowInsecureInstallDir)
+}
+func LockWithPolicy(dir string, allowInsecure bool) (io.Closer, error) {
+	if err := CheckDirectoryWithPolicy(dir, allowInsecure); err != nil {
 		return nil, err
 	}
 	return lockInventory(filepath.Join(dir, LockFilename))
@@ -312,25 +334,35 @@ func Lock(dir string) (io.Closer, error) {
 // Register is called by the verified installer after program files are in place.
 // Upgrades preserve installation identity and registered profiles.
 func Register(dir string) error {
+	return RegisterWithPolicy(dir, false)
+}
+func RegisterWithPolicy(dir string, allowInsecure bool) error {
 	dir, err := Canonical(dir)
 	if err != nil {
 		return err
 	}
-	if err := CheckDirectory(dir); err != nil {
+	existing, loadErr := load(dir, allowInsecure)
+	if loadErr != nil && !os.IsNotExist(loadErr) {
+		return loadErr
+	}
+	allowInsecure = allowInsecure || loadErr == nil && existing.AllowInsecureInstallDir
+	if err := CheckDirectoryWithPolicy(dir, allowInsecure); err != nil {
 		return err
 	}
-	lock, err := Lock(dir)
+	lock, err := LockWithPolicy(dir, allowInsecure)
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
-	inv, err := Load(dir)
+	inv, err := load(dir, allowInsecure)
 	if os.IsNotExist(err) {
-		inv = Inventory{Version: 1, InstallDir: dir, Profiles: []Profile{}}
+		inv = Inventory{Version: 1, InstallDir: dir, Profiles: []Profile{}, AllowInsecureInstallDir: allowInsecure}
 		inv.ID, err = NewID()
 	} else if err != nil {
 		return err
 	}
+	// Once selected, retain the explicit exception on upgrades.
+	inv.AllowInsecureInstallDir = inv.AllowInsecureInstallDir || allowInsecure
 	if err != nil {
 		return err
 	}
@@ -396,7 +428,7 @@ func registerProfileLocked(dir string, p Profile) error {
 	}
 	for _, path := range []string{p.ConfigDir, p.LegacyConfigDir, p.PendingConfigDir, p.PendingRuntimeDir, p.StateDir, p.RuntimeDir} {
 		if path != "" {
-			if err := CheckDirectory(path); err != nil {
+			if err := CheckDirectoryWithPolicy(path, inv.AllowInsecureInstallDir); err != nil {
 				return err
 			}
 		}
@@ -445,7 +477,7 @@ func registerProfileLocked(dir string, p Profile) error {
 			return errors.New("planned persistent profile marker is absent; runtime ownership cannot be claimed")
 		}
 		data, _ := json.Marshal(expected)
-		if err := WritePrivate(markerPath, append(data, '\n')); err != nil {
+		if err := WritePrivateWithPolicy(markerPath, append(data, '\n'), inv.AllowInsecureInstallDir); err != nil {
 			return err
 		}
 	} else {
@@ -477,7 +509,7 @@ func VerifyProfile(inv Inventory, p Profile) error {
 	} else if err != nil {
 		return err
 	}
-	if err := CheckDirectory(p.StateDir); err != nil {
+	if err := CheckDirectoryWithPolicy(p.StateDir, inv.AllowInsecureInstallDir); err != nil {
 		return err
 	}
 	data, err := readPrivate(filepath.Join(p.StateDir, MarkerFilename))
@@ -559,7 +591,7 @@ func MigrateProfile(dir string, oldProfile, next Profile) error {
 	}
 	for _, path := range []string{next.ConfigDir, next.StateDir, next.RuntimeDir} {
 		if path != "" {
-			if err := CheckDirectory(path); err != nil {
+			if err := CheckDirectoryWithPolicy(path, inv.AllowInsecureInstallDir); err != nil {
 				return err
 			}
 		}
