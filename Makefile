@@ -1,4 +1,3 @@
-export GOTOOLCHAIN := go1.27.4
 
 .PHONY: test lint build test-integration test-network
 
