@@ -29,6 +29,10 @@ func openProtected(path string) (*os.File, error) {
 		f.Close()
 		return nil, errors.New("private key: require current-user ownership and no group or other permissions (chmod 600)")
 	}
+	if err := checkExtendedPermissions(fd); err != nil {
+		f.Close()
+		return nil, err
+	}
 	return f, nil
 }
 
@@ -37,5 +41,13 @@ func createProtected(path string) (*os.File, error) {
 	if err != nil {
 		return nil, errors.New("create private key: destination exists or is unavailable")
 	}
-	return os.NewFile(uintptr(fd), "private-key"), nil
+	f := os.NewFile(uintptr(fd), "private-key")
+	// A newly created macOS file may inherit an ACL independent of mode 0600.
+	// Reject it before writing any key material.
+	if err := checkExtendedPermissions(fd); err != nil {
+		f.Close()
+		_ = os.Remove(path)
+		return nil, err
+	}
+	return f, nil
 }

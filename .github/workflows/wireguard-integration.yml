@@ -29,7 +29,7 @@ jobs:
         if: runner.os != 'Linux'
         shell: bash
         run: |
-          test "$(go env GOVERSION)" = go1.27.4
+          test "$(go env GOVERSION | tr -d '\r')" = go1.27.4
           go build -C tests/backendprobe -mod=readonly -o "$RUNNER_TEMP/$PROBE_EXE" .
       - name: Build pinned official Unix backend tools
         if: runner.os != 'Windows'

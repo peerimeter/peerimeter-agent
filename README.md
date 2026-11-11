@@ -33,6 +33,8 @@ Static validation performs no network access (including DNS).
 
 Private files on Linux/macOS must be regular, singly linked files owned by the
 current effective user, with no group/other permissions (normally `0600`).
+macOS extended ACLs are also rejected; remove them with `chmod -N`. Inherited
+ACLs are checked before writing any new key bytes.
 Windows uses a protected DACL at file creation; key loading checks the opened
 file's owner and actual DACL. Only the current user, SYSTEM and Administrators
 may have access. Null DACLs, broadly readable files and symlinks/reparse points
