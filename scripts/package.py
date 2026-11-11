@@ -25,7 +25,7 @@ args = parser.parse_args()
 if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', args.version):
     parser.error('version must be a v-prefixed release tag')
 env = dict(os.environ, GOOS=args.os, GOARCH=args.arch, CGO_ENABLED='0')
-if subprocess.check_output(['go', 'env', 'GOVERSION'], env=env, text=True).strip() != 'go1.27.4':
+if subprocess.check_output(['go', 'env', 'GOVERSION'], env=env, text=True, encoding="utf-8").strip() != 'go1.27.4':
     raise SystemExit('Release builds require exact Go 1.27.4')
 output = Path(args.output).absolute()
 output.mkdir(parents=True, exist_ok=True)
@@ -41,7 +41,7 @@ with tempfile.TemporaryDirectory(prefix='peerimeter-package-') as tmp:
                         '-o', str(binary), './cmd/peerimeter-agent'], env=env, check=True)
     binary.chmod(0o755)
     # Include license notices for every module present in this target's build.
-    raw = subprocess.check_output(['go', 'list', '-deps', '-json', './cmd/peerimeter-agent'], env=env, text=True)
+    raw = subprocess.check_output(['go', 'list', '-deps', '-json', './cmd/peerimeter-agent'], env=env, text=True, encoding="utf-8")
     decoder = json.JSONDecoder()
     modules = {}
     while raw.strip():
