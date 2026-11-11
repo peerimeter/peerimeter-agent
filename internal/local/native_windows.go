@@ -184,6 +184,11 @@ func listenWithHooks(dir, operator string, beforeListen, onClose func() error) (
 		return nil, err
 	}
 	wrapped := &hookedPipeListener{Listener: listener, onClose: onClose}
+	// A custom runtime path may not exist yet. Prepare it only after the first
+	// pipe instance proves exclusive ownership of this control namespace.
+	if err := prepareDirectory(dir); err != nil {
+		return nil, errors.Join(err, wrapped.Close())
+	}
 	if beforeListen != nil {
 		if err := beforeListen(); err != nil {
 			return nil, errors.Join(err, wrapped.Close())

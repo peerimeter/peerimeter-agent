@@ -28,14 +28,20 @@ type File struct {
 	SHA256 string `json:"sha256"`
 }
 type Profile struct {
-	ID              string `json:"id,omitempty"`
-	ConfigDir       string `json:"config_dir,omitempty"`
-	LegacyConfigDir string `json:"legacy_config_dir,omitempty"`
-	StateDir        string `json:"state_dir"`
-	RuntimeDir      string `json:"runtime_dir"`
-	Service         bool   `json:"service,omitempty"`
-	RuntimeOwned    bool   `json:"runtime_owned,omitempty"`
-	ClaimRuntime    bool   `json:"-"`
+	ID                 string `json:"id,omitempty"`
+	ConfigDir          string `json:"config_dir,omitempty"`
+	LegacyConfigDir    string `json:"legacy_config_dir,omitempty"`
+	PendingConfigDir   string `json:"pending_config_dir,omitempty"`
+	PendingRuntimeDir  string `json:"pending_runtime_dir,omitempty"`
+	PendingConfigOwned bool   `json:"-"`
+	StateDir           string `json:"state_dir"`
+	RuntimeDir         string `json:"runtime_dir"`
+	Service            bool   `json:"service,omitempty"`
+	RuntimeOwned       bool   `json:"runtime_owned,omitempty"`
+	ConfigOwned        bool   `json:"config_owned,omitempty"`
+	LegacyConfigOwned  bool   `json:"-"`
+	ClaimConfig        bool   `json:"-"`
+	ClaimRuntime       bool   `json:"-"`
 }
 type Inventory struct {
 	Version    int       `json:"version"`
@@ -275,7 +281,7 @@ func Load(dir string) (Inventory, error) {
 			return inv, errors.New("installation profile identity is invalid")
 		}
 		seen[p.StateDir] = true
-		for _, path := range []string{p.ConfigDir, p.LegacyConfigDir, p.StateDir, p.RuntimeDir} {
+		for _, path := range []string{p.ConfigDir, p.LegacyConfigDir, p.PendingConfigDir, p.PendingRuntimeDir, p.StateDir, p.RuntimeDir} {
 			if path == "" {
 				continue
 			}
@@ -351,6 +357,9 @@ func RegisterProfile(dir string, p Profile) error {
 		if p.ClaimRuntime {
 			return validateSourceRuntime(p)
 		}
+		if p.ClaimConfig {
+			return ValidateConfigClaim(dir, p.StateDir, p.ConfigDir)
+		}
 		return nil
 	} else if err != nil {
 		return err
@@ -385,7 +394,7 @@ func registerProfileLocked(dir string, p Profile) error {
 			return err
 		}
 	}
-	for _, path := range []string{p.ConfigDir, p.LegacyConfigDir, p.StateDir, p.RuntimeDir} {
+	for _, path := range []string{p.ConfigDir, p.LegacyConfigDir, p.PendingConfigDir, p.PendingRuntimeDir, p.StateDir, p.RuntimeDir} {
 		if path != "" {
 			if err := CheckDirectory(path); err != nil {
 				return err
@@ -402,6 +411,9 @@ func registerProfileLocked(dir string, p Profile) error {
 			}
 			p.Service = p.Service || old.Service
 			p.RuntimeOwned = old.RuntimeOwned
+			p.ConfigOwned = old.ConfigOwned
+			p.PendingConfigDir = old.PendingConfigDir
+			p.PendingRuntimeDir = old.PendingRuntimeDir
 			if p.LegacyConfigDir == "" {
 				p.LegacyConfigDir = old.LegacyConfigDir
 			}
@@ -417,7 +429,7 @@ func registerProfileLocked(dir string, p Profile) error {
 			return err
 		}
 	}
-	if p.ClaimRuntime && found < 0 {
+	if (p.ClaimRuntime || p.ClaimConfig) && found < 0 {
 		return errors.New("register the planned persistent-state profile before claiming its runtime")
 	}
 	markerPath := filepath.Join(p.StateDir, MarkerFilename)
@@ -438,6 +450,12 @@ func registerProfileLocked(dir string, p Profile) error {
 		}
 	} else {
 		return err
+	}
+	if p.ClaimConfig {
+		if err := claimConfig(inv, p); err != nil {
+			return err
+		}
+		p.ConfigOwned = true
 	}
 	if p.ClaimRuntime {
 		if err := claimRuntime(inv, p); err != nil {
@@ -519,6 +537,9 @@ func MigrateProfile(dir string, oldProfile, next Profile) error {
 	if err != nil {
 		return err
 	}
+	if inv.Removing {
+		return errors.New("installation is being removed; migration is disabled")
+	}
 	index = -1
 	for i, p := range inv.Profiles {
 		if p.StateDir == oldProfile.StateDir {
@@ -544,12 +565,23 @@ func MigrateProfile(dir string, oldProfile, next Profile) error {
 		}
 	}
 	next.ID = existing.ID
+	next.PendingConfigDir = ""
+	next.PendingRuntimeDir = ""
 	if existing.ConfigDir != next.ConfigDir {
 		next.LegacyConfigDir = existing.ConfigDir
 	} else if next.LegacyConfigDir == "" {
 		next.LegacyConfigDir = existing.LegacyConfigDir
 	}
 	next.Service = next.Service || existing.Service
+	if next.ClaimConfig {
+		if err := claimConfig(inv, next); err != nil {
+			return err
+		}
+		next.ConfigOwned = true
+	} else {
+		next.ConfigOwned = next.ConfigDir == existing.ConfigDir && existing.ConfigOwned
+	}
+	next.RuntimeOwned = next.RuntimeDir == existing.RuntimeDir && existing.RuntimeOwned
 	inv.Profiles[index] = next
 	return save(inv)
 }

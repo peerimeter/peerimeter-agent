@@ -51,6 +51,11 @@ func prepareUninstall(t *testing.T) (string, installstate.Profile) {
 	if err := installstate.RegisterProfile(dir, p); err != nil {
 		t.Fatal(err)
 	}
+	claimed := p
+	claimed.ClaimConfig = true
+	if err := installstate.RegisterProfile(dir, claimed); err != nil {
+		t.Fatal(err)
+	}
 	return dir, p
 }
 func snapshotTree(t *testing.T, root string) map[string]string {
@@ -100,7 +105,8 @@ func TestDryRunIsReadOnlyAndListsManagedIdentity(t *testing.T) {
 	}
 	found := false
 	for _, path := range result.Paths {
-		if path == filepath.Join(p.ConfigDir, "service.key") {
+		canonicalConfig, _ := installstate.Canonical(p.ConfigDir)
+		if path == filepath.Join(canonicalConfig, "service.key") {
 			found = true
 		}
 	}
@@ -257,5 +263,47 @@ func TestOwnedDaemonStopsEvenWhenNetworkSnapshotFails(t *testing.T) {
 	}
 	if calls.Load() != 0 {
 		t.Fatal("uninstall depended on mutable network health instead of authenticated instance identity")
+	}
+}
+
+func TestFailedForeignConfigIntentDoesNotDeleteInstalledCredentials(t *testing.T) {
+	owner, pa := prepareUninstall(t)
+	base, err := os.MkdirTemp("/tmp", "pm-cfg-alias-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(base)
+	program := filepath.Join(base, "program")
+	state := filepath.Join(base, "state")
+	run := filepath.Join(base, "runtime")
+	for _, dir := range []string{program, state, run} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range installstate.ProgramNames() {
+		if err := os.WriteFile(filepath.Join(program, name), []byte("second program"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := installstate.Register(program); err != nil {
+		t.Fatal(err)
+	}
+	planned := installstate.Profile{ConfigDir: pa.ConfigDir, StateDir: state, RuntimeDir: run}
+	if err := installstate.RegisterProfile(program, planned); err != nil {
+		t.Fatal(err)
+	}
+	if err := installstate.ValidateConfigClaim(program, state, pa.ConfigDir); err == nil {
+		t.Fatal("foreign configuration provision was authorized")
+	}
+	before := snapshotTree(t, pa.ConfigDir)
+	if err := Execute(context.Background(), Options{InstallDir: program}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, snapshotTree(t, pa.ConfigDir)) {
+		t.Fatal("failed alias installation removed another installation's credentials")
+	}
+	if _, err := installstate.Load(owner); err != nil {
+		t.Fatal("another installation's registry was removed")
 	}
 }

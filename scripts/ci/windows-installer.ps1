@@ -27,6 +27,23 @@ $global:PeerimeterInstallerFixture = @{
     Archive=$Archive; SHA256=$checksum; Asset=$asset; Requests=[Collections.Generic.List[string]]::new(); FailReplace=$false
 }
 
+function Show-RecentRemovalDiagnostics {
+    $logs = @(Get-ChildItem -LiteralPath $env:TEMP -Filter 'peerimeter-uninstall-*.helper.log' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 2)
+    foreach ($log in $logs) {
+        Write-Host 'Recent bounded removal helper diagnostics:'
+        Get-Content -LiteralPath $log.FullName -Tail 40 | ForEach-Object { Write-Host $_ }
+        $receipt = $log.FullName -replace '\.helper\.log$','.result.json'
+        if (Test-Path -LiteralPath $receipt) { Write-Host 'Corresponding removal receipt:'; Get-Content -LiteralPath $receipt | ForEach-Object { Write-Host $_ } }
+    }
+}
+function Show-RemovalDiagnostics([string]$ReceiptPath) {
+    if (-not $ReceiptPath) { return }
+    if (Test-Path -LiteralPath $ReceiptPath) { Write-Host 'Removal receipt:'; Get-Content -LiteralPath $ReceiptPath | ForEach-Object { Write-Host $_ } }
+    $workDir = $ReceiptPath -replace '\.result\.json$',''
+    foreach ($log in @((Join-Path $workDir 'helper.log'),($workDir+'.helper.log'))) {
+        if (Test-Path -LiteralPath $log) { Write-Host 'Bounded removal helper diagnostics:'; Get-Content -LiteralPath $log -Tail 40 | ForEach-Object { Write-Host $_ } }
+    }
+}
 function Assert-Package([string]$Directory) {
     foreach ($name in @('peerimeter-agent.exe','wireguard.dll','peerimeter-agent.NOTICES.txt')) {
         $path = Join-Path $Directory $name
@@ -60,7 +77,7 @@ function Remove-InstalledPackage([string]$Directory,[string]$ExternalCLI) {
     $sentinel = Join-Path $Directory 'unrelated.txt'
     [IO.File]::WriteAllText($sentinel,'operator data stays')
     $result = & $binary uninstall --install-dir $Directory | ConvertFrom-Json
-    if ($LASTEXITCODE -ne 0) { throw 'Installed package full uninstall failed' }
+    if ($LASTEXITCODE -ne 0) { Show-RecentRemovalDiagnostics; throw 'Installed package full uninstall failed' }
     if ($result.state -eq 'pending') {
         if (-not $result.result_file) { throw 'Pending Windows removal omitted its completion report' }
         $done = $false
@@ -68,13 +85,13 @@ function Remove-InstalledPackage([string]$Directory,[string]$ExternalCLI) {
             if (Test-Path -LiteralPath $result.result_file) {
                 try {
                     $report = Get-Content -LiteralPath $result.result_file -Raw | ConvertFrom-Json
-                    if ($report.state -eq 'failed') { throw 'Windows package removal helper reported failed cleanup' }
+                    if ($report.state -eq 'failed') { Show-RemovalDiagnostics $result.result_file; throw 'Windows package removal helper reported failed cleanup' }
                     if ($report.state -eq 'removed') { $done = $true; break }
                 } catch { if ($_.Exception.Message -eq 'Windows package removal helper reported failed cleanup') { throw } }
             }
             Start-Sleep -Milliseconds 500
         }
-        if (-not $done) { throw 'Windows package removal did not complete within 60 seconds' }
+        if (-not $done) { Show-RemovalDiagnostics $result.result_file; throw 'Windows package removal did not complete within 60 seconds' }
         Remove-Item -LiteralPath $result.result_file -Force
     } elseif ($result.state -ne 'removed') { throw 'Unrecognized package uninstall result' }
     foreach ($name in @('peerimeter-agent.exe','wireguard.dll','peerimeter-agent.NOTICES.txt','.peerimeter-agent.install.json','.peerimeter-agent.install.lock')) {
