@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"github.com/peerimeter/peerimeter-agent/internal/config"
+	"github.com/peerimeter/peerimeter-agent/internal/platform"
 	"github.com/peerimeter/peerimeter-agent/internal/secret"
 	"os"
 	"path/filepath"
@@ -38,19 +39,14 @@ func TestExampleValidatesAndRefusesOverwrite(t *testing.T) {
 	if !bytes.Equal(before, after) {
 		t.Fatal("private key replaced")
 	}
-	for _, cmd := range []string{"run", "status", "peers"} {
-		args := []string{cmd}
-		if cmd == "run" {
-			args = append(args, "--config", filepath.Join(dir, "peer-a.json"))
-		}
-		c, o, e := invoke(t, args...)
-		if c != 3 || o != "" || !strings.Contains(e, "Phase 0") {
-			t.Fatalf("unimplemented %s pretended to work: %d %s %s", cmd, c, o, e)
-		}
-		if strings.Contains(e, strings.TrimSpace(string(before))) {
-			t.Fatal("private key leaked")
-		}
+	// Unit tests must never call a privileged real backend.
+	var out, errOut bytes.Buffer
+	state := filepath.Join(t.TempDir(), "state")
+	code := execute(context.Background(), []string{"run", "--config", filepath.Join(dir, "peer-a.json"), "--state-dir", state}, &out, &errOut, rejectBackend{})
+	if code != 3 || out.Len() != 0 || strings.Contains(errOut.String(), strings.TrimSpace(string(before))) {
+		t.Fatalf("unsafe backend failure: %d %s", code, errOut.String())
 	}
+
 }
 func TestSelfPeerRejected(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "example")
@@ -84,4 +80,13 @@ func TestErrorRedaction(t *testing.T) {
 			t.Fatalf("unsafe error %d %s", c, e)
 		}
 	}
+}
+
+type rejectBackend struct{}
+
+func (rejectBackend) Start(context.Context, platform.Desired) (platform.Session, error) {
+	return nil, platform.ErrUnavailable
+}
+func (rejectBackend) Inspect(context.Context) (platform.Snapshot, error) {
+	return platform.Snapshot{}, platform.ErrUnavailable
 }

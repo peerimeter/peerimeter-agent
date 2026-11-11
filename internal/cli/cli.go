@@ -16,11 +16,13 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/agent"
 	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/ifname"
+	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
 	"github.com/peerimeter/peerimeter-agent/internal/secret"
+	"github.com/peerimeter/peerimeter-agent/internal/service"
 )
 
-const Version = "0.0.0-dev"
+var Version = "0.0.0-dev"
 
 func Execute(ctx context.Context, args []string, out, errOut io.Writer) int {
 	return execute(ctx, args, out, errOut, platform.Native())
@@ -65,6 +67,7 @@ func command(ctx context.Context, args []string, out io.Writer, backend platform
 	case "validate-config", "run":
 		f := flags(args[0])
 		path := f.String("config", "", "static config path")
+		stateDir := f.String("state-dir", local.DefaultDirectory(), "protected local agent state directory")
 		override := f.String("interface", "", "Linux local name override")
 		if f.Parse(args[1:]) != nil || f.NArg() != 0 || *path == "" {
 			return errors.New("usage: validate-config|run --config <path> [--interface <Linux-name>]")
@@ -105,21 +108,79 @@ func command(ctx context.Context, args []string, out io.Writer, backend platform
 		if args[0] == "validate-config" {
 			return json.NewEncoder(out).Encode(map[string]any{"state": "valid", "version": cfg.Version, "network_id": cfg.Network.ID, "peer_count": len(cfg.Peers), "interface_name": name})
 		}
-		return agent.Run(ctx, backend, platform.Desired{Config: cfg, InterfaceName: name, PrivateKey: private})
-	case "status", "peers":
-		if len(args) != 1 {
-			return errors.New("status and peers accept no arguments")
-		}
-		snapshot, err := backend.Inspect(ctx)
+		guard, err := local.Acquire(*stateDir)
 		if err != nil {
 			return err
 		}
-		if args[0] == "peers" {
-			return json.NewEncoder(out).Encode(snapshot.Peers)
+		defer guard.Close()
+		if runtime.GOOS == "linux" {
+			name, err = guard.InterfaceChoice(cfg.Network.ID, cfg.Network.Name, cfg.Interface.Name)
+			if err != nil {
+				return err
+			}
 		}
-		return json.NewEncoder(out).Encode(snapshot)
+		token, err := guard.OwnershipToken()
+		if err != nil {
+			return err
+		}
+		desired := platform.Desired{Config: cfg, InterfaceName: name, PrivateKey: private, OwnershipToken: token}
+		reload := func() (platform.Desired, error) {
+			next, err := config.Load(*path)
+			if err != nil {
+				return platform.Desired{}, err
+			}
+			if *override != "" {
+				next.Interface.Name = *override
+			}
+			if err = config.Validate(next, runtime.GOOS); err != nil {
+				return platform.Desired{}, err
+			}
+			if runtime.GOOS == "linux" {
+				if next.Interface.Name != "" && next.Interface.Name != name {
+					return platform.Desired{}, errors.New("reload cannot rename a persisted local interface")
+				}
+			}
+			key, err := secret.Load(next.Interface.PrivateKeyFile)
+			if err != nil {
+				return platform.Desired{}, err
+			}
+			pub, err := secret.Public(key)
+			if err != nil {
+				return platform.Desired{}, err
+			}
+			for _, peer := range next.Peers {
+				if peer.PublicKey == base64.StdEncoding.EncodeToString(pub[:]) {
+					return platform.Desired{}, errors.New("peer public key matches the local interface key")
+				}
+			}
+			return platform.Desired{Config: next, InterfaceName: name, PrivateKey: key, OwnershipToken: token}, nil
+		}
+		return agent.RunManaged(ctx, backend, desired, *stateDir, reload)
+	case "status", "peers", "sync", "stop":
+		f := flags(args[0])
+		dir := f.String("state-dir", local.DefaultDirectory(), "local agent state directory")
+		if f.Parse(args[1:]) != nil || f.NArg() != 0 {
+			return errors.New("usage: status|peers|sync|stop [--state-dir <path>]")
+		}
+		operation := args[0]
+		if operation == "sync" {
+			operation = "reload"
+		}
+		return local.Request(ctx, *dir, operation, out)
 	case "service":
-		return errors.New("service management is implemented in Phase 1; use foreground run after native backend integration")
+		if len(args) < 2 {
+			return errors.New("usage: service install|start|stop|uninstall")
+		}
+		f := flags("service")
+		path := f.String("config", "", "absolute config path")
+		dir := f.String("state-dir", local.DefaultDirectory(), "absolute state directory")
+		if f.Parse(args[2:]) != nil || f.NArg() != 0 {
+			return errors.New("invalid service arguments")
+		}
+		if err := service.Manage(args[1], service.Config{ConfigPath: *path, StateDirectory: *dir}); err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(map[string]string{"state": args[1]})
 	default:
 		return errors.New("unknown command; use version, generate-example, validate-config, run, status or peers")
 	}

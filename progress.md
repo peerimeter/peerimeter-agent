@@ -2,7 +2,7 @@
 
 ## Current status
 
-Phase 0 complete: baseline natively verified on all three platforms with Go 1.27.4, including backend feasibility. Phase 1 is next and remains not started; operational run/status/peers are its native/IPC runtime requirements.
+Phase 0 complete: baseline natively verified on all three platforms with Go 1.27.4, including backend feasibility. Phase 1 implementation is in progress: native adapters, local IPC/control, persistent state, services and installers. New agent native verification is pending; prior baseline/backend passes do not prove this implementation.
 No agent-managed WireGuard tunnel or service implementation is claimed.
 
 ## Phase checklist
@@ -10,7 +10,7 @@ No agent-managed WireGuard tunnel or service implementation is claimed.
 | Phase | Status |
 |---|---|
 | 0 — Static contract and cross-platform baseline | Complete |
-| 1 — Native offline WireGuard agent and services | Not started |
+| 1 — Native offline WireGuard agent and services | In progress |
 | 2 — Service, enrollment, sync | Not started |
 | 3 — NAT and recovery | Not started |
 | 4 — Browser dashboard | Not started |
@@ -116,3 +116,18 @@ superseded. Phase 0 is complete using the native evidence above; Phase 1 remains
 not started. This is a scheduling/documentation correction with no new runtime
 implementation or test pass claimed. Runtime-dependent commands still return
 explicit unavailable errors until native backends are implemented.
+
+## Phase 1 implementation — native verification pending
+
+Implemented actual Linux kernel/netlink/wgctrl, embedded macOS utun/wireguard-go,
+and Windows WireGuardNT adapters with real snapshots and safe peer diff/reconcile.
+Local protected Unix/named-pipe control supports status, peers, sync and stop;
+OS-held state locks prevent competing managers. Linux name/ownership persistence
+supports restarts. Systemd, launchd and SCM registration/lifecycle use the same
+foreground runtime and protected installed config/key copies. Integration scripts
+now exercise the actual agent, not only the independent backend probes.
+
+Local diagnostic Go 1.26.4 with an external alternate manifest and CGO disabled
+passed unit tests and Windows/macOS cross-builds. Exact Go 1.27.4 native unit/race,
+real traffic/restart/cleanup and native service tests are required next. Installer,
+release packaging and README work are in progress. No Phase 1 pass is claimed yet.
