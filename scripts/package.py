@@ -98,5 +98,5 @@ with tempfile.TemporaryDirectory(prefix='peerimeter-package-') as tmp:
     if args.os != 'windows':
         checksummed.append(notice_asset)
     sums = ''.join(f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n' for path in checksummed)
-    (output / 'SHA256SUMS').write_text(sums)
+    (output / 'SHA256SUMS').write_text(sums, newline='\n')
     print(asset)
