@@ -82,7 +82,7 @@ func serviceSecureObject(path string, directory, private bool) error {
 		// existing protected child ACLs prevent replacement of installed paths.
 		clean := filepath.Clean(path)
 		if directory && !private && (filepath.Dir(clean) == clean || strings.EqualFold(clean, filepath.Clean(os.Getenv("ProgramData")))) {
-			allowedMask |= windows.FILE_ADD_FILE | windows.FILE_ADD_SUBDIRECTORY
+			allowedMask |= windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA
 		}
 		if mask != 0 && (private || mask&^allowedMask != 0) {
 			return errors.New("Windows service resources must not grant write access outside SYSTEM/Administrators; private key and state must grant no other access")
@@ -342,11 +342,29 @@ func serviceSecureAncestors(path string) error {
 		return errors.New("Windows service resources require local machine storage")
 	}
 	for parent := filepath.Dir(path); ; parent = filepath.Dir(parent) {
-		if err := serviceSecureObject(parent, true, false); err != nil {
-			return errors.Join(errors.New("Windows service ancestor directory is not trusted"), err)
+		if _, err := os.Lstat(parent); err == nil {
+			if err := serviceSecureObject(parent, true, false); err != nil {
+				return errors.Join(errors.New("Windows service ancestor directory is not trusted"), err)
+			}
+		} else if !os.IsNotExist(err) {
+			return errors.New("cannot inspect Windows service ancestor directory")
 		}
 		if next := filepath.Dir(parent); next == parent {
 			return nil
 		}
 	}
+}
+
+func nativeValidateStatePath(path string) error {
+	if !filepath.IsAbs(path) || strings.HasPrefix(filepath.VolumeName(path), `\\`) {
+		return errors.New("Windows service state requires an absolute local machine path")
+	}
+	if _, err := os.Lstat(path); err == nil {
+		if err := serviceSecureObject(path, true, false); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return errors.New("cannot inspect Windows service state directory")
+	}
+	return serviceSecureAncestors(path)
 }

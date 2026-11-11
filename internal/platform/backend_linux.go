@@ -29,6 +29,7 @@ type linuxLinks interface {
 	LinkAdd(netlink.Link) error
 	LinkDel(netlink.Link) error
 	LinkSetUp(netlink.Link) error
+	LinkSetAlias(netlink.Link, string) error
 	AddrList(netlink.Link, int) ([]netlink.Addr, error)
 	AddrAdd(netlink.Link, *netlink.Addr) error
 	AddrDel(netlink.Link, *netlink.Addr) error
@@ -149,6 +150,12 @@ func startLinux(ctx context.Context, d Desired, links linuxLinks, openWG func() 
 	link := &netlink.Wireguard{LinkAttrs: netlink.LinkAttrs{Name: d.InterfaceName, MTU: 1420, Alias: "peerimeter:" + ownerToken}}
 	if err := links.LinkAdd(link); err != nil {
 		return nil, fmt.Errorf("create native Linux WireGuard interface (requires CAP_NET_ADMIN and WireGuard kernel support): %w", err)
+	}
+	// Linux's RTM_NEWLINK creation path does not apply IFLA_IFALIAS. Set
+	// ownership explicitly through RTM_SETLINK on the newly allocated index.
+	if err := links.LinkSetAlias(link, link.Attrs().Alias); err != nil {
+		cleanupErr := links.LinkDel(link)
+		return nil, errors.Join(fmt.Errorf("label newly created Linux WireGuard interface: %w", err), cleanupErr)
 	}
 	// LinkAdd fills Index, but refetch ensures the ownership attributes are real.
 	actual, err := links.LinkByName(d.InterfaceName)

@@ -28,6 +28,9 @@ func Manage(action string, cfg Config) error {
 		if strings.ContainsAny(cfg.ConfigPath+cfg.StateDirectory, "\x00\r\n") {
 			return errors.New("invalid service configuration path")
 		}
+		if err := nativeValidateStatePath(cfg.StateDirectory); err != nil {
+			return err
+		}
 		if err := provision(&cfg); err != nil {
 			return err
 		}
