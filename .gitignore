@@ -1,0 +1,7 @@
+/bin/
+/local-example/
+*.key
+*.exe
+*.test
+*.test.exe
+.env

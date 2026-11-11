@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "mode": "static",
+  "network": {
+    "id": "network-example",
+    "name": "example"
+  },
+  "interface": {
+    "private_key_file": "peer-a.key",
+    "address": [
+      "10.80.0.1/32"
+    ],
+    "listen_port": 51820
+  },
+  "peers": [
+    {
+      "public_key": "3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08=",
+      "allowed_ips": [
+        "10.80.0.2/32"
+      ],
+      "endpoint": "127.0.0.1:51821",
+      "persistent_keepalive_seconds": 25
+    }
+  ]
+}

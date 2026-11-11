@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/peerimeter/peerimeter-agent/schemas/static-v1.schema.json",
+  "title": "Peerimeter offline static configuration v1",
+  "description": "Structural contract. The Go validator additionally checks CIDRs, route conflicts, key bytes, numeric endpoint syntax, OS-specific interface names and protected key files via the CLI. No default-route/exit-node support. Relative private_key_file resolves against this JSON file's directory.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "mode", "network", "interface", "peers"],
+  "properties": {
+    "version": {"const": 1},
+    "mode": {"const": "static"},
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.-]+$", "not": {"enum": [".", ".."]}},
+        "name": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "[^\\s]"}
+      }
+    },
+    "interface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["private_key_file", "address", "listen_port"],
+      "properties": {
+        "private_key_file": {"type": "string", "minLength": 1, "pattern": "[^\\s]"},
+        "address": {"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"$ref": "#/$defs/cidr"}},
+        "listen_port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "name": {"type": "string", "description": "Optional Linux-only override. Omit on macOS/Windows.", "minLength": 1, "maxLength": 15, "pattern": "^[A-Za-z0-9_.-]+$", "not": {"enum": [".", ".."]}}
+      }
+    },
+    "peers": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1024,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["public_key", "allowed_ips", "endpoint"],
+        "properties": {
+          "public_key": {"type": "string", "pattern": "^[A-Za-z0-9+/]{43}=$"},
+          "allowed_ips": {"type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true, "items": {"$ref": "#/$defs/cidr"}},
+          "endpoint": {"type": "string", "description": "Numeric IPv4:port or [IPv6]:port, no DNS resolution.", "minLength": 3, "maxLength": 64},
+          "persistent_keepalive_seconds": {"type": "integer", "minimum": 0, "maximum": 65535, "default": 0}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "cidr": {"type": "string", "description": "IPv4 or IPv6 prefix, semantically checked by validate-config.", "minLength": 3, "maxLength": 64}
+  }
+}
