@@ -2,16 +2,23 @@ package main
 
 import (
 	"context"
-	"github.com/peerimeter/peerimeter-agent/internal/cli"
-	"github.com/peerimeter/peerimeter-agent/internal/service"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/peerimeter/peerimeter-agent/internal/cli"
+	"github.com/peerimeter/peerimeter-agent/internal/logging"
+	"github.com/peerimeter/peerimeter-agent/internal/service"
 )
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+	handler, err := logging.NewHandler(os.Getenv(logging.FormatEnv), os.Stderr)
+	if err != nil {
+		_, _ = os.Stderr.WriteString(err.Error() + "\n")
+		os.Exit(2)
+	}
+	slog.SetDefault(slog.New(handler))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	handled, err := service.Dispatch(ctx, func(ctx context.Context) error {

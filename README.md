@@ -275,6 +275,19 @@ human-readable build details, with terminal-aware pink/purple color. Use
 `version --json` for automation, `--color never` for plain output or `--color
 always` to force ANSI; automatic color respects `NO_COLOR` and pipes.
 
+Runtime logs use colored console formatting by default when stderr is an
+interactive terminal. Set `PEERIMETER_LOG_FORMAT` to `text` for uncolored
+logfmt output or `json` for structured JSON logs. Console mode respects
+`NO_COLOR` and does not emit ANSI codes when output is piped:
+
+```sh
+PEERIMETER_LOG_FORMAT=json peerimeter-agent run --config ./peer.json
+PEERIMETER_LOG_FORMAT=text peerimeter-agent run --config ./peer.json
+```
+
+In PowerShell, set it for the current session with
+`$env:PEERIMETER_LOG_FORMAT = 'json'` or `'text'` before starting the agent.
+
 ## Verification
 
 ### Local checks
