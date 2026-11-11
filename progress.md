@@ -7,16 +7,19 @@ No agent-managed WireGuard tunnel or service implementation is claimed.
 
 ## Phase checklist
 
+**Phase status:** ✅ Complete · 🔄 In progress · ⬜ Not started · ⛔ Blocked.
+A passed test alone does not mean the phase is complete; Phase 1 and later also require the independent review gate.
+
 | Phase | Status |
 |---|---|
-| 0 — Static contract and cross-platform baseline | Complete |
-| 1 — Native offline WireGuard agent and services | In progress |
-| 2 — Service, enrollment, sync | Not started |
-| 3 — NAT and recovery | Not started |
-| 4 — Browser dashboard | Not started |
-| 5 — External client gateways | Not started |
-| 6 — Resilience and packaging | Not started |
-| 7 — Hardening and agent self-update | Not started |
+| 0 — Static contract and cross-platform baseline | ✅ Complete |
+| 1 — Native offline WireGuard agent and services | 🔄 In progress |
+| 2 — Service, enrollment, sync | ⬜ Not started |
+| 3 — NAT and recovery | ⬜ Not started |
+| 4 — Browser dashboard | ⬜ Not started |
+| 5 — External client gateways | ⬜ Not started |
+| 6 — Resilience and packaging | ⬜ Not started |
+| 7 — Hardening and agent self-update | ⬜ Not started |
 
 ## Completed implementation
 
