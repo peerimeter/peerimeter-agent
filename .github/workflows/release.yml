@@ -13,22 +13,24 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     outputs:
-      tag: ${{ steps.version.outputs.tag }}
+      tag: ${{ steps.semver.outputs.next }}
+      bump: ${{ steps.semver.outputs.bump }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
-      - id: version
+      - id: semver
         name: Calculate next version from Conventional Commits
-        shell: bash
-        run: |
-          tag=$(python scripts/release/version.py)
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          if [ -z "$tag" ]; then echo 'No release-worthy commits; skipping package and publish jobs.'; fi
+        uses: ietf-tools/semver-action@c90370b2958652d71c06a3484129a4d423a6d8a8 # v1.11.0
+        with:
+          token: ${{ github.token }}
+          branch: main
+          noNewCommitBehavior: current
+          noVersionBumpBehavior: current
 
   build:
     needs: version
-    if: needs.version.outputs.tag != ''
+    if: needs.version.outputs.bump != 'none'
     strategy:
       fail-fast: false
       matrix:
@@ -97,7 +99,7 @@ jobs:
 
   publish:
     needs: [version, build]
-    if: needs.version.outputs.tag != ''
+    if: needs.version.outputs.bump != 'none'
     runs-on: ubuntu-24.04
     permissions:
       contents: write

@@ -111,13 +111,13 @@ Phase 7.
 ### Publishing a release
 
 Start **Actions → Publish release → Run workflow** on `main`. The workflow
-reads commits since the latest stable tag and applies Conventional Commit
-versioning: `feat` bumps minor, `fix`/`perf`/`revert` bump patch, and `!` or a
-`BREAKING CHANGE:` footer bumps major. Existing non-Conventional messages are
-treated as patch changes for migration compatibility. It builds and checks
-Linux, macOS and Windows packages, then creates the matching version tag and
-release with platform assets and `SHA256SUMS`. It does not reject or rewrite
-commits during normal CI.
+uses the pinned `ietf-tools/semver-action` to read Conventional Commits since
+the latest stable tag: `feat` bumps minor, patch-level changes bump patch, and
+breaking changes bump major. If commits do not call for a version bump, package
+and release jobs are skipped. It builds and checks Linux, macOS and Windows
+packages, then creates the matching version tag and release with platform
+assets and `SHA256SUMS`. It does not reject or rewrite commits during normal
+CI.
 
 ## Offline configuration
 
