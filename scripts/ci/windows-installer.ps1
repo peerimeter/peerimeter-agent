@@ -18,13 +18,15 @@ $programDataCreated = $false
 $arch = switch ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()) { 'x64' {'amd64'} 'arm64' {'arm64'} default {throw 'Unsupported test architecture'} }
 if (-not $Archive) {
     if (-not $PackageDirectory) { throw 'Supply -PackageDirectory or -Archive' }
-    $packages = @(Get-ChildItem -LiteralPath $PackageDirectory -Filter "peerimeter-agent_*_windows_${arch}.zip" -File)
+    $assetArch = switch ($arch) { 'amd64' { 'x86_64' } 'arm64' { 'aarch64' } }
+    $packages = @(Get-ChildItem -LiteralPath $PackageDirectory -Filter "peerimeter-agent-windows-$assetArch.zip" -File)
     if ($packages.Count -ne 1) { throw 'Expected exactly one native Windows package ZIP' }
     $Archive = $packages[0].FullName
 }
 $Archive = [IO.Path]::GetFullPath($Archive)
 $checksum = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash
-$asset = "peerimeter-agent_v0.0.0-ci_windows_${arch}.zip"
+$assetArch = switch ($arch) { 'amd64' { 'x86_64' } 'arm64' { 'aarch64' } }
+$asset = "peerimeter-agent-windows-$assetArch.zip"
 $global:PeerimeterInstallerFixture = @{
     Archive=$Archive; SHA256=$checksum; Asset=$asset; Requests=[Collections.Generic.List[string]]::new(); FailReplace=$false
 }

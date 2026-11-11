@@ -60,9 +60,11 @@ Install scripts are hosted at [agent.peerimeter.app](https://agent.peerimeter.ap
 `install.sh` for Linux/macOS and `install.ps1` for Windows. A public release is
 required before the default latest-release install can succeed.
 
-Phase 1 adds `install.sh` (Linux/macOS) and `install.ps1` (Windows). Published
-release packages are needed before the default `latest` download can work; no
-public agent release is claimed by the development CI.
+Linux and macOS releases provide a direct executable and a checksummed license
+notices file (for example, `peerimeter-agent-linux-x86_64`). Windows releases
+provide a ZIP with the executable, signed WireGuardNT DLL and notices (for
+example, `peerimeter-agent-windows-x86_64.zip`). Asset names do not include the
+release version; the installer selects the version from the release tag.
 
 The installers default to the latest stable release and detect OS/architecture.
 Explicit versions and absolute installation directories are supported:
@@ -89,10 +91,11 @@ sh install.sh --version latest --install-dir "$HOME/.local/bin"
 Release downloads use HTTPS and the release SHA-256 manifest. This authenticates
 the download origin and checks integrity; a detached agent release signature is
 not claimed. The Windows DLL also has its pinned hash and official Authenticode
-signature. For an offline package verified separately, supply a local archive
-and its SHA-256 using `--archive`/`--sha256` or `-Archive`/`-SHA256`. Installers
-replace program files only; they preserve configuration and keys. Automatic
-self-update remains Phase 7.
+signature. For an offline Unix install, supply a local binary and notices file
+with `--binary`, `--notices`, `--sha256` and `--notices-sha256`; Windows accepts
+a local ZIP with `-Archive` and `-SHA256`. Installers replace program files
+only; they preserve configuration and keys. Automatic self-update remains
+Phase 7.
 
 ## Offline configuration
 

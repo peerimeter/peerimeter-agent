@@ -68,7 +68,8 @@ try {
         if ($Version -eq 'latest') { $Version = (Invoke-RestMethod "$repo/releases/latest").tag_name }
         if (-not $Version.StartsWith('v')) { $Version = 'v' + $Version }
         if ($Version -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$') { throw 'Invalid release version' }
-        $asset = "peerimeter-agent_${Version}_windows_${arch}.zip"
+        $assetArch = switch ($arch) { 'amd64' { 'x86_64' } 'arm64' { 'aarch64' } }
+        $asset = "peerimeter-agent-windows-$assetArch.zip"
         $base = "https://github.com/peerimeter/peerimeter-agent/releases/download/$Version"
         $Archive = Join-Path $work 'package.zip'
         Invoke-WebRequest "$base/$asset" -OutFile $Archive
