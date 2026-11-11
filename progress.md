@@ -2,7 +2,7 @@
 
 ## Current status
 
-Phase 0 in progress. Native Go 1.27.4 CI and backend feasibility runs pending.
+Phase 0 in progress. First native Go 1.27.4 CI run passed Linux/macOS and failed Windows; backend feasibility passed all three OSes.
 No agent-managed WireGuard tunnel or service implementation is claimed.
 
 ## Phase checklist
@@ -50,9 +50,9 @@ No agent-managed WireGuard tunnel or service implementation is claimed.
 
 | Runner | Build/unit/CLI | Backend handshake/traffic/restart/cleanup | Agent connectivity/E2E |
 |---|---|---|---|
-| ubuntu-24.04 | not run | not run | not run |
-| macos-15 | not run | not run | not run |
-| windows-2022 | not run | not run | not run |
+| ubuntu-24.04 | passed | passed | not run |
+| macos-15 | passed | passed | not run |
+| windows-2022 | failed | passed | not run |
 
 ## Limitations and next actions
 
@@ -70,3 +70,16 @@ No `peerimeter-service` implementation before the offline agent milestone.
 No relay or desktop UI. No static-mode API/MQTT/STUN dependency. See README for
 the exact interface-name algorithm and trusted-parent key storage requirement.
 Go 1.27.4 is pinned by project requirement. Self-update belongs to Phase 7.
+
+## Native evidence — 2026-11-11, commit ebb4a1f880e39e2ca1003d9551c185a76ee81069
+
+- [Native CI](https://github.com/peerimeter/peerimeter-agent/actions/runs/42942950063):
+  Linux and macOS passed exact Go 1.27.4 build, vet, race tests and CLI smoke.
+  Windows failed at the shell version/format gate before tests. Follow-up adds
+  LF checkout policy, CR normalization and visible formatting diagnostics.
+- [WireGuard backend feasibility](https://github.com/peerimeter/peerimeter-agent/actions/runs/42942949983):
+  all three platforms passed actual native interface/route creation, authenticated
+  handshake, traffic initiated in both directions, restart and cleanup. This is
+  backend feasibility, not agent integration or mixed-OS connectivity.
+- Follow-up adds macOS opened-descriptor extended ACL checks and native ACL tests.
+  All modified code needs a new native CI run before claiming verification.
