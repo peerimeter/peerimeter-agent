@@ -1,0 +1,16 @@
+name: Connectivity E2E
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  availability:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Report pending Phase 1 acceptance gate
+        shell: bash
+        run: |
+          echo 'Status: blocked. Phase 0 has no agent tunnel backend yet. Linux NAT/IP-change and mixed-OS agent connectivity require Phase 1 plus a reachable test topology.' >> "$GITHUB_STEP_SUMMARY"
+          echo '::error::blocked: agent connectivity E2E is not implemented; backend feasibility passes do not prove agent connectivity.'
+          exit 1
