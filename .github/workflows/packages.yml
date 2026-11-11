@@ -64,7 +64,7 @@ jobs:
           asset="peerimeter-agent_${RELEASE_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.tar.gz"
           digest=$(awk -v name="$asset" '$2 == name {print $1}' dist/SHA256SUMS)
           sh install.sh --archive "dist/$asset" --sha256 "$digest" --install-dir "$RUNNER_TEMP/real package install/bin"
-          "$RUNNER_TEMP/real package install/bin/peerimeter-agent" version > "$RUNNER_TEMP/installed-version.json"
+          "$RUNNER_TEMP/real package install/bin/peerimeter-agent" version --json > "$RUNNER_TEMP/installed-version.json"
           python -c 'import json,os; p=json.load(open(os.environ["RUNNER_TEMP"]+"/installed-version.json")); assert p["version"]==os.environ["RELEASE_VERSION"] and p["go_version"]=="go1.27.4"'
       - name: Windows installer latest/pin/offline/custom-path tests
         if: matrix.native_test && runner.os == 'Windows'

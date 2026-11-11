@@ -72,3 +72,11 @@ func nativeValidateStatePath(path string) error {
 		path = parent
 	}
 }
+
+func validateLegacySnapshot(path string) error {
+	var st unix.Stat_t
+	if unix.Lstat(path, &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Uid != uint32(os.Geteuid()) || st.Mode&0077 != 0 {
+		return errors.New("legacy service snapshot must be an owned regular file with chmod 600")
+	}
+	return nil
+}

@@ -8,9 +8,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
-      - name: Report pending Phase 1 acceptance gate
+      - name: Report pending mixed-OS and disruption topology
         shell: bash
         run: |
-          echo 'Status: blocked. Phase 0 has no agent tunnel backend yet. Linux NAT/IP-change and mixed-OS agent connectivity require Phase 1 plus a reachable test topology.' >> "$GITHUB_STEP_SUMMARY"
-          echo '::error::blocked: agent connectivity E2E is not implemented; backend feasibility passes do not prove agent connectivity.'
+          echo 'Status: blocked. Native Phase 1 agent links and services are verified in wireguard-integration.yml. Mixed-OS VM connectivity needs a reachable dedicated test topology; managed NAT/public-endpoint recovery belongs to Phase 3 and is not implemented yet.' >> "$GITHUB_STEP_SUMMARY"
+          echo '::error::blocked: mixed-OS and NAT/disruption E2E infrastructure is not provisioned. Native single-platform agent integration results do not prove these scenarios.'
           exit 1

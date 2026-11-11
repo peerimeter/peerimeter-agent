@@ -92,7 +92,7 @@ func serviceSecureObject(path string, directory, private bool) error {
 }
 
 func serviceArguments(cfg Config) []string {
-	args := []string{"run", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory}
+	args := []string{"run", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory, "--runtime-dir", serviceRuntime(cfg), "--config-dir", snapshotDirectory(cfg)}
 	if cfg.Operator != "" {
 		args = append(args, "--operator", cfg.Operator)
 	}
@@ -371,4 +371,42 @@ func nativeValidateStatePath(path string) error {
 		return errors.New("cannot inspect Windows service state directory")
 	}
 	return serviceSecureAncestors(path)
+}
+
+func validateLegacySnapshot(path string) error { return serviceSecureObject(path, false, true) }
+func RemoveOwned(ctx context.Context, expectedExe string, cfg Config) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	manager, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer manager.Disconnect()
+	registered, err := manager.OpenService(windowsServiceName)
+	if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer registered.Close()
+	settings, err := registered.Config()
+	if err != nil {
+		return err
+	}
+	arguments, err := windows.DecomposeCommandLine(settings.BinaryPathName)
+	if err != nil {
+		return err
+	}
+	if err := verifyServiceArguments(arguments, expectedExe, cfg); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := stopWindowsService(registered); err != nil {
+		return err
+	}
+	return registered.Delete()
 }

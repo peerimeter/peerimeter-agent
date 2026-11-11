@@ -3,6 +3,7 @@ package local
 import (
 	"bytes"
 	"context"
+	"errors"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
 	"os"
 	"path/filepath"
@@ -42,7 +43,7 @@ func TestLocalChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	guard, err := Acquire(dir)
+	guard, err := Acquire(filepath.Join(dir, "persistent"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,5 +69,101 @@ func TestLocalChannel(t *testing.T) {
 	out.Reset()
 	if err = Request(ctx, dir, "stop", &out); err != nil || !stopped.Load() {
 		t.Fatal(err)
+	}
+}
+
+func TestExistingGuardNeverCreatesMissingStateAndBlocksLiveManager(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "absent-state")
+	guard, err := TryAcquireExisting(missing)
+	if err != nil || guard != nil {
+		t.Fatal("absent state was not recognized")
+	}
+	if _, err := os.Lstat(missing); !os.IsNotExist(err) {
+		t.Fatal("quiescence check created state directory")
+	}
+	dir := filepath.Join(t.TempDir(), "state")
+	active, err := Acquire(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second, err := TryAcquireExisting(dir); err == nil {
+		if second != nil {
+			second.Close()
+		}
+		t.Fatal("live state owner was accepted as stopped")
+	}
+	active.Close()
+	stopped, err := TryAcquireExisting(dir)
+	if err != nil || stopped == nil {
+		t.Fatalf("stopped state could not be locked: %v", err)
+	}
+	stopped.Close()
+}
+
+func TestProfileCallbackRunsOnlyAfterExclusiveRuntimeOwnership(t *testing.T) {
+	dir, err := os.MkdirTemp("", "pmready-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	var callbacks atomic.Int32
+	ops := Operations{BeforeServe: func() error { callbacks.Add(1); return nil }, Snapshot: func(context.Context) (platform.Snapshot, error) { return platform.Snapshot{State: "running"}, nil }, Reload: func(context.Context) error { return nil }, Stop: func() {}}
+	closeServer, err := Serve(context.Background(), dir, ops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeServer()
+	if callbacks.Load() != 1 {
+		t.Fatal("owned runtime did not reach inventory callback")
+	}
+	if second, err := Serve(context.Background(), dir, ops); err == nil {
+		second()
+		t.Fatal("second profile claimed an active runtime")
+	}
+	if callbacks.Load() != 1 {
+		t.Fatal("failed runtime acquisition still changed profile ownership")
+	}
+	var status bytes.Buffer
+	if err := Request(context.Background(), dir, "status", &status); err != nil {
+		t.Fatal("failed competing listener disturbed active instance", err)
+	}
+}
+func TestProfileCallbackFailureReleasesOnlyItsOwnedRuntime(t *testing.T) {
+	dir, err := os.MkdirTemp("", "pmready-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	failure := errors.New("profile cannot claim runtime")
+	if closeServer, err := Serve(context.Background(), dir, Operations{BeforeServe: func() error { return failure }}); !errors.Is(err, failure) || closeServer != nil {
+		t.Fatal("profile callback failure was not returned before serving")
+	}
+	closeServer, err := Serve(context.Background(), dir, Operations{Snapshot: func(context.Context) (platform.Snapshot, error) { return platform.Snapshot{State: "running"}, nil }, Reload: func(context.Context) error { return nil }, Stop: func() {}})
+	if err != nil {
+		t.Fatal("failed callback leaked runtime ownership", err)
+	}
+	closeServer()
+}
+
+func TestRuntimeCloseCallbackRunsOnceAndErrorIsReported(t *testing.T) {
+	dir, err := os.MkdirTemp("", "pmclose-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	failure := errors.New("runtime marker cleanup failed")
+	var closed atomic.Int32
+	closeServer, err := Serve(context.Background(), dir, Operations{OnClose: func() error { closed.Add(1); return failure }, Snapshot: func(context.Context) (platform.Snapshot, error) { return platform.Snapshot{State: "running"}, nil }, Reload: func(context.Context) error { return nil }, Stop: func() {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := closeServer(); !errors.Is(err, failure) {
+		t.Fatalf("listener callback error was hidden by HTTP shutdown: %v", err)
+	}
+	if err := closeServer(); !errors.Is(err, failure) {
+		t.Fatal("repeated close forgot original cleanup error")
+	}
+	if closed.Load() != 1 {
+		t.Fatal("runtime cleanup callback ran more than once")
 	}
 }

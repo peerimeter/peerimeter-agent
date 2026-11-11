@@ -3,16 +3,19 @@
 set -euo pipefail
 test "$(id -u)" -eq 0
 agent_source=${1:?usage: macos-agent.sh AGENT HELPER}
-helper_source=${2:?usage: macos-agent.sh AGENT HELPER}
+helper_source=${2:?usage: macos-agent.sh AGENT HELPER LEGACY_AGENT}
+legacy_source=${3:?usage: macos-agent.sh AGENT HELPER LEGACY_AGENT}
 test ! -e /Library/LaunchDaemons/com.peerimeter.agent.plist
 dir=$(mktemp -d /tmp/pmagent.XXXXXX)
 chmod 700 "$dir"
-install -m 0755 "$agent_source" "$dir/peerimeter-agent"
+bash "$(dirname "$0")/unix-install-native.sh" "$agent_source" "$dir/current installation"
 install -m 0755 "$helper_source" "$dir/pmprobe"
-agent=$dir/peerimeter-agent
+agent="$dir/current installation/peerimeter-agent"
 helper=$dir/pmprobe
 config=$dir/agent.json
-state=$dir/state
+state="$dir/persistent state"
+config_dir="$dir/installed config"
+runtime="$dir/runtime files"
 fgpid=
 refpid=
 service_installed=false
@@ -47,7 +50,7 @@ refpid=$!
 wait_status() {
   local attempt
   for attempt in {1..30}; do
-    if "$agent" status --state-dir "$state" >"$dir/status.json" 2>/dev/null; then
+    if "$agent" status --runtime-dir "$runtime" >"$dir/status.json" 2>/dev/null; then
       if python3 - "$dir/status.json" <<'PY'
 import json, sys
 s = json.load(open(sys.argv[1]))
@@ -65,7 +68,7 @@ PY
   return 1
 }
 interface_name() {
-  "$agent" status --state-dir "$state" >"$dir/status.json"
+  "$agent" status --runtime-dir "$runtime" >"$dir/status.json"
   python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["interface_name"])' "$dir/status.json"
 }
 verify_traffic() {
@@ -74,12 +77,21 @@ verify_traffic() {
   "$helper" host "$dir"
   after=$(grep -c '^PASS reference' "$dir/reference.log" || true)
   test "$after" -gt "$before"
-  "$agent" peers --state-dir "$state" >"$dir/peers.json"
-  python3 - "$dir/peers.json" <<'PY'
+  "$agent" peers --json --runtime-dir "$runtime" >"$dir/peers.json"
+  "$agent" status --runtime-dir "$runtime" >"$dir/actual-status.json"
+  "$agent" peers --runtime-dir "$runtime" >"$dir/peers-human.txt"
+  python3 - "$dir/peers.json" "$dir/actual-status.json" "$dir" <<'PY'
 import calendar, json, sys, time
 peers = json.load(open(sys.argv[1]))
 assert len(peers) == 1
 p = peers[0]
+import pathlib
+root=pathlib.Path(sys.argv[3]);s=json.load(open(sys.argv[2]))
+assert s['public_key']==(root/'native.pub').read_text().strip() and s['listen_port']==51820
+assert p['allowed_ips']==['10.203.0.2/32'] and p['persistent_keepalive_seconds']==25
+human=(root/'peers-human.txt').read_text()
+for label in ('interface:','public key:','listening port:','peer:','allowed ips:','latest handshake:','transfer:','private key: (hidden)'):assert label in human
+assert (root/'native.key').read_text().strip() not in human,'private key leaked in human peers output'
 stamp = calendar.timegm(time.strptime(p['last_handshake'][:19], '%Y-%m-%dT%H:%M:%S'))
 assert abs(time.time() - stamp) < 120, 'missing fresh authenticated handshake'
 assert p['received_bytes'] > 0 and p['sent_bytes'] > 0, 'missing real tunnel traffic'
@@ -93,7 +105,7 @@ PY
   fi
 }
 verify_unchanged() {
-  "$agent" status --state-dir "$state" >"$dir/status-after.json"
+  "$agent" status --runtime-dir "$runtime" >"$dir/status-after.json"
   python3 - "$dir/status-before.json" "$dir/status-after.json" <<'PY'
 import json, sys
 before, after = [json.load(open(p)) for p in sys.argv[1:]]
@@ -116,14 +128,14 @@ verify_removed() {
   fi
 }
 start_foreground() {
-  "$agent" run --config "$config" --state-dir "$state" >"$dir/agent.log" 2>&1 &
+  "$agent" run --config "$config" --state-dir "$state" --config-dir "$config_dir" --runtime-dir "$runtime" >"$dir/agent.log" 2>&1 &
   fgpid=$!
   wait_status
 }
 stop_foreground() {
   local iface attempt
   iface=$(interface_name)
-  "$agent" stop --state-dir "$state"
+  "$agent" stop --runtime-dir "$runtime"
   for attempt in {1..30}; do
     if ! kill -0 "$fgpid" 2>/dev/null; then break; fi
     sleep 1
@@ -132,16 +144,27 @@ stop_foreground() {
   wait "$fgpid"
   fgpid=
   verify_removed "$iface"
+  test ! -e "$runtime/control.sock"
 }
 start_foreground
+bash "$(dirname "$0")/unix-runtime-collision.sh" "$agent" "$config" "$runtime" "$dir"
 verify_traffic
-"$agent" status --state-dir "$state" >"$dir/status-before.json"
-"$agent" sync --state-dir "$state"
+python3 - "$agent" "$config" "$config_dir" "$state" "$dir/competing runtime" "$dir/competing.log" <<'PYLOCK'
+import subprocess,sys
+agent,config,config_dir,state,runtime,log=sys.argv[1:]
+with open(log,'w') as output:
+ p=subprocess.run([agent,'run','--config',config,'--config-dir',config_dir,'--state-dir',state,'--runtime-dir',runtime],stdout=output,stderr=subprocess.STDOUT,timeout=8)
+assert p.returncode!=0,'another runtime directory bypassed persistent-state manager lock'
+PYLOCK
+wait_status
+verify_traffic
+"$agent" status --runtime-dir "$runtime" >"$dir/status-before.json"
+"$agent" sync --runtime-dir "$runtime"
 verify_unchanged
 echo 'PASS: unchanged config reconciliation preserves actual utun and peer session'
 cp "$config" "$dir/good.json"
 printf '{"version":' >"$config"
-if "$agent" sync --state-dir "$state" >"$dir/rejected.json" 2>/dev/null; then
+if "$agent" sync --runtime-dir "$runtime" >"$dir/rejected.json" 2>/dev/null; then
   echo 'FAIL: malformed config was accepted during reload' >&2
   exit 1
 fi
@@ -150,14 +173,17 @@ verify_unchanged
 verify_traffic
 echo 'PASS: malformed reload preserves working tunnel'
 stop_foreground
+rm -rf "$runtime"
 start_foreground
 verify_traffic
 stop_foreground
 echo 'PASS: actual agent foreground restart and utun/route cleanup'
 
 # Verify system-service boot registration plus two real launchd startup cycles.
-state=$dir/service-state
-"$agent" service install --config "$config" --state-dir "$state"
+state="$dir/service persistent state"
+config_dir="$dir/service installed config"
+runtime="$dir/service runtime files"
+"$agent" service install --config "$config" --state-dir "$state" --config-dir "$config_dir" --runtime-dir "$runtime"
 service_installed=true
 /usr/bin/plutil -lint /Library/LaunchDaemons/com.peerimeter.agent.plist
 "$agent" service start
@@ -174,8 +200,13 @@ iface=$(interface_name)
 service_installed=false
 verify_removed "$iface"
 test ! -e /Library/LaunchDaemons/com.peerimeter.agent.plist
-test -f "$state/service.json"
-test -f "$state/service.key"
+test -f "$config_dir/service.json"
+test -f "$config_dir/service.key"
+test ! -e "$state/service.json"
+test ! -e "$state/service.key"
+test ! -e "$runtime/control.sock"
 if /bin/launchctl print system/com.peerimeter.agent >/dev/null 2>&1; then echo 'FAIL: launchd registration survived uninstall' >&2; exit 1; fi
 echo 'PASS: launchd install/start/stop/restart/uninstall, protected configuration preserved'
 echo 'PASS: macOS actual agent native tunnel, IPC, reload validation and service lifecycle'
+
+bash "$(dirname "$0")/unix-layout-uninstall.sh" "$agent" "$legacy_source"

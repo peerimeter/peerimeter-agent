@@ -460,16 +460,36 @@ func (s *windowsSession) Snapshot(ctx context.Context) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("read WireGuardNT adapter state: %w", err)
 	}
-	result := Snapshot{NetworkID: s.desired.Config.Network.ID, InterfaceName: s.name, State: "down", Peers: []PeerState{}}
+	result := Snapshot{NetworkName: s.desired.Config.Network.Name, PublicKey: base64.StdEncoding.EncodeToString(configuration.PublicKey[:]), ListenPort: int(configuration.ListenPort), NetworkID: s.desired.Config.Network.ID, InterfaceName: s.name, State: "down", Peers: []PeerState{}}
 	if state == driver.AdapterStateUp {
 		result.State = "running"
 	}
 	peer := configuration.FirstPeer()
 	for i := uint32(0); i < configuration.PeerCount; i++ {
-		result.Peers = append(result.Peers, PeerState{
-			PublicKey: base64.StdEncoding.EncodeToString(peer.PublicKey[:]), Endpoint: peer.Endpoint.AddrPort().String(),
-			LastHandshake: windowsHandshake(peer.LastHandshake), ReceivedBytes: peer.RxBytes, SentBytes: peer.TxBytes,
-		})
+
+		state := PeerState{PublicKey: base64.StdEncoding.EncodeToString(peer.PublicKey[:]), LastHandshake: windowsHandshake(peer.LastHandshake), ReceivedBytes: peer.RxBytes, SentBytes: peer.TxBytes, PersistentKeepaliveSeconds: int(peer.PersistentKeepalive), AllowedIPs: []string{}}
+		if endpoint := peer.Endpoint.AddrPort(); endpoint.IsValid() && endpoint.Port() != 0 {
+			state.Endpoint = endpoint.String()
+		}
+		prefix := peer.FirstAllowedIP()
+		for j := uint32(0); j < peer.AllowedIPsCount; j++ {
+			var address netip.Addr
+			if prefix.AddressFamily == windows.AF_INET {
+				var bytes [4]byte
+				copy(bytes[:], prefix.Address[:4])
+				address = netip.AddrFrom4(bytes)
+			} else if prefix.AddressFamily == windows.AF_INET6 {
+				address = netip.AddrFrom16(prefix.Address)
+			}
+			if address.IsValid() {
+				p := netip.PrefixFrom(address, int(prefix.Cidr))
+				if p.IsValid() {
+					state.AllowedIPs = append(state.AllowedIPs, p.String())
+				}
+			}
+			prefix = prefix.NextAllowedIP()
+		}
+		result.Peers = append(result.Peers, state)
 		peer = peer.NextPeer()
 	}
 	runtime.KeepAlive(configuration)

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"github.com/peerimeter/peerimeter-agent/internal/config"
+	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
 	"github.com/peerimeter/peerimeter-agent/internal/secret"
 	"os"
@@ -105,5 +106,30 @@ func TestCobraHelpAndCompletion(t *testing.T) {
 	code, _, err = invoke(t, "version", "SECRET-POSITIONAL")
 	if code == 0 || strings.Contains(err, "SECRET") {
 		t.Fatal("positional error leaked input")
+	}
+}
+
+func TestPeerHumanAndJSONUseSamePublicSnapshot(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "pmpeer-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	runtimeDir := filepath.Join(dir, "control")
+	closeServer, err := local.Serve(context.Background(), runtimeDir, local.Operations{Snapshot: func(context.Context) (platform.Snapshot, error) {
+		return platform.Snapshot{NetworkID: "mesh-test", InterfaceName: "pm-test", ListenPort: 51820, Peers: []platform.PeerState{{PublicKey: "public-test", AllowedIPs: []string{"10.80.0.2/32"}, PersistentKeepaliveSeconds: 25}}}, nil
+	}, Reload: func(context.Context) error { return nil }, Stop: func() {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeServer()
+	code, out, stderr := invoke(t, "peers", "--runtime-dir", runtimeDir, "--color", "never")
+	if code != 0 || stderr != "" || !strings.Contains(out, "peer: public-test") || !strings.Contains(out, "private key: (hidden)") {
+		t.Fatalf("human output: %d %s %s", code, out, stderr)
+	}
+	code, out, stderr = invoke(t, "peers", "--runtime-dir", runtimeDir, "--json")
+	var peers []platform.PeerState
+	if code != 0 || stderr != "" || json.Unmarshal([]byte(out), &peers) != nil || len(peers) != 1 || peers[0].PublicKey != "public-test" {
+		t.Fatalf("JSON output: %d %s %s", code, out, stderr)
 	}
 }

@@ -2,8 +2,9 @@
 
 ## Current status
 
-Phase 0 complete: baseline natively verified on all three platforms with Go 1.27.4, including backend feasibility. Phase 1 implementation is in progress: native adapters, local IPC/control, persistent state, services and installers. New agent native verification is pending; prior baseline/backend passes do not prove this implementation.
-No agent-managed WireGuard tunnel or service implementation is claimed.
+✅ Phase 0 complete. 🔄 Phase 1 in progress after native verification and independent
+review. ⬜ Phase 2 has not started. Final reviewed code: `4246c6b`; exact native
+unit/package and agent integration SHAs, run links and limitations below.
 
 ## Phase checklist
 
@@ -31,8 +32,9 @@ A passed test alone does not mean the phase is complete; Phase 1 and later also 
 - Linux deterministic safe interface-name derivation and ownership-check helper.
 - POSIX key owner/mode/link checks; Windows handle-based owner/DACL validation
   and protected ACL creation; key material omitted from diagnostic errors.
-- `validate-config`, `generate-example`, `version` are functional offline.
-  `run`, `status`, `peers` explicitly return unavailable (exit 3) pending Phase 1.
+- `validate-config`, `generate-example`, `version`, native `run`, protected local
+  `status`, `peers`, `sync` and `stop` are operational. Cobra supplies help and
+  completion. Systemd/launchd/SCM services and protected operator access work.
 - Testable platform backend/session contracts and cancellation/cleanup lifecycle.
 - Three independent workflows: native baseline, real backend feasibility, and
   explicitly blocked connectivity E2E until agent/topology implementation.
@@ -59,14 +61,17 @@ A passed test alone does not mean the phase is complete; Phase 1 and later also 
 
 ## Limitations and next actions
 
-Run the exact-version native matrix and backend feasibility workflow on GitHub;
-record tested commit, run links and artifacts. Native backend feasibility does
-not prove agent integration. Implement real adapters, persisted interface
-selection and actual OS collision checks, foreground runtime, local IPC and
-service management in Phase 1. Windows installer must bundle the official signed
-WireGuardNT component and work offline; the test-only official MSI install is
-not the product installer. NAT/IP-change and mixed-OS agent E2E remain blocked.
-No `peerimeter-service` implementation before the offline agent milestone.
+Mixed-OS VM agent pairs and disruption/NAT recovery are not run. Linux integration
+uses two agents in isolated namespaces; macOS/Windows use a native agent and an
+independent userspace peer. Linux amd64, macOS arm64 and Windows amd64 are native
+verified; other packaged architectures are cross-build only. One named native
+service is currently supported per machine. Address changes on macOS/Windows
+require explicit stop/start. Self-update remains Phase 7.
+
+No public agent release has been published. Native installer tests exercise
+latest/pinned URL resolution through explicit fixtures and install/execute real
+packages; live `latest` downloads need a published release. Next choose a first
+release or Phase 2 when requested. The service repository remains unstarted.
 
 ## Decisions
 
@@ -167,3 +172,49 @@ release packaging and README work are in progress. No Phase 1 pass is claimed ye
   ✅ Phase 0 remains complete; 🔄 Phase 1 is not closed before native verification
   and independent follow-up review. Mixed-OS VM links remain not run. No release
   has been published; latest/pinned installer URL tests use explicit local fixtures.
+
+## Verified Phase 1 core evidence — 2026-11-11 (expanded phase remains open)
+
+- [Native unit/build/CLI](https://github.com/peerimeter/peerimeter-agent/actions/runs/42948951660): all three passed at `4246c6bea040bfa41a0bd506f0df501310a20367`, exact Go 1.27.4, vet/race/unit, static config/key permissions, Cobra help/completion.
+- [Actual agent integration](https://github.com/peerimeter/peerimeter-agent/actions/runs/42948600470): all three passed at `04648b92b7bdc3635fdf12b56d2729667130538a`. Real authenticated handshake and traffic, in-place peer changes, invalid reload preservation, graceful restart/cleanup, systemd/launchd/SCM lifecycle and protected config/key preservation. Linux also verifies SIGKILL recovery, UID-based delegated control and authorization even after socket permission widening; Windows verifies a real nonadmin operator and private-key read denial.
+- [Packages/installers](https://github.com/peerimeter/peerimeter-agent/actions/runs/42948951604): all six OS/architecture artifacts built at `4246c6b`; native Linux/macOS/Windows installer checks passed. Actual Unix archive installation and installed binary version/toolchain verified; actual Windows ZIP includes signed pinned WireGuardNT with no separate GUI/MSI. Tests cover latest/pinned URL fixtures, offline archives, custom/spaced paths, invalid checksums, preservation and Windows rollback. No public release was published.
+- `4246c6b` differs from `04648b9` only by the extra Unix actual-package test step; runtime sources are identical. Runner images: Ubuntu 24.04 x64 `20261101.360.1`; macOS 15 arm64 `20261104.0514.1`; Windows 2022 x64 `20261101.353.1` (recorded in evidence artifacts).
+- Independent reviewer `/root/phase1_review` **passed** final code at `4246c6bea040bfa41a0bd506f0df501310a20367`. Parent model was inherited; concrete model identifier unavailable. No blocking findings remain. Four findings fixed and rechecked: failed install retry/reinstall, delegated nonadmin IPC, Cobra/service script arguments, and concurrent installer snapshot rollback. The latter has a barrier-controlled regression test that failed before the lock fix and passed afterward. Review is independent of platform implementation agents.
+- Prior failures are preserved in agent progress.md: Linux alias initialization, Windows FILE_ADD_* constants, SYSTEM metadata cleanup ACLs, stale service script flags and Python Windows UTF-8 decoding; all resolved in the successful runs above.
+- ✅ Phase 0 complete; 🔄 Phase 1 in progress; ⬜ Phase 2 not started. Historical “Phase 1 pending” entries above are superseded by this dated completion record.
+
+## 🔄 Phase 1 scope extension — plan commit a022780
+
+The current plan adds mandatory Unix config/state/runtime directory separation,
+safe migration and a complete top-level uninstall with dry-run, installation
+inventory and native removal tests. These were not part of the implementation
+reviewed at 4246c6b and are not complete. The independent review caught the overly
+broad checklist marking before it was committed. Phase 1 remains in progress;
+all earlier core test passes remain valid evidence, not full-phase completion.
+
+## 🔄 Extended Phase 1 implementation — native gate pending
+
+The current working increment implements the new a022780 requirements: separate
+Unix config/state/runtime layouts and explicit legacy service migration; protected
+installation inventories; top-level full uninstall/dry-run with ownership-bound
+resource deletion, read-only preview, safe retries and a bounded Windows removal
+helper reporting pending/result receipts. service uninstall still preserves keys.
+
+Additional user requests are implemented: centralized ifname.DefaultPrefix,
+Cobra command-per-file factories, orbit/P ASCII version branding with terminal
+pink/purple and `version --json`, and refactored wgshow-style public peer rendering
+with `peers --json`. MIT source attribution/license is included with packages.
+
+Early independent review found and drove fixes for deferred-removal startup
+races, runtime ownership confusion and unhealthy-network shutdown. Startup leases,
+durable Removing state, bound runtime/profile markers, health-independent identity
+IPC, held state/runtime locks and teardown callbacks now enforce these boundaries.
+Regression tests cover them; native tests additionally exercise two installed
+agents sharing a runtime, queued old executables, defaults/custom paths, actual
+legacy-binary migration, complete removal and preservation of unrelated/source data.
+
+Local diagnostic Go 1.26.4 tests/vet passed using the external alternate manifest,
+CGO disabled and a private logical /tmp (the Termux physical TMPDIR ancestors are
+correctly rejected as writable). Windows/macOS builds passed. These are not the
+required native Go 1.27.4 evidence: new native CI and final independent review are
+pending. ✅ Phase 0 remains complete; 🔄 Phase 1 remains open until those gates pass.

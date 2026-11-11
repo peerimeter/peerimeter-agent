@@ -47,7 +47,7 @@ func TestDarwinPlistPreservesArgumentsAndRestartPolicy(t *testing.T) {
 			}
 		}
 	}
-	want := []string{executable, "run", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory}
+	want := []string{executable, "run", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory, "--runtime-dir", serviceRuntime(cfg), "--config-dir", snapshotDirectory(cfg)}
 	if !reflect.DeepEqual(values, want) {
 		t.Fatalf("plist changed argument boundaries: %+v", values)
 	}

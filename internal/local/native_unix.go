@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 func prepareDirectory(dir string) error {
@@ -28,16 +29,23 @@ func prepareDirectory(dir string) error {
 	}
 	return nil
 }
-func openLock(path string) (*os.File, error) {
-	fd, err := unix.Open(path, unix.O_RDWR|unix.O_CREAT|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0600)
+func openStateLock(dir string, existing bool) (*os.File, error) {
+	// Lock the durable directory inode itself: alternate runtime directories must
+	// not permit competing managers, and no disposable lock file becomes identity.
+	fd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
-		return nil, errors.New("cannot open agent lock")
+		return nil, errors.New("cannot open protected state directory lock")
+	}
+	var st unix.Stat_t
+	if unix.Fstat(fd, &st) != nil || st.Uid != uint32(os.Geteuid()) || st.Mode&0066 != 0 {
+		unix.Close(fd)
+		return nil, errors.New("state lock requires an owned directory without group/other read or write permissions")
 	}
 	if unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB) != nil {
 		unix.Close(fd)
 		return nil, errors.New("another agent already owns this state directory")
 	}
-	return os.NewFile(uintptr(fd), "agent-lock"), nil
+	return os.NewFile(uintptr(fd), "agent-state-directory-lock"), nil
 }
 func resolveOperator(operator string) (int, error) {
 	if operator == "" {
@@ -65,13 +73,42 @@ func resolveOperator(operator string) (int, error) {
 	}
 	return int(uid), nil
 }
-func listen(dir string, operator string) (net.Listener, error) {
+func listen(dir string, operator string, beforeListen ...func() error) (net.Listener, error) {
+	return listenWithHooks(dir, operator, callListenHooks(beforeListen), nil)
+}
+func listenWithHooks(dir, operator string, beforeListen, onClose func() error) (result net.Listener, resultError error) {
 	uid, err := resolveOperator(operator)
 	if err != nil {
 		return nil, err
 	}
 	if err := prepareDirectory(dir); err != nil {
 		return nil, err
+	}
+	runtimeLock, err := openStateLock(dir, false)
+	if err != nil {
+		return nil, errors.New("another agent owns this runtime directory")
+	}
+	legacyRuntimeLock, err := compatibilityLock(dir)
+	if err != nil {
+		runtimeLock.Close()
+		return nil, err
+	}
+	retained := false
+	defer func() {
+		if !retained {
+			if onClose != nil {
+				resultError = errors.Join(resultError, onClose())
+			}
+			runtimeLock.Close()
+			if legacyRuntimeLock != nil {
+				legacyRuntimeLock.Close()
+			}
+		}
+	}()
+	if beforeListen != nil {
+		if err := beforeListen(); err != nil {
+			return nil, err
+		}
 	}
 	// Hide the path while creating the socket, including on a restart of a
 	// delegated 0711 directory. An unusually permissive process umask must not
@@ -113,7 +150,8 @@ func listen(dir string, operator string) (net.Listener, error) {
 			return nil, errors.New("cannot enable operator traversal of state directory")
 		}
 	}
-	return &authenticatedListener{Listener: listener, operator: uint32(uid), owner: uint32(os.Geteuid()), credentials: peerUID}, nil
+	retained = true
+	return &authenticatedListener{Listener: listener, operator: uint32(uid), owner: uint32(os.Geteuid()), credentials: peerUID, runtimeLock: runtimeLock, legacyRuntimeLock: legacyRuntimeLock, onClose: onClose}, nil
 }
 func dial(ctx context.Context, dir string) (net.Conn, error) {
 	var d net.Dialer
@@ -125,8 +163,13 @@ func dial(ctx context.Context, dir string) (net.Conn, error) {
 // the service identity and root may use the HTTP control protocol.
 type authenticatedListener struct {
 	net.Listener
-	operator, owner uint32
-	credentials     func(net.Conn) (uint32, error)
+	operator, owner   uint32
+	credentials       func(net.Conn) (uint32, error)
+	runtimeLock       *os.File
+	legacyRuntimeLock *os.File
+	closeOnce         sync.Once
+	closeError        error
+	onClose           func() error
 }
 
 func (l *authenticatedListener) Accept() (net.Conn, error) {
@@ -142,4 +185,41 @@ func (l *authenticatedListener) Accept() (net.Conn, error) {
 		}
 		return connection, nil
 	}
+}
+
+func compatibilityLock(dir string) (*os.File, error) {
+	path := filepath.Join(dir, "agent.lock")
+	fd, err := unix.Open(path, unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err == unix.ENOENT {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, errors.New("cannot inspect legacy agent lock")
+	}
+	var st unix.Stat_t
+	if unix.Fstat(fd, &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Uid != uint32(os.Geteuid()) || st.Mode&0077 != 0 {
+		unix.Close(fd)
+		return nil, errors.New("legacy agent lock has unsafe ownership or permissions")
+	}
+	if unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB) != nil {
+		unix.Close(fd)
+		return nil, errors.New("a legacy agent still owns this state directory")
+	}
+	return os.NewFile(uintptr(fd), "legacy-agent-lock"), nil
+}
+
+func (l *authenticatedListener) Close() error {
+	l.closeOnce.Do(func() {
+		l.closeError = l.Listener.Close()
+		if l.onClose != nil {
+			l.closeError = errors.Join(l.closeError, l.onClose())
+		}
+		if l.runtimeLock != nil {
+			l.closeError = errors.Join(l.closeError, l.runtimeLock.Close())
+		}
+		if l.legacyRuntimeLock != nil {
+			l.closeError = errors.Join(l.closeError, l.legacyRuntimeLock.Close())
+		}
+	})
+	return l.closeError
 }

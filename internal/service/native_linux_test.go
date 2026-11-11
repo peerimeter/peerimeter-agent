@@ -94,3 +94,36 @@ func TestLinuxServiceOperatorIsExplicitAndSafelyQuoted(t *testing.T) {
 		}
 	}
 }
+
+func TestLinuxInstallNeverReplacesAnotherPeerimeterUnit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "peerimeter-agent.service")
+	a, err := linuxServiceUnit("/opt/install-a/peerimeter-agent", Config{ConfigPath: "/etc/install-a/service.json", ConfigDirectory: "/etc/install-a", StateDirectory: "/var/lib/install-a", RuntimeDirectory: "/run/install-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := linuxServiceUnit("/opt/install-b/peerimeter-agent", Config{ConfigPath: "/etc/install-b/service.json", ConfigDirectory: "/etc/install-b", StateDirectory: "/var/lib/install-b", RuntimeDirectory: "/run/install-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists, err := installLinuxService(path, a); err != nil || exists {
+		t.Fatalf("initial installation failed: %v", err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := installLinuxService(path, b); err == nil {
+		t.Fatal("installation B replaced installation A's owned service")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(a) {
+		t.Fatal("rejected registration changed the active service unit")
+	}
+	if _, exists, err := installLinuxService(path, a); err != nil || !exists {
+		t.Fatalf("identical registration cannot be reused: %v", err)
+	}
+	identical, err := os.Stat(path)
+	if err != nil || !os.SameFile(before, identical) {
+		t.Fatal("identical installation needlessly rewrote the service unit")
+	}
+}

@@ -554,9 +554,12 @@ func (s *linuxSession) Snapshot(ctx context.Context) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("read native Linux WireGuard peer state: %w", err)
 	}
-	result := Snapshot{NetworkID: s.desired.Config.Network.ID, InterfaceName: s.link.Attrs().Name, State: "running", Peers: []PeerState{}}
+	result := Snapshot{NetworkName: s.desired.Config.Network.Name, PublicKey: device.PublicKey.String(), ListenPort: device.ListenPort, NetworkID: s.desired.Config.Network.ID, InterfaceName: s.link.Attrs().Name, State: "running", Peers: []PeerState{}}
 	for _, p := range device.Peers {
-		peer := PeerState{PublicKey: p.PublicKey.String(), LastHandshake: p.LastHandshakeTime}
+		peer := PeerState{PublicKey: p.PublicKey.String(), LastHandshake: p.LastHandshakeTime, AllowedIPs: []string{}, PersistentKeepaliveSeconds: int(p.PersistentKeepaliveInterval / time.Second)}
+		for _, prefix := range p.AllowedIPs {
+			peer.AllowedIPs = append(peer.AllowedIPs, prefix.String())
+		}
 		if p.ReceiveBytes > 0 {
 			peer.ReceivedBytes = uint64(p.ReceiveBytes)
 		}

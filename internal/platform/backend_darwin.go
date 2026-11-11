@@ -435,7 +435,11 @@ func (s *darwinSession) Snapshot(ctx context.Context) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return Snapshot{NetworkID: s.desired.Config.Network.ID, InterfaceName: s.name, State: "running", Peers: peers}, nil
+	public, port, err := darwinPublicInterface(raw)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return Snapshot{NetworkName: s.desired.Config.Network.Name, PublicKey: public, ListenPort: port, NetworkID: s.desired.Config.Network.ID, InterfaceName: s.name, State: "running", Peers: peers}, nil
 }
 func darwinPublicState(raw string) ([]PeerState, error) {
 	peers := []PeerState{}
@@ -453,6 +457,22 @@ func darwinPublicState(raw string) ([]PeerState, error) {
 			}
 			peers = append(peers, PeerState{PublicKey: base64.StdEncoding.EncodeToString(data)})
 			peer = &peers[len(peers)-1]
+		case "allowed_ip":
+			if peer != nil {
+				prefix, err := netip.ParsePrefix(value)
+				if err != nil {
+					return nil, errors.New("invalid public WireGuard route state")
+				}
+				peer.AllowedIPs = append(peer.AllowedIPs, prefix.String())
+			}
+		case "persistent_keepalive_interval":
+			if peer != nil {
+				seconds, err := strconv.ParseUint(value, 10, 16)
+				if err != nil {
+					return nil, errors.New("invalid public WireGuard keepalive state")
+				}
+				peer.PersistentKeepaliveSeconds = int(seconds)
+			}
 		case "endpoint":
 			if peer != nil {
 				if _, err := netip.ParseAddrPort(value); err != nil {
@@ -537,4 +557,37 @@ func darwinRoutes() ([]darwinRoute, error) {
 		result = append(result, darwinRoute{prefix: netip.PrefixFrom(address, bits).Masked(), index: m.Index})
 	}
 	return result, nil
+}
+
+func darwinPublicInterface(raw string) (string, int, error) {
+	public := ""
+	port := 0
+	for _, line := range strings.Split(raw, "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		if key == "public_key" {
+			break
+		}
+		switch key {
+		case "private_key":
+			bytes, err := hex.DecodeString(value)
+			if err != nil || len(bytes) != 32 {
+				return "", 0, errors.New("invalid embedded interface state")
+			}
+			key, err := ecdh.X25519().NewPrivateKey(bytes)
+			if err != nil {
+				return "", 0, errors.New("invalid embedded interface key state")
+			}
+			public = base64.StdEncoding.EncodeToString(key.PublicKey().Bytes())
+		case "listen_port":
+			n, err := strconv.ParseUint(value, 10, 16)
+			if err != nil {
+				return "", 0, errors.New("invalid embedded listen port state")
+			}
+			port = int(n)
+		}
+	}
+	return public, port, nil
 }

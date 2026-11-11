@@ -74,4 +74,8 @@ mv -f "$staged_notice" "$install_dir/peerimeter-agent.NOTICES.txt"
 staged_notice=
 mv -f "$staged" "$install_dir/peerimeter-agent"
 staged=
+# The installed binary writes the protected inventory using the same audited
+# ownership/path rules as full uninstall. Source configs and keys are not claimed.
+"$install_dir/peerimeter-agent" register-installation --install-dir "$install_dir" >/dev/null
+[ -f "$install_dir/.peerimeter-agent.install.json" ] && [ ! -L "$install_dir/.peerimeter-agent.install.json" ] || { echo 'Installation inventory registration failed.' >&2; exit 1; }
 printf 'Installed %s/peerimeter-agent (%s/%s). Config and services are managed separately.\n' "$install_dir" "$os" "$arch"

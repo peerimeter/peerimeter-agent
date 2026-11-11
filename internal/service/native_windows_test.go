@@ -11,7 +11,7 @@ import (
 
 func TestWindowsServiceArgumentsPreservePaths(t *testing.T) {
 	cfg := Config{ConfigPath: `C:\ProgramData\Peerimeter Agent\service.json`, StateDirectory: `C:\ProgramData\Peerimeter Agent\state`}
-	want := []string{"run", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory}
+	want := []string{"run", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory, "--runtime-dir", serviceRuntime(cfg), "--config-dir", snapshotDirectory(cfg)}
 	if got := serviceArguments(cfg); !reflect.DeepEqual(got, want) {
 		t.Fatal("SCM arguments must preserve config paths as individual arguments")
 	}
@@ -64,7 +64,7 @@ func TestWindowsServiceStopWaitsForRuntimeCleanup(t *testing.T) {
 func TestWindowsServiceArgumentsDelegateOperator(t *testing.T) {
 	cfg := Config{ConfigPath: `C:\ProgramData\Peerimeter\service.json`, StateDirectory: `C:\ProgramData\Peerimeter`, Operator: "S-1-5-21-100-200-300-1001"}
 	got := serviceArguments(cfg)
-	if len(got) != 7 || got[5] != "--operator" || got[6] != cfg.Operator {
+	if len(got) != 11 || got[9] != "--operator" || got[10] != cfg.Operator {
 		t.Fatal("Windows service must preserve the explicit local operator identity")
 	}
 }

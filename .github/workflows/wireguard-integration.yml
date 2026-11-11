@@ -37,6 +37,12 @@ jobs:
           if [ "$RUNNER_OS" != Linux ]; then
             go build -C tests/backendprobe -mod=readonly -o "$RUNNER_TEMP/$PROBE_EXE" .
           fi
+          if [ "$RUNNER_OS" != Windows ]; then
+            legacy_source=$(mktemp -d "$RUNNER_TEMP/legacy-source.XXXXXX")
+            git fetch --depth=1 origin 4246c6bea040bfa41a0bd506f0df501310a20367
+            git archive FETCH_HEAD | tar -x -C "$legacy_source"
+            go build -C "$legacy_source" -mod=readonly -o "$RUNNER_TEMP/legacy-agent" ./cmd/peerimeter-agent
+          fi
       - name: Prepare bundled signed Windows driver
         if: runner.os == 'Windows'
         shell: pwsh
@@ -45,12 +51,12 @@ jobs:
         if: runner.os == 'Linux'
         id: linux
         shell: bash
-        run: sudo bash scripts/ci/linux-agent.sh "$RUNNER_TEMP/$AGENT_EXE"
+        run: sudo bash scripts/ci/linux-agent.sh "$RUNNER_TEMP/$AGENT_EXE" "$RUNNER_TEMP/legacy-agent"
       - name: macOS agent traffic and launchd lifecycle
         if: runner.os == 'macOS'
         id: macos
         shell: bash
-        run: sudo bash scripts/ci/macos-agent.sh "$RUNNER_TEMP/$AGENT_EXE" "$RUNNER_TEMP/$PROBE_EXE"
+        run: sudo bash scripts/ci/macos-agent.sh "$RUNNER_TEMP/$AGENT_EXE" "$RUNNER_TEMP/$PROBE_EXE" "$RUNNER_TEMP/legacy-agent"
       - name: Windows agent traffic and SCM lifecycle
         if: runner.os == 'Windows'
         id: windows

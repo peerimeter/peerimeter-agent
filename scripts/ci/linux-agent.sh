@@ -5,6 +5,7 @@ umask 077
 [[ $(id -u) -eq 0 ]] || { echo 'Run the Linux integration test as root.' >&2; exit 1; }
 AGENT=$(realpath "${AGENT:-${1:-./peerimeter-agent}}")
 [[ -x "$AGENT" ]] || { echo 'AGENT must name the built executable.' >&2; exit 1; }
+LEGACY_AGENT=$(realpath "${2:?Supply the pinned legacy agent binary as the second argument}")
 for dependency in ip ping python3 timeout systemctl runuser; do command -v "$dependency" >/dev/null; done
 operator=nobody
 [[ $(id -u "$operator") -ne 0 ]]
@@ -67,26 +68,32 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 # Service executables must live under root-owned, non-writable ancestors. The
 # Actions build directory belongs to runner, so stage this run's private copy.
-install -m 0755 "$AGENT" "$work/peerimeter-agent"
-AGENT="$work/peerimeter-agent"
+bash "$(dirname "$0")/unix-install-native.sh" "$AGENT" "$work/current installation"
+AGENT="$work/current installation/peerimeter-agent"
 # Permit reaching only known paths; credentials/config subdirectories stay0700
 # and all protected state files remain0600. The daemon delegates its socket only.
 chmod 0711 "$work"
 
+runtime_for_state() { printf '%s runtime' "$1"; }
+config_for_state() { printf '%s config' "$1"; }
 control() {
   local namespace=$1 state=$2 operation=$3
+  local output_flags=()
+  [[ "$operation" != peers ]] || output_flags=(--json)
   if [[ -n "$namespace" ]]; then
-    timeout 12s ip netns exec "$namespace" "$AGENT" "$operation" --state-dir "$state"
+    timeout 12s ip netns exec "$namespace" "$AGENT" "$operation" "${output_flags[@]}" --runtime-dir "$(runtime_for_state "$state")"
   else
-    timeout 12s "$AGENT" "$operation" --state-dir "$state"
+    timeout 12s "$AGENT" "$operation" "${output_flags[@]}" --runtime-dir "$(runtime_for_state "$state")"
   fi
 }
 operator_control() {
   local namespace=$1 state=$2 operation=$3
+  local output_flags=()
+  [[ "$operation" != peers ]] || output_flags=(--json)
   if [[ -n "$namespace" ]]; then
-    timeout 12s ip netns exec "$namespace" runuser -u "$operator" -- "$AGENT" "$operation" --state-dir "$state"
+    timeout 12s ip netns exec "$namespace" runuser -u "$operator" -- "$AGENT" "$operation" "${output_flags[@]}" --runtime-dir "$(runtime_for_state "$state")"
   else
-    timeout 12s runuser -u "$operator" -- "$AGENT" "$operation" --state-dir "$state"
+    timeout 12s runuser -u "$operator" -- "$AGENT" "$operation" "${output_flags[@]}" --runtime-dir "$(runtime_for_state "$state")"
   fi
 }
 wait_running() {
@@ -118,12 +125,25 @@ check_handshake() {
   local namespace=$1 state=$2 output=$3
   control "$namespace" "$state" status >"$output"
   control "$namespace" "$state" peers >"$output.peers"
-  python3 - "$output" "$output.peers" <<'PY'
+  local cfg="$work/config/peer-a.json" other="$work/config/peer-b.json"
+  [[ "$namespace" == "$left" ]] || { cfg="$work/config/peer-b.json"; other="$work/config/peer-a.json"; }
+  timeout 12s ip netns exec "$namespace" "$AGENT" peers --runtime-dir "$(runtime_for_state "$state")" >"$output.human"
+  python3 - "$output" "$output.peers" "$cfg" "$other" "$output.human" <<'PY'
 import datetime, json, sys
 s=json.load(open(sys.argv[1])); peers=json.load(open(sys.argv[2]))
 assert s['state']=='running' and len(s['peers'])==len(peers)==1
 assert s['peers'][0]['public_key']==peers[0]['public_key']
 p=peers[0]
+cfg=json.load(open(sys.argv[3])); other=json.load(open(sys.argv[4]))
+assert s['public_key']==other['peers'][0]['public_key'] and s['listen_port']==cfg['interface']['listen_port']
+assert set(p['allowed_ips'])==set(cfg['peers'][0]['allowed_ips'])
+assert p['persistent_keepalive_seconds']==cfg['peers'][0].get('persistent_keepalive_seconds',0)
+import pathlib
+human=pathlib.Path(sys.argv[5]).read_text()
+for label in ('interface:','public key:','listening port:','peer:','allowed ips:','latest handshake:','transfer:','private key: (hidden)'): assert label in human
+key=pathlib.Path(cfg['interface']['private_key_file'])
+if not key.is_absolute():key=pathlib.Path(sys.argv[3]).parent/key
+assert key.read_text().strip() not in human,'private key leaked in human peers output'
 t=datetime.datetime.fromisoformat(p['last_handshake'].replace('Z','+00:00'))
 assert (datetime.datetime.now(datetime.timezone.utc)-t).total_seconds()<120, 'No fresh authenticated handshake'
 assert p['received_bytes']>0 and p['sent_bytes']>0, 'No bidirectional encrypted traffic counters'
@@ -162,20 +182,27 @@ ip -n "$right" link set "$vright" up
 
 # Refuse to adopt or remove an unrelated interface, even with the desired name.
 ip -n "$left" link add pm-probe type dummy
-if timeout 10s ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --state-dir "$work/left-state" --operator "$operator" >"$work/refuse-existing.log" 2>&1; then
+if timeout 10s ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --state-dir "$work/left-state" --config-dir "$(config_for_state "$work/left-state")" --runtime-dir "$(runtime_for_state "$work/left-state")" --operator "$operator" >"$work/refuse-existing.log" 2>&1; then
   echo 'Agent incorrectly accepted an existing unrelated interface.' >&2; exit 1
 fi
 ip -n "$left" -j -d link show dev pm-probe | python3 -c 'import json,sys; assert json.load(sys.stdin)[0]["linkinfo"]["info_kind"]=="dummy"'
 ip -n "$left" link del pm-probe
 
-ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --state-dir "$work/left-state" --operator "$operator" >"$work/left.log" 2>&1 &
+ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --state-dir "$work/left-state" --config-dir "$(config_for_state "$work/left-state")" --runtime-dir "$(runtime_for_state "$work/left-state")" --operator "$operator" >"$work/left.log" 2>&1 &
 left_pid=$!
-ip netns exec "$right" "$AGENT" run --config "$work/config/peer-b.json" --interface pm-custom --state-dir "$work/right-state" --operator "$operator" >"$work/right.log" 2>&1 &
+wait_running "$left" "$work/left-state" "$work/left-status.json"
+ip netns exec "$right" "$AGENT" run --config "$work/config/peer-b.json" --interface pm-custom --state-dir "$work/right-state" --config-dir "$(config_for_state "$work/right-state")" --runtime-dir "$(runtime_for_state "$work/right-state")" --operator "$operator" >"$work/right.log" 2>&1 &
 right_pid=$!
 wait_running "$left" "$work/left-state" "$work/left-status.json"
 wait_running "$right" "$work/right-state" "$work/right-status.json"
 left_index=$(index_of "$left" pm-probe)
 right_index=$(index_of "$right" pm-custom)
+if timeout 8s ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --config-dir "$(config_for_state "$work/left-state")" --state-dir "$work/left-state" --runtime-dir "$work/competing runtime" >"$work/competing.log" 2>&1; then
+  echo 'Two runtime directories bypassed the persistent-state manager lock.' >&2; exit 1
+else
+  [[ $? -ne 124 ]] || { echo 'Competing manager did not reject promptly.' >&2; exit 1; }
+fi
+[[ $(index_of "$left" pm-probe) == "$left_index" ]]
 operator_control "$left" "$work/left-state" status >"$work/operator-status.json"
 operator_control "$left" "$work/left-state" peers >"$work/operator-peers.json"
 python3 - "$work/operator-status.json" "$work/operator-peers.json" <<'PYOP'
@@ -188,21 +215,23 @@ if runuser -u "$operator" -- test -r "$work/config/peer-a.key" || runuser -u "$o
 fi
 # Prove the unrelated account can execute the CLI but cannot reach control IPC.
 runuser -u daemon -- "$AGENT" version >/dev/null
-if timeout 12s ip netns exec "$left" runuser -u daemon -- "$AGENT" status --state-dir "$work/left-state" >"$work/unauthorized.log" 2>&1; then
+if timeout 12s ip netns exec "$left" runuser -u daemon -- "$AGENT" status --runtime-dir "$(runtime_for_state "$work/left-state")" >"$work/unauthorized.log" 2>&1; then
   echo 'An unrelated Unix user reached delegated agent control.' >&2; exit 1
 fi
 # Authorization must remain strict even if the socket owner broadens DAC mode.
-runuser -u "$operator" -- chmod 0666 "$work/left-state/control.sock"
-if timeout 12s ip netns exec "$left" runuser -u daemon -- "$AGENT" status --state-dir "$work/left-state" >"$work/unauthorized-broad-mode.log" 2>&1; then
+runuser -u "$operator" -- chmod 0666 "$(runtime_for_state "$work/left-state")/control.sock"
+if timeout 12s ip netns exec "$left" runuser -u daemon -- "$AGENT" status --runtime-dir "$(runtime_for_state "$work/left-state")" >"$work/unauthorized-broad-mode.log" 2>&1; then
   echo 'An unrelated Unix user bypassed peer-UID authorization through socket chmod.' >&2; exit 1
 fi
-runuser -u "$operator" -- chmod 0600 "$work/left-state/control.sock"
+runuser -u "$operator" -- chmod 0600 "$(runtime_for_state "$work/left-state")/control.sock"
 operator_control "$left" "$work/left-state" status >"$work/operator-status-after-denial.json"
 echo 'Passed: non-root operator status/peers work without key access; unrelated user is denied even after socket chmod0666.'
 ping_both
 check_handshake "$left" "$work/left-state" "$work/left-before.json"
 check_handshake "$right" "$work/right-state" "$work/right-before.json"
 echo 'Passed: two real agents, Linux kernel interfaces, authenticated handshake, bidirectional traffic.'
+bash "$(dirname "$0")/unix-runtime-collision.sh" "$AGENT" "$work/config/peer-a.json" "$(runtime_for_state "$work/left-state")" "$work" "$left"
+ping_both
 
 operator_control "$left" "$work/left-state" sync
 operator_control "$right" "$work/right-state" sync
@@ -260,7 +289,9 @@ control "$left" "$work/left-state" stop
 wait_process "$left_pid"
 left_pid=''
 assert_removed "$left" pm-probe
-ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --state-dir "$work/left-state" --operator "$operator" >"$work/left-restarted.log" 2>&1 &
+[[ ! -e "$(runtime_for_state "$work/left-state")/control.sock" ]]
+rm -rf -- "$(runtime_for_state "$work/left-state")"
+ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --state-dir "$work/left-state" --config-dir "$(config_for_state "$work/left-state")" --runtime-dir "$(runtime_for_state "$work/left-state")" --operator "$operator" >"$work/left-restarted.log" 2>&1 &
 left_pid=$!
 wait_running "$left" "$work/left-state" "$work/left-restarted.json"
 python3 - "$work/left-restarted.json" <<'PY'
@@ -276,7 +307,7 @@ kill -KILL "$left_pid"
 wait "$left_pid" 2>/dev/null || true
 left_pid=''
 ip -n "$left" link show dev pm-probe >/dev/null
-ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --state-dir "$work/left-state" --operator "$operator" >"$work/left-crash-recovered.log" 2>&1 &
+ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --state-dir "$work/left-state" --config-dir "$(config_for_state "$work/left-state")" --runtime-dir "$(runtime_for_state "$work/left-state")" --operator "$operator" >"$work/left-crash-recovered.log" 2>&1 &
 left_pid=$!
 wait_running "$left" "$work/left-state" "$work/left-crash-recovered.json"
 ping_both
@@ -302,7 +333,7 @@ c['interface'].update(name='pm-service',address=['10.254.254.1/32'],listen_port=
 c['peers'][0].update(allowed_ips=['10.254.254.2/32'],endpoint='127.0.0.1:51791')
 p.write_text(json.dumps(c)+'\n')
 PY
-"$AGENT" service install --config "$work/service-config/peer-a.json" --state-dir "$work/service-state" --operator "$operator"
+"$AGENT" service install --config "$work/service-config/peer-a.json" --state-dir "$work/service-state" --config-dir "$(config_for_state "$work/service-state")" --runtime-dir "$(runtime_for_state "$work/service-state")" --operator "$operator"
 service_installed=true
 systemctl is-enabled peerimeter-agent.service
 "$AGENT" service start
@@ -319,6 +350,12 @@ operator_control '' "$work/service-state" status >"$work/service-operator-restar
 "$AGENT" service uninstall
 service_installed=false
 [[ ! -e /etc/systemd/system/peerimeter-agent.service ]]
-[[ -f "$work/service-state/service.json" && -f "$work/service-state/service.key" ]]
+[[ -f "$(config_for_state "$work/service-state")/service.json" && -f "$(config_for_state "$work/service-state")/service.key" ]]
+[[ ! -e "$work/service-state/service.json" && ! -e "$work/service-state/service.key" ]]
+[[ ! -e "$(runtime_for_state "$work/service-state")/control.sock" ]]
 if ip link show dev pm-service >/dev/null 2>&1; then echo 'systemd uninstall left its interface behind.' >&2; exit 1; fi
 echo 'Passed: systemd install, boot enable, start, stop, second start and uninstall; protected keys/config preserved until test cleanup.'
+
+# Fresh default/custom installs, live combined-layout migration and complete
+# removal use the actual operator installer and its protected inventory.
+bash "$(dirname "$0")/unix-layout-uninstall.sh" "$AGENT" "$LEGACY_AGENT"

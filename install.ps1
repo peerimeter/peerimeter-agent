@@ -118,6 +118,8 @@ try {
             Move-Item -LiteralPath $staged[$i] -Destination $dest
             $installed += $dest
         }
+        & (Join-Path $InstallDir 'peerimeter-agent.exe') register-installation --install-dir $InstallDir | Out-Null
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $InstallDir '.peerimeter-agent.install.json') -PathType Leaf)) { throw 'Installation inventory registration failed' }
     } catch {
         $failure = $_
         $rollbackErrors = @()
