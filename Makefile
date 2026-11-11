@@ -12,5 +12,5 @@ build:
 test-integration:
 	bash scripts/ci/run-agent-integration.sh
 test-network:
-	@echo 'blocked: Phase 1 agent tunnel implementation and reachable mixed-OS test infrastructure required.'
+	@echo 'blocked: mixed-OS and NAT/disruption topology is not configured; use test-integration for native agent links.'
 	@exit 1

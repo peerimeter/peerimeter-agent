@@ -8,6 +8,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,7 +24,7 @@ func Dispatch(context.Context, func(context.Context) error) (bool, error) { retu
 func nativeSecureFiles(paths ...string) error                             { return nil }
 
 func darwinPlist(executable string, cfg Config) ([]byte, error) {
-	args := []string{executable, "run", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory}
+	args := []string{executable, "run", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory, "--runtime-dir", serviceRuntime(cfg), "--config-dir", snapshotDirectory(cfg)}
 	if cfg.Operator != "" {
 		args = append(args, "--operator", cfg.Operator)
 	}
@@ -133,4 +134,72 @@ func nativeManage(action string, cfg Config) error {
 	default:
 		return fmt.Errorf("unsupported service action")
 	}
+}
+
+func RemoveOwned(ctx context.Context, expectedExe string, cfg Config) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(darwinServicePlist); os.IsNotExist(err) {
+		if darwinLaunchctl("print", "system/"+darwinServiceLabel) == nil {
+			return errors.New("loaded launchd job has no verifiable owned plist")
+		}
+		return nil
+	}
+	if err := darwinInstalled(); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(darwinServicePlist)
+	if err != nil {
+		return err
+	}
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	var arguments []string
+	key := ""
+	label := ""
+	inArray := false
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return errors.New("cannot verify launchd service ownership")
+		}
+		switch token := token.(type) {
+		case xml.StartElement:
+			switch token.Name.Local {
+			case "key":
+				if err := decoder.DecodeElement(&key, &token); err != nil {
+					return err
+				}
+			case "array":
+				inArray = key == "ProgramArguments"
+			case "string":
+				var value string
+				if err := decoder.DecodeElement(&value, &token); err != nil {
+					return err
+				}
+				if inArray {
+					arguments = append(arguments, value)
+				} else if key == "Label" {
+					label = value
+				}
+			}
+		case xml.EndElement:
+			if token.Name.Local == "array" {
+				inArray = false
+			}
+		}
+	}
+	if label != darwinServiceLabel {
+		return errors.New("launchd label belongs to another installation")
+	}
+	if err := verifyServiceArguments(arguments, expectedExe, cfg); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nativeManage("uninstall", cfg)
 }

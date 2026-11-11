@@ -7,11 +7,18 @@ trap 'rm -rf "$work"' EXIT
 sha256() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'; else shasum -a 256 "$1" | awk '{print $1}'; fi
 }
+case "$(uname -s)" in Linux) native_os=linux;; Darwin) native_os=darwin;; *) exit 1;; esac
+case "$(uname -m)" in x86_64|amd64) native_arch=amd64;; arm64|aarch64) native_arch=arm64;; *) exit 1;; esac
+if [[ $# -gt 0 ]]; then
+ native_archive=$1
+else
+ native_archives=("$(dirname "$installer")"/dist/peerimeter-agent_*_"${native_os}_${native_arch}".tar.gz)
+ [[ ${#native_archives[@]} -eq 1 && -f "${native_archives[0]}" ]] || { echo 'Supply one actual native release archive for installer inventory tests.' >&2; exit 1; }
+ native_archive=${native_archives[0]}
+fi
 mkdir -p "$work/package" "$work/mock-bin" "$work/custom install/bin"
-printf '#!/bin/sh\nprintf "fixture agent\\n"\n' >"$work/package/peerimeter-agent"
-chmod 755 "$work/package/peerimeter-agent"
-printf 'Fixture third-party notices\n' >"$work/package/peerimeter-agent.NOTICES.txt"
-tar -czf "$work/package.tar.gz" -C "$work/package" peerimeter-agent peerimeter-agent.NOTICES.txt
+cp "$native_archive" "$work/package.tar.gz"
+tar -xzf "$work/package.tar.gz" -C "$work/package" peerimeter-agent peerimeter-agent.NOTICES.txt
 hash=$(sha256 "$work/package.tar.gz")
 destination=$work/custom\ install/bin
 printf 'operator config stays\n' >"$destination/operator.config"
@@ -21,9 +28,15 @@ cp "$destination/operator.key" "$work/original.key"
 sh "$installer" --archive "$work/package.tar.gz" --sha256 "$hash" --install-dir "$destination"
 cmp "$work/package/peerimeter-agent" "$destination/peerimeter-agent"
 cmp "$work/package/peerimeter-agent.NOTICES.txt" "$destination/peerimeter-agent.NOTICES.txt"
-test "$("$destination/peerimeter-agent")" = 'fixture agent'
+"$destination/peerimeter-agent" version --json >"$work/version.json"
+python3 - "$work/version.json" "$native_os" <<'PYVERSION'
+import json,sys
+v=json.load(open(sys.argv[1]));assert v['os']==sys.argv[2] and v['go_version']=='go1.27.4'
+PYVERSION
+[[ -f "$destination/.peerimeter-agent.install.json" ]]
 cp "$destination/peerimeter-agent" "$work/original.agent"
 cp "$destination/peerimeter-agent.NOTICES.txt" "$work/original.notices"
+cp "$destination/.peerimeter-agent.install.json" "$work/original.inventory"
 expect_failure() {
   local pattern=$1
   shift
@@ -34,6 +47,7 @@ expect_failure() {
   if ! grep -Fq "$pattern" "$work/failure.log"; then cat "$work/failure.log" >&2; exit 1; fi
   cmp "$work/original.agent" "$destination/peerimeter-agent"
   cmp "$work/original.notices" "$destination/peerimeter-agent.NOTICES.txt"
+  cmp "$work/original.inventory" "$destination/.peerimeter-agent.install.json"
 }
 expect_failure 'Package checksum verification failed' sh "$installer" --archive "$work/package.tar.gz" --sha256 "$(printf '%064d' 0)" --install-dir "$destination"
 expect_failure 'single SHA-256 digest' sh "$installer" --archive "$work/package.tar.gz" --sha256 "$hash
@@ -146,3 +160,37 @@ expect_failure 'Cannot download release v99.0.0' sh "$installer" --version v99.0
 cmp "$work/original.config" "$destination/operator.config"
 cmp "$work/original.key" "$destination/operator.key"
 echo 'PASS: latest resolves once, pinned tag and native OS/architecture match, unsupported releases fail clearly'
+
+# Exercise full removal of a real installed native binary under the ordinary
+# package-test account, without requiring machine-wide service privileges.
+cp "$destination/peerimeter-agent" "$work/uninstall-verifier"
+python3 - "$destination" >"$work/before-dry-run.json" <<'PY'
+import hashlib,json,pathlib,stat,sys
+root=pathlib.Path(sys.argv[1]);out={}
+for p in sorted(root.iterdir()):
+ s=p.lstat();out[p.name]=[s.st_mode,s.st_uid,s.st_gid,s.st_size,s.st_mtime_ns,hashlib.sha256(p.read_bytes()).hexdigest()]
+print(json.dumps(out,sort_keys=True))
+PY
+"$destination/peerimeter-agent" uninstall --install-dir "$destination" --dry-run >"$work/removal-dry-run.json"
+python3 - "$destination" "$work/before-dry-run.json" "$work/removal-dry-run.json" <<'PY'
+import hashlib,json,pathlib,sys
+root=pathlib.Path(sys.argv[1]);out={}
+for p in sorted(root.iterdir()):
+ s=p.lstat();out[p.name]=[s.st_mode,s.st_uid,s.st_gid,s.st_size,s.st_mtime_ns,hashlib.sha256(p.read_bytes()).hexdigest()]
+assert out==json.load(open(sys.argv[2])),'dry-run changed installed resources'
+assert json.load(open(sys.argv[3]))['state']=='dry_run'
+PY
+"$destination/peerimeter-agent" uninstall --install-dir "$destination" >"$work/removal.json"
+python3 - "$work/removal.json" <<'PY'
+import json,sys
+assert json.load(open(sys.argv[1]))['state']=='removed'
+PY
+for member in peerimeter-agent peerimeter-agent.NOTICES.txt .peerimeter-agent.install.json .peerimeter-agent.install.lock; do test ! -e "$destination/$member"; done
+cmp "$work/original.config" "$destination/operator.config"
+cmp "$work/original.key" "$destination/operator.key"
+"$work/uninstall-verifier" uninstall --install-dir "$destination" >"$work/repeated-removal.json"
+python3 - "$work/repeated-removal.json" <<'PY'
+import json,sys
+assert json.load(open(sys.argv[1]))['state']=='already_absent'
+PY
+echo 'PASS: real native installer inventory, read-only full-removal dry-run, self-uninstall, idempotence and unrelated-file preservation'

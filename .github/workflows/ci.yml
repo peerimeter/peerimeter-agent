@@ -45,6 +45,7 @@ jobs:
         id: smoke
         run: |
           ./"$AGENT_EXE" version
+          ./"$AGENT_EXE" version --json
           ./"$AGENT_EXE" --help
           ./"$AGENT_EXE" run --help
           ./"$AGENT_EXE" service install --help

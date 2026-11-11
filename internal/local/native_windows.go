@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 func trustedStateOwner(owner, current *windows.SID) bool {
@@ -62,14 +63,64 @@ func prepareDirectory(dir string) error {
 	}
 	return nil
 }
-func openLock(path string) (*os.File, error) {
+func inspectExistingStateDirectory(dir string) error {
+	name, err := windows.UTF16PtrFromString(dir)
+	if err != nil {
+		return err
+	}
+	handle, err := windows.CreateFile(name, windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	if err != nil {
+		return errors.New("cannot inspect existing Windows state directory")
+	}
+	defer windows.CloseHandle(handle)
+	var info windows.ByHandleFileInformation
+	if windows.GetFileInformationByHandle(handle, &info) != nil || info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 || info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		return errors.New("existing Windows state directory must not be a reparse point")
+	}
+	descriptor, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return err
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil {
+		return err
+	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return err
+	}
+	if !trustedStateOwner(owner, user.User.Sid) {
+		return errors.New("existing Windows state directory has an untrusted owner")
+	}
+	return nil
+}
+func openStateLock(dir string, existing bool) (*os.File, error) {
+	if existing {
+		if err := inspectExistingStateDirectory(dir); err != nil {
+			return nil, err
+		}
+	}
+	path := filepath.Join(dir, "agent.lock")
+	disposition := uint32(windows.OPEN_ALWAYS)
+	if existing {
+		disposition = windows.OPEN_EXISTING
+	}
+
 	name, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return nil, err
 	}
-	h, err := windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_ALWAYS, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	h, err := windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, disposition, windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if existing && errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, errors.New("cannot open agent lock")
+	}
+	var info windows.ByHandleFileInformation
+	if windows.GetFileInformationByHandle(h, &info) != nil || info.FileAttributes&(windows.FILE_ATTRIBUTE_DIRECTORY|windows.FILE_ATTRIBUTE_REPARSE_POINT) != 0 || info.NumberOfLinks != 1 {
+		windows.CloseHandle(h)
+		return nil, errors.New("Windows agent lock must be a regular file without links")
 	}
 	var overlapped windows.Overlapped
 	if err := windows.LockFileEx(h, windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &overlapped); err != nil {
@@ -112,7 +163,10 @@ func resolveOperator(operator string) (string, error) {
 const pipeClientAccess uint32 = windows.FILE_READ_DATA | windows.FILE_WRITE_DATA |
 	windows.FILE_READ_ATTRIBUTES | windows.FILE_WRITE_ATTRIBUTES | windows.SYNCHRONIZE | windows.READ_CONTROL
 
-func listen(dir string, operator string) (net.Listener, error) {
+func listen(dir string, operator string, beforeListen ...func() error) (net.Listener, error) {
+	return listenWithHooks(dir, operator, callListenHooks(beforeListen), nil)
+}
+func listenWithHooks(dir, operator string, beforeListen, onClose func() error) (net.Listener, error) {
 	operatorSID, err := resolveOperator(operator)
 	if err != nil {
 		return nil, err
@@ -125,8 +179,37 @@ func listen(dir string, operator string) (net.Listener, error) {
 	if operatorSID != "" && operatorSID != user.User.Sid.String() {
 		descriptor += "(A;;0x00120183;;;" + operatorSID + ")"
 	}
-	return winio.ListenPipe(pipeName(dir), &winio.PipeConfig{SecurityDescriptor: descriptor, MessageMode: false, InputBufferSize: 4096, OutputBufferSize: 4096})
+	listener, err := winio.ListenPipe(pipeName(dir), &winio.PipeConfig{SecurityDescriptor: descriptor, MessageMode: false, InputBufferSize: 4096, OutputBufferSize: 4096})
+	if err != nil {
+		return nil, err
+	}
+	wrapped := &hookedPipeListener{Listener: listener, onClose: onClose}
+	if beforeListen != nil {
+		if err := beforeListen(); err != nil {
+			return nil, errors.Join(err, wrapped.Close())
+		}
+	}
+	return wrapped, nil
 }
 func dial(ctx context.Context, dir string) (net.Conn, error) {
 	return winio.DialPipeAccess(ctx, pipeName(dir), pipeClientAccess)
+}
+
+func compatibilityLock(string) (*os.File, error) { return nil, nil }
+
+type hookedPipeListener struct {
+	net.Listener
+	onClose    func() error
+	once       sync.Once
+	closeError error
+}
+
+func (l *hookedPipeListener) Close() error {
+	l.once.Do(func() {
+		l.closeError = l.Listener.Close()
+		if l.onClose != nil {
+			l.closeError = errors.Join(l.closeError, l.onClose())
+		}
+	})
+	return l.closeError
 }

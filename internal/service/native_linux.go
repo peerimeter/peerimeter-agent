@@ -3,6 +3,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -29,12 +30,12 @@ func linuxSystemdQuote(value string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(strconv.Quote(value), "$", "$$"), "%", "%%")
 }
 func linuxServiceUnit(executable string, cfg Config) ([]byte, error) {
-	for _, path := range []string{executable, cfg.ConfigPath, cfg.StateDirectory} {
+	for _, path := range []string{executable, cfg.ConfigPath, cfg.StateDirectory, serviceRuntime(cfg)} {
 		if !filepath.IsAbs(path) || strings.ContainsAny(path, "\x00\r\n") {
 			return nil, errors.New("systemd service paths must be absolute and contain no newlines or NUL")
 		}
 	}
-	args := []string{linuxSystemdQuote(executable), "run", "--config", linuxSystemdQuote(cfg.ConfigPath), "--state-dir", linuxSystemdQuote(cfg.StateDirectory)}
+	args := []string{linuxSystemdQuote(executable), "run", "--config", linuxSystemdQuote(cfg.ConfigPath), "--state-dir", linuxSystemdQuote(cfg.StateDirectory), "--runtime-dir", linuxSystemdQuote(serviceRuntime(cfg)), "--config-dir", linuxSystemdQuote(snapshotDirectory(cfg))}
 	if cfg.Operator != "" {
 		if len(cfg.Operator) > 256 || strings.TrimSpace(cfg.Operator) != cfg.Operator || strings.ContainsAny(cfg.Operator, "\x00\r\n") {
 			return nil, errors.New("invalid systemd local operator identity")
@@ -130,13 +131,9 @@ func nativeManage(action string, cfg Config) error {
 		if err != nil {
 			return err
 		}
-		before, err := readLinuxService(linuxServicePath)
-		existed := err == nil
-		if err != nil && !os.IsNotExist(err) {
+		before, existed, err := installLinuxService(linuxServicePath, contents)
+		if err != nil {
 			return err
-		}
-		if err := writeLinuxService(linuxServicePath, contents); err != nil {
-			return fmt.Errorf("write systemd service: %w", err)
 		}
 		restore := func(cause error) error {
 			var rollback error
@@ -182,4 +179,76 @@ func nativeManage(action string, cfg Config) error {
 	default:
 		return errors.New("unsupported Linux service action")
 	}
+}
+
+func RemoveOwned(ctx context.Context, expectedExe string, cfg Config) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	data, err := readLinuxService(linuxServicePath)
+	if os.IsNotExist(err) {
+		if linuxSystemctl("is-active", "--quiet", linuxServiceName) == nil {
+			return errors.New("active systemd service has no verifiable owned registration")
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	expectedConfig := cfg.ConfigPath
+	if expectedConfig == "" {
+		expectedConfig = filepath.Join(snapshotDirectory(cfg), "service.json")
+	}
+	prefix := "ExecStart=" + linuxSystemdQuote(expectedExe) + " run --config " + linuxSystemdQuote(expectedConfig) + " --state-dir " + linuxSystemdQuote(cfg.StateDirectory)
+	found := false
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "ExecStart=") {
+			continue
+		}
+		if found || !strings.HasPrefix(line, prefix) {
+			return errors.New("systemd service belongs to another installation")
+		}
+		found = true
+		remainder := strings.TrimPrefix(line, prefix)
+		runtimeFlag := " --runtime-dir " + linuxSystemdQuote(serviceRuntime(cfg))
+		if strings.HasPrefix(remainder, runtimeFlag) {
+			remainder = strings.TrimPrefix(remainder, runtimeFlag)
+		} else if serviceRuntime(cfg) != cfg.StateDirectory {
+			return errors.New("systemd runtime belongs to another installation")
+		}
+		configFlag := " --config-dir " + linuxSystemdQuote(snapshotDirectory(cfg))
+		if strings.HasPrefix(remainder, configFlag) {
+			remainder = strings.TrimPrefix(remainder, configFlag)
+		}
+		if remainder != "" && !strings.HasPrefix(remainder, " --operator ") {
+			return errors.New("systemd service has unverifiable arguments")
+		}
+	}
+	if !found {
+		return errors.New("systemd executable registration is missing")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nativeManage("uninstall", cfg)
+}
+
+// installLinuxService refuses to repurpose even a Peerimeter-marked unit when
+// its executable, layout or options differ. Marker ownership is not permission
+// to take another installation's service registration.
+func installLinuxService(path string, contents []byte) ([]byte, bool, error) {
+	before, err := readLinuxService(path)
+	if err == nil {
+		if !bytes.Equal(before, contents) {
+			return before, true, errors.New("existing Peerimeter systemd unit has different executable, paths or options; explicitly uninstall or migrate that service first")
+		}
+		return before, true, nil
+	}
+	if !os.IsNotExist(err) {
+		return nil, false, err
+	}
+	if err := writeLinuxService(path, contents); err != nil {
+		return nil, false, fmt.Errorf("write systemd service: %w", err)
+	}
+	return nil, false, nil
 }

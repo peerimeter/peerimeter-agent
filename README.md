@@ -6,15 +6,18 @@ STUN. Direct WireGuard connections only; no relay or desktop application.
 
 ## Project status
 
-Phase 0 is complete. Phase 1 native runtime, local control and service integration
-are under verification. Previous CI passes cover the baseline and backend probes;
-new agent integration results are tracked in [progress.md](progress.md).
+Phase 0 is complete. Phase 1 native runtime/service/installer core passed native
+tests and independent review; directory separation/migration and full uninstall
+are now in progress under the extended plan.
+Linux/macOS/Windows agent links, local control, native services and installers are
+verified for the CI architectures below. Exact code SHAs, run links and remaining
+limitations are tracked in [progress.md](progress.md).
 
-| Platform | Native tunnel | Service manager | Privileges |
+| Platform (native CI architecture) | Native tunnel | Service manager | Runtime privileges |
 |---|---|---|---|
-| Linux | Kernel WireGuard via netlink/wgctrl | systemd | root / kernel networking privileges |
-| macOS | Embedded wireguard-go, native utun | launchd | root |
-| Windows | Bundled official signed WireGuardNT | Windows Service | Administrator / LocalSystem |
+| Linux (amd64) | Kernel WireGuard via netlink/wgctrl | systemd | root / kernel networking privileges |
+| macOS (arm64) | Embedded wireguard-go, native utun | launchd | root |
+| Windows (amd64) | Bundled official signed WireGuardNT | Windows Service | Administrator / LocalSystem |
 
 macOS requires no separate `wg` or `wireguard-go` executable. Windows requires the
 complete agent package, including its pinned `wireguard.dll`; the agent verifies
@@ -101,7 +104,7 @@ sudo peerimeter-agent sync       # validate and reapply the original JSON file
 sudo peerimeter-agent stop       # graceful tunnel/route cleanup
 ```
 
-On Windows run the same commands from an elevated terminal. Output is JSON.
+On Windows run the same commands from an elevated terminal. `status` outputs JSON. `peers` uses wgshow-style human output; use `peers --json` for automation.
 `status`/`peers` read actual local adapter state through a protected Unix socket
 or Windows named pipe. `running` indicates interface state, not proven peer
 connectivity; inspect real handshake timestamps and byte counters. A stopped or
@@ -112,10 +115,25 @@ The authorized operator can use `status`, `peers`, `sync` and `stop` without sud
 or elevation; secret files stay private. On Unix the state directory and its
 parents must permit traversal; only the socket owner receives control access.
 
-`--state-dir <absolute-directory>` selects a separate protected instance for
-`run`, `status`, `peers`, `sync` and `stop`. Defaults are `/var/lib/peerimeter-agent`
-(Linux), `/Library/Application Support/Peerimeter` (macOS) and
-`%ProgramData%\Peerimeter` (Windows). OS-held locks reject competing managers.
+### Configuration, durable state and disposable runtime
+
+| Platform | Config and private keys (`--config-dir`) | Persistent state (`--state-dir`) | Local control (`--runtime-dir`) |
+|---|---|---|---|
+| Linux | `/etc/peerimeter` | `/var/lib/peerimeter-agent` | `/run/peerimeter-agent` |
+| macOS | `/etc/peerimeter` | `/Library/Application Support/Peerimeter` | `/var/run/peerimeter-agent` |
+| Windows | `%ProgramData%\Peerimeter` | `%ProgramData%\Peerimeter` | `%ProgramData%\Peerimeter` |
+
+Overrides must be absolute. Unix directories are separate; on Windows an explicit
+`--state-dir` also supplies the default config/runtime location unless overridden.
+`run --config <file>` uses the original file directly and never relocates it;
+without `--config`, the installed `config-dir/service.json` is used. Relative key
+references remain relative to the original JSON file.
+
+Control commands use the selected `--runtime-dir`; custom runtime paths must be
+supplied consistently. Persistent state locks prevent two managers for one state
+across different runtime overrides, and a runtime lock prevents two states from
+sharing a live control endpoint. Stopping removes disposable control resources;
+keys and interface identity survive in their respective directories.
 
 Ordinary peer/endpoint changes reconcile in place without resetting unaffected
 peers. Invalid updates leave the current tunnel running. Changing local network
@@ -124,7 +142,8 @@ never contacts a control-plane API. No automatic NAT rediscovery is promised.
 
 ### Linux interface names
 
-The default is `pm-` plus a lowercase ASCII slug of the network name; runs of
+The build-time default prefix is centralized in `ifname.DefaultPrefix` (`pm-`).
+The default name is that prefix plus a lowercase ASCII slug of the network name; runs of
 other characters become one hyphen. Slugs longer than 12 bytes use their first
 five bytes (trim trailing hyphen), `-`, and the first six hex digits of SHA-256
 of the immutable network ID. An empty slug uses `pm-<hash>`. Explicit names allow
@@ -148,9 +167,10 @@ sudo peerimeter-agent service stop
 sudo peerimeter-agent service uninstall
 ```
 
-Windows uses the same subcommands in an elevated terminal. Installation snapshots
+Windows uses the same subcommands in an elevated terminal. Replace `alice` with
+an existing authorized local account. Installation snapshots
 the validated config/key into protected `service.json` and `service.key` under
-the selected state directory; the original files stay unchanged. Edit the
+the configuration directory; the original files stay unchanged. Edit the
 protected installed config and use `sync` for later updates. Identical protected snapshots can be reused when reinstalling; different config
 or key material requires an explicit migration. Failed registration rolls back
 only snapshots created by that attempt. Installed secrets are never silently
@@ -159,7 +179,54 @@ interface selection. Boot activation and restart on failure use the native OS
 supervisor; foreground and service modes use the same tunnel runtime. One named
 system service is currently supported per machine.
 
+### Migrate the earlier combined Unix layout
+
+After upgrading the executable in its protected stable path, migrate an older
+combined state directory explicitly:
+
+```sh
+sudo peerimeter-agent service migrate --state-dir /var/lib/peerimeter-agent \
+  --config-dir /etc/peerimeter --runtime-dir /run/peerimeter-agent --operator alice
+sudo peerimeter-agent service start
+```
+
+Migration validates ownership and destination conflicts before stopping the old
+service. It preserves keys, interface selection and ownership identity; successful
+registration moves only the old installed snapshots. Original operator configs
+stay outside this migration. On failure old credentials remain available for retry.
+
+### Full removal versus service removal
+
+`service uninstall` removes only service registration and preserves configuration
+and keys. Top-level `uninstall` explicitly deletes all resources tracked as owned
+by that installation, including installed identity and keys:
+
+```sh
+sudo peerimeter-agent uninstall --dry-run
+sudo peerimeter-agent uninstall
+# Select an installation in a custom program directory:
+sudo peerimeter-agent uninstall --install-dir '/opt/Peerimeter Agent' --dry-run
+```
+
+Installers write a protected installation inventory. Full removal refuses arbitrary
+untracked paths, preserves unrelated files and original source configs, stops the
+owned service/agent first, and verifies ownership/locks before deletion. Windows
+uses a bounded helper after the running executable exits; a `pending` result names
+a temporary receipt reporting eventual removal or remaining failures. The shared
+system WireGuard driver is preserved. Repeated removal is safe; partial failures
+remain reportable and retryable. These expanded removal/migration paths are under
+native verification; see progress.md for the current acceptance status.
+
 ## Verification
+
+Human peer listing is refactored from the [requested wgshow example](https://github.com/zer0go/wgctrl-go/blob/47ad6fc7d7a95296fe893b49c1d4584b4eb6ac40/cmd/wgshow/main.go), with MIT attribution in `third_party/wgshow`. It shows actual public keys/endpoints, AllowedIPs, handshake age, traffic and keepalive; private/preshared keys never enter the renderer. Missing handshakes and clock skew are explicit.
+
+Cobra provides contextual `--help` and `completion bash|zsh|fish|powershell`.
+Commands live in separate files under `internal/cli` (`root.go`, `run.go`,
+`version.go`, `service_*.go`, etc.). `version` prints the orbit/P ASCII logo
+and human-readable build details, with terminal-aware pink/purple color.
+Use `version --json` for automation, `--color never` for plain output or
+`--color always` to force ANSI; automatic color respects `NO_COLOR` and pipes.
 
 ```sh
 make test

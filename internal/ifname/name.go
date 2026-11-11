@@ -8,6 +8,12 @@ import (
 	"strings"
 )
 
+// DefaultPrefix is the single build-time default for generated Linux names.
+// Existing persisted names and explicit --interface selections take precedence.
+const DefaultPrefix = "pm-"
+const MaxNameBytes = 15
+const hashLength = 6
+
 // Resolve applies initial-setup precedence. Persisted selections must be supplied
 // as override by the state store on later starts (Phase 1).
 func Resolve(networkID, displayName, override string) (string, error) {
@@ -19,6 +25,14 @@ func Resolve(networkID, displayName, override string) (string, error) {
 			return "", err
 		}
 		return override, nil
+	}
+	if len(DefaultPrefix)+hashLength > MaxNameBytes {
+		return "", errors.New("configured Linux interface prefix leaves no room for the stable suffix")
+	}
+	if DefaultPrefix != "" {
+		if err := Validate(DefaultPrefix + "a"); err != nil {
+			return "", errors.New("configured Linux interface prefix contains unsafe characters")
+		}
 	}
 	var b strings.Builder
 	separator := false
@@ -35,17 +49,21 @@ func Resolve(networkID, displayName, override string) (string, error) {
 	}
 	slug := b.String()
 	sum := sha256.Sum256([]byte(networkID))
-	suffix := hex.EncodeToString(sum[:])[:6]
+	suffix := hex.EncodeToString(sum[:])[:hashLength]
 	if slug == "" {
-		return "pm-" + suffix, nil
+		return DefaultPrefix + suffix, nil
 	}
-	if len(slug) <= 12 {
-		return "pm-" + slug, nil
+	if len(slug) <= MaxNameBytes-len(DefaultPrefix) {
+		return DefaultPrefix + slug, nil
 	}
-	return "pm-" + strings.TrimRight(slug[:5], "-") + "-" + suffix, nil
+	humanBytes := MaxNameBytes - len(DefaultPrefix) - 1 - hashLength
+	if humanBytes <= 0 {
+		return DefaultPrefix + suffix, nil
+	}
+	return DefaultPrefix + strings.TrimRight(slug[:humanBytes], "-") + "-" + suffix, nil
 }
 func Validate(name string) error {
-	if name == "" || name == "." || name == ".." || len(name) > 15 {
+	if name == "" || name == "." || name == ".." || len(name) > MaxNameBytes {
 		return errors.New("Linux interface name must contain 1–15 safe ASCII bytes")
 	}
 	for _, c := range name {

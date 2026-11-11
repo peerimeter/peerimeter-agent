@@ -20,13 +20,19 @@ type Desired struct {
 	OwnershipToken string
 }
 type PeerState struct {
-	PublicKey     string    `json:"public_key"`
-	Endpoint      string    `json:"endpoint,omitempty"`
-	LastHandshake time.Time `json:"last_handshake"`
-	ReceivedBytes uint64    `json:"received_bytes"`
-	SentBytes     uint64    `json:"sent_bytes"`
+	AllowedIPs                 []string  `json:"allowed_ips"`
+	PersistentKeepaliveSeconds int       `json:"persistent_keepalive_seconds"`
+	PublicKey                  string    `json:"public_key"`
+	Endpoint                   string    `json:"endpoint,omitempty"`
+	LastHandshake              time.Time `json:"last_handshake"`
+	ReceivedBytes              uint64    `json:"received_bytes"`
+	SentBytes                  uint64    `json:"sent_bytes"`
 }
 type Snapshot struct {
+	InstanceID    string      `json:"instance_id,omitempty"`
+	NetworkName   string      `json:"network_name,omitempty"`
+	PublicKey     string      `json:"public_key,omitempty"`
+	ListenPort    int         `json:"listen_port,omitempty"`
 	NetworkID     string      `json:"network_id"`
 	InterfaceName string      `json:"interface_name"`
 	State         string      `json:"state"`

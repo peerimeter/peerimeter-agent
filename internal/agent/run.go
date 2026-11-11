@@ -30,7 +30,7 @@ func Run(ctx context.Context, backend platform.Backend, desired platform.Desired
 
 // RunManaged exposes only protected local control after the native tunnel starts.
 // Reload validation happens before the backend touches OS state.
-func RunManaged(ctx context.Context, backend platform.Backend, desired platform.Desired, dir string, reload func() (platform.Desired, error), operator string) (result error) {
+func RunManaged(ctx context.Context, backend platform.Backend, desired platform.Desired, dir string, reload func() (platform.Desired, error), operator, instanceID string, beforeServe, onClose func() error) (result error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	session, err := backend.Start(ctx, desired)
@@ -44,11 +44,13 @@ func RunManaged(ctx context.Context, backend platform.Backend, desired platform.
 		result = errors.Join(result, session.Close(cleanup))
 	}()
 	var mu sync.Mutex
-	closeControl, err := local.Serve(ctx, dir, local.Operations{Operator: operator,
+	closeControl, err := local.Serve(ctx, dir, local.Operations{Operator: operator, InstanceID: instanceID, BeforeListen: beforeServe, OnClose: onClose,
 		Snapshot: func(ctx context.Context) (platform.Snapshot, error) {
 			mu.Lock()
 			defer mu.Unlock()
-			return session.Snapshot(ctx)
+			snapshot, err := session.Snapshot(ctx)
+			snapshot.InstanceID = instanceID
+			return snapshot, err
 		},
 		Reload: func(ctx context.Context) error {
 			mu.Lock()

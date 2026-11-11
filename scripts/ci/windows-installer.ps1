@@ -11,6 +11,8 @@ $offline = Join-Path $base 'offline custom path'
 $latest = Join-Path $base 'latest custom path'
 $pinned = Join-Path $base 'pinned custom path'
 $badTarget = Join-Path $base 'must not install'
+$defaultTarget = Join-Path $env:ProgramFiles 'Peerimeter'
+$defaultInstalled = $false
 $arch = switch ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()) { 'x64' {'amd64'} 'arm64' {'arm64'} default {throw 'Unsupported test architecture'} }
 if (-not $Archive) {
     if (-not $PackageDirectory) { throw 'Supply -PackageDirectory or -Archive' }
@@ -37,10 +39,50 @@ function Assert-Package([string]$Directory) {
             if (([long]$rule.FileSystemRights -band (-bnot $allowed)) -ne 0) { throw 'Installed file grants untrusted write access' }
         }
     }
+    $inventory = Join-Path $Directory '.peerimeter-agent.install.json'
+    if (-not (Test-Path -LiteralPath $inventory -PathType Leaf)) { throw 'Installed package has no protected ownership inventory' }
+    $inventoryACL = Get-Acl -LiteralPath $inventory
+    foreach ($rule in $inventoryACL.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
+        if ($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -notin @('S-1-5-18','S-1-5-32-544') -and [long]$rule.FileSystemRights -ne 0) { throw 'Installation inventory grants access to an unrelated user' }
+    }
     $binary = Join-Path $Directory 'peerimeter-agent.exe'
-    $version = & $binary version | ConvertFrom-Json
+    $version = & $binary version --json | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0 -or $version.os -ne 'windows' -or $version.go_version -ne 'go1.27.4') { throw 'Installed native agent executable failed version smoke test' }
     if (@(Get-ChildItem -LiteralPath $Directory -Force | Where-Object { $_.Name -match '\.(new|old)-' }).Count) { throw 'Installer leaked staged or backup files' }
+}
+function Remove-InstalledPackage([string]$Directory,[string]$ExternalCLI) {
+    $binary = Join-Path $Directory 'peerimeter-agent.exe'
+    $before = @(Get-ChildItem -LiteralPath $Directory -Force -File | Sort-Object Name | ForEach-Object { $_.Name + ':' + (Get-FileHash -LiteralPath $_.FullName).Hash + ':' + (Get-Acl -LiteralPath $_.FullName).Sddl }) -join "`n"
+    $dry = & $binary uninstall --install-dir $Directory --dry-run | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or $dry.state -ne 'dry_run') { throw 'Installed package dry-run failed' }
+    $after = @(Get-ChildItem -LiteralPath $Directory -Force -File | Sort-Object Name | ForEach-Object { $_.Name + ':' + (Get-FileHash -LiteralPath $_.FullName).Hash + ':' + (Get-Acl -LiteralPath $_.FullName).Sddl }) -join "`n"
+    if ($before -ne $after) { throw 'Installed package dry-run changed inventory, files or ACLs' }
+    $sentinel = Join-Path $Directory 'unrelated.txt'
+    [IO.File]::WriteAllText($sentinel,'operator data stays')
+    $result = & $binary uninstall --install-dir $Directory | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0) { throw 'Installed package full uninstall failed' }
+    if ($result.state -eq 'pending') {
+        if (-not $result.result_file) { throw 'Pending Windows removal omitted its completion report' }
+        $done = $false
+        for ($attempt=0; $attempt -lt 120; $attempt++) {
+            if (Test-Path -LiteralPath $result.result_file) {
+                try {
+                    $report = Get-Content -LiteralPath $result.result_file -Raw | ConvertFrom-Json
+                    if ($report.state -eq 'failed') { throw 'Windows package removal helper reported failed cleanup' }
+                    if ($report.state -eq 'removed') { $done = $true; break }
+                } catch { if ($_.Exception.Message -eq 'Windows package removal helper reported failed cleanup') { throw } }
+            }
+            Start-Sleep -Milliseconds 500
+        }
+        if (-not $done) { throw 'Windows package removal did not complete within 60 seconds' }
+        Remove-Item -LiteralPath $result.result_file -Force
+    } elseif ($result.state -ne 'removed') { throw 'Unrecognized package uninstall result' }
+    foreach ($name in @('peerimeter-agent.exe','wireguard.dll','peerimeter-agent.NOTICES.txt','.peerimeter-agent.install.json','.peerimeter-agent.install.lock')) {
+        if (Test-Path -LiteralPath (Join-Path $Directory $name)) { throw "Installed program member survived uninstall: $name" }
+    }
+    if ([IO.File]::ReadAllText($sentinel) -ne 'operator data stays') { throw 'Full uninstall removed unrelated installation-parent data' }
+    $again = & $ExternalCLI uninstall --install-dir $Directory | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or $again.state -ne 'already_absent') { throw 'Second package uninstall was not idempotent' }
 }
 function Expect-Failure([scriptblock]$Operation) {
     $failed = $false
@@ -50,6 +92,11 @@ function Expect-Failure([scriptblock]$Operation) {
 
 try {
     New-Item -ItemType Directory -Path $base | Out-Null
+    if (Test-Path -LiteralPath $defaultTarget) { throw 'Actual default installation destination is already occupied' }
+    & $Installer -Archive $Archive -SHA256 $checksum
+    $defaultInstalled = $true
+    Assert-Package $defaultTarget
+    Write-Output 'PASS actual Windows installer default destination and protected inventory'
     & $Installer -Archive $Archive -SHA256 $checksum -InstallDir $offline
     Assert-Package $offline
     Write-Output 'PASS offline local ZIP install, custom path with spaces, complete signed WireGuardNT bundle and native CLI'
@@ -112,9 +159,23 @@ try {
     Assert-Package $offline
     foreach ($name in $before.Keys) { if ((Get-FileHash -LiteralPath (Join-Path $offline $name)).Hash -ne $before[$name]) { throw 'Failed replacement did not restore the old package' } }
     Write-Output 'PASS injected replacement failure rolls back all files and removes every staged file'
+
+    $externalCLI = Join-Path $base 'uninstall verifier.exe'
+    Copy-Item -LiteralPath (Join-Path $offline 'peerimeter-agent.exe') -Destination $externalCLI
+    foreach ($directory in @($offline,$latest,$pinned,$defaultTarget)) { Remove-InstalledPackage $directory $externalCLI }
+    $defaultInstalled = $false
+    Write-Output 'PASS native installed packages full uninstall, read-only dry-run, bounded self-removal and unrelated-file/idempotency checks'
 } finally {
     foreach ($name in @('Invoke-RestMethod','Invoke-WebRequest','Move-Item')) { Remove-Item -LiteralPath "Function:\global:$name" -ErrorAction SilentlyContinue }
     Remove-Variable -Name PeerimeterInstallerFixture -Scope Global -ErrorAction SilentlyContinue
+    if ($defaultInstalled -and (Test-Path -LiteralPath $defaultTarget)) {
+        # This path was absent before this test and is created only by its own
+        # installer. Product removal is asserted above; failure cleanup is CI-only.
+        Remove-Item -LiteralPath $defaultTarget -Recurse -Force
+    } elseif (Test-Path -LiteralPath (Join-Path $defaultTarget 'unrelated.txt')) {
+        Remove-Item -LiteralPath (Join-Path $defaultTarget 'unrelated.txt') -Force
+        if (-not @(Get-ChildItem -LiteralPath $defaultTarget -Force).Count) { Remove-Item -LiteralPath $defaultTarget }
+    }
     if (Test-Path -LiteralPath $base) { Remove-Item -LiteralPath $base -Recurse -Force }
 }
 Write-Output 'PASS Windows installer test cleanup'

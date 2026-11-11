@@ -3,6 +3,7 @@
 package local
 
 import (
+	"errors"
 	"golang.org/x/sys/unix"
 	"io"
 	"net"
@@ -165,4 +166,98 @@ func TestUnixControlRejectsUnconfiguredPeerEvenWithWritableSocket(t *testing.T) 
 	case <-time.After(3 * time.Second):
 		t.Fatal("authorized operator was not accepted after rejecting another identity")
 	}
+}
+
+func TestUnixRuntimeDirectoryCannotBeTakenOverByAnotherState(t *testing.T) {
+	dir, err := os.MkdirTemp("", "pmrun-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	listener, err := listen(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	before, err := os.Lstat(filepath.Join(dir, "control.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second, err := listen(dir, ""); err == nil {
+		second.Close()
+		t.Fatal("another manager took over active runtime directory")
+	}
+	after, err := os.Lstat(filepath.Join(dir, "control.sock"))
+	if err != nil || !os.SameFile(before, after) {
+		t.Fatal("runtime collision replaced a live control socket")
+	}
+}
+
+func TestUnixForeignStaleSocketSurvivesRejectedRuntimeClaim(t *testing.T) {
+	dir, err := os.MkdirTemp("", "pmstale-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "control.sock")
+	stale, err := net.ListenUnix("unix", &net.UnixAddr{Net: "unix", Name: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale.SetUnlinkOnClose(false)
+	stale.Close()
+	before, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("runtime marker belongs to another installation")
+	if listener, err := listen(dir, "", func() error { return failure }); !errors.Is(err, failure) || listener != nil {
+		t.Fatal("foreign runtime claim was not rejected")
+	}
+	after, err := os.Lstat(path)
+	if err != nil || !os.SameFile(before, after) {
+		t.Fatal("claim failure removed or replaced another profile's stale socket")
+	}
+	// Failure must also release the exclusive runtime guard for a valid owner.
+	listener, err := listen(dir, "", func() error { return nil })
+	if err != nil {
+		t.Fatal("failed claim leaked runtime lock", err)
+	}
+	listener.Close()
+}
+
+func TestUnixCloseReleasesMarkerBeforeExclusiveRuntimeGuard(t *testing.T) {
+	dir, err := os.MkdirTemp("", "pmclose-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	called := false
+	listener, err := listenWithHooks(dir, "", nil, func() error {
+		called = true
+		if _, err := os.Lstat(filepath.Join(dir, "control.sock")); !os.IsNotExist(err) {
+			t.Fatal("cleanup callback ran before owned socket removal")
+		}
+		if guard, err := TryAcquireExisting(dir); err == nil {
+			if guard != nil {
+				guard.Close()
+			}
+			t.Fatal("runtime guard released before ownership-marker cleanup")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("runtime cleanup hook did not run")
+	}
+	guard, err := TryAcquireExisting(dir)
+	if err != nil || guard == nil {
+		t.Fatal("runtime guard was not released after cleanup")
+	}
+	guard.Close()
 }

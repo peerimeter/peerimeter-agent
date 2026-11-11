@@ -38,21 +38,60 @@ func DefaultDirectory() string {
 
 // Guard is an OS-held exclusive lock; the lock automatically releases on crash.
 type Guard struct {
-	f   *os.File
-	dir string
+	f      *os.File
+	legacy *os.File
+	dir    string
 }
 
 func Acquire(dir string) (*Guard, error) {
 	if err := prepareDirectory(dir); err != nil {
 		return nil, err
 	}
-	f, err := openLock(filepath.Join(dir, "agent.lock"))
+	f, err := openStateLock(dir, false)
 	if err != nil {
 		return nil, err
 	}
-	return &Guard{f: f, dir: dir}, nil
+	legacy, err := compatibilityLock(dir)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return &Guard{f: f, legacy: legacy, dir: dir}, nil
 }
-func (g *Guard) Close() error { return g.f.Close() }
+
+// TryAcquireExisting never creates/chmods a path. A nil guard means the state
+// directory is absent, or Windows has no existing coordination file. A live
+// manager holding the current/legacy protocol lock prevents acquisition.
+func TryAcquireExisting(dir string) (*Guard, error) {
+	if _, err := os.Lstat(dir); os.IsNotExist(err) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	f, err := openStateLock(dir, true)
+	if err != nil {
+		return nil, err
+	}
+	if f == nil {
+		return nil, nil
+	}
+	legacy, err := compatibilityLock(dir)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return &Guard{f: f, legacy: legacy, dir: dir}, nil
+}
+func (g *Guard) Close() error {
+	var legacy error
+	if g.legacy != nil {
+		legacy = g.legacy.Close()
+	}
+	return errors.Join(g.f.Close(), legacy)
+}
+
+// PrepareDirectory validates or creates an owner-controlled agent directory.
+func PrepareDirectory(dir string) error { return prepareDirectory(dir) }
 
 // InterfaceChoice persists the local Linux name independently of display names.
 func (g *Guard) InterfaceChoice(id, display, override string) (string, error) {
@@ -111,18 +150,38 @@ func ValidateOperator(operator string) error {
 
 type Operations struct {
 	// Operator delegates local control only; private configuration remains protected.
-	Operator string
+	Operator   string
+	InstanceID string
+	// BeforeListen claims runtime ownership under its exclusive guard before any
+	// existing Unix socket can be removed. Windows calls it after exclusive pipe creation.
+	BeforeListen func() error
+	// BeforeServe runs only while the listener exclusively owns its runtime.
+	BeforeServe func() error
+	// OnClose releases only matching owned runtime metadata after the socket
+	// closes and before the exclusive runtime guard is released.
+	OnClose  func() error
 	Snapshot func(context.Context) (platform.Snapshot, error)
 	Reload   func(context.Context) error
 	Stop     func()
 }
 
 func Serve(ctx context.Context, dir string, ops Operations) (func() error, error) {
-	listener, err := listen(dir, ops.Operator)
+	listener, err := listenWithHooks(dir, ops.Operator, ops.BeforeListen, ops.OnClose)
 	if err != nil {
 		return nil, err
 	}
+	if ops.BeforeServe != nil {
+		if err := ops.BeforeServe(); err != nil {
+			return nil, errors.Join(err, listener.Close())
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, errors.Join(err, listener.Close())
+	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/identity", func(w http.ResponseWriter, r *http.Request) {
+		write(w, map[string]string{"instance_id": ops.InstanceID}, nil)
+	})
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) { s, err := ops.Snapshot(r.Context()); write(w, s, err) })
 	mux.HandleFunc("GET /v1/peers", func(w http.ResponseWriter, r *http.Request) {
 		s, err := ops.Snapshot(r.Context())
@@ -140,7 +199,9 @@ func Serve(ctx context.Context, dir string, ops Operations) (func() error, error
 	return func() error {
 		shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		return server.Shutdown(shutdown)
+		// net/http ignores some listener Close errors. Explicit idempotent Close
+		// retrieves the recorded callback/guard error instead of reporting success.
+		return errors.Join(server.Shutdown(shutdown), listener.Close())
 	}, nil
 }
 func write(w http.ResponseWriter, value any, err error) {
@@ -218,4 +279,17 @@ func (g *Guard) OwnershipToken() (string, error) {
 		return "", errors.New("cannot persist interface ownership")
 	}
 	return token, nil
+}
+
+func callListenHooks(hooks []func() error) func() error {
+	return func() error {
+		for _, hook := range hooks {
+			if hook != nil {
+				if err := hook(); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
 }

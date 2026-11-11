@@ -52,6 +52,8 @@ with tempfile.TemporaryDirectory(prefix='peerimeter-package-') as tmp:
         if mod and not mod.get('Main') and mod.get('Dir'):
             modules[mod['Path']] = mod
     notices = ['Peerimeter Agent: bundled third-party software notices.\n']
+    for source in sorted(Path('third_party').glob('*/LICENSE*')):
+        notices.append('\n=== ' + str(source.parent) + ' ===\n' + source.read_text(encoding='utf-8') + '\n')
     for name, mod in sorted(modules.items()):
         files = [p for p in Path(mod['Dir']).iterdir() if p.is_file() and p.name.upper().startswith(('LICENSE', 'COPYING', 'NOTICE'))]
         if not files:

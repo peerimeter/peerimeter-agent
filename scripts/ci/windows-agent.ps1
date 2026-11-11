@@ -14,7 +14,7 @@ $agentExe = Join-Path $installation 'peerimeter-agent.exe'
 $helperExe = Join-Path $installation 'pmprobe.exe'
 $configPath = Join-Path $dir 'native.json'
 $state = Join-Path $dir 'foreground-state'
-$serviceState = Join-Path $installation 'service-state'
+$serviceState = Join-Path $installation 'service state'
 $udpRule = "Peerimeter-Agent-CI-UDP-$id"
 $tcpRule = "Peerimeter-Agent-CI-TCP-$id"
 $reference = $null
@@ -26,6 +26,8 @@ $operatorSID = $null
 $operatorCredential = $null
 $operatorCreated = $false
 $operatorOutput = Join-Path $installation 'operator-output'
+$removalResult = $null
+$collisionInstall = Join-Path $env:ProgramFiles "Peerimeter Collision $id"
 
 function Protect-Resource([string]$Path,[bool]$Public=$false) {
     $isDirectory = Test-Path -LiteralPath $Path -PathType Container
@@ -64,7 +66,24 @@ function Remove-TestDirectory([string]$Path) {
         Remove-Item -LiteralPath $Path -Recurse -Force
     }
 }
+function Snapshot-ManagedTrees([string[]]$Roots) {
+    $items = foreach ($root in $Roots) {
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        $entries = @((Get-Item -LiteralPath $root -Force)) + @(Get-ChildItem -LiteralPath $root -Recurse -Force)
+        foreach ($entry in $entries) {
+            $acl = (Get-Acl -LiteralPath $entry.FullName).Sddl
+            $data = [ordered]@{Path=$entry.FullName; Attributes=[int]$entry.Attributes; ACL=$acl}
+            if (-not $entry.PSIsContainer) {
+                $data.Size=$entry.Length; $data.Modified=$entry.LastWriteTimeUtc.Ticks
+                $data.Hash=(Get-FileHash -LiteralPath $entry.FullName -Algorithm SHA256).Hash
+            }
+            [pscustomobject]$data
+        }
+    }
+    return (@($items | Sort-Object Path) | ConvertTo-Json -Depth 5 -Compress)
+}
 function Invoke-Agent([string[]]$CommandArgs) {
+    if ($CommandArgs.Count -gt 0 -and $CommandArgs[0] -eq 'peers' -and '--json' -notin $CommandArgs) { $CommandArgs += '--json' }
     $output = & $agentExe @CommandArgs 2>$null
     if ($LASTEXITCODE -ne 0) { throw "Agent command failed: $($CommandArgs[0])" }
     return $output
@@ -105,11 +124,47 @@ function Assert-Removed {
 function Invoke-OperatorAgent([string]$Operation,[string]$StateDir,[bool]$ExpectSuccess) {
     $out = Join-Path $operatorOutput ($Operation + '.json')
     $err = Join-Path $operatorOutput ($Operation + '-error.json')
-    $p = Start-Process -FilePath $agentExe -Credential $operatorCredential -WorkingDirectory $operatorOutput -ArgumentList @($Operation,'--state-dir',('"{0}"' -f $StateDir)) -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
+    $arguments = @($Operation,'--state-dir',('"{0}"' -f $StateDir))
+    if ($Operation -eq 'peers') { $arguments += '--json' }
+    $p = Start-Process -FilePath $agentExe -Credential $operatorCredential -WorkingDirectory $operatorOutput -ArgumentList $arguments -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
     if (-not $p.WaitForExit(30000)) { Stop-Process -Id $p.Id -Force; throw 'Nonadmin CLI did not finish within 30 seconds' }
     if ($ExpectSuccess -and $p.ExitCode -ne 0) { throw "Delegated nonadmin CLI $Operation failed" }
     if (-not $ExpectSuccess -and $p.ExitCode -eq 0) { throw 'Undelegated nonadmin CLI unexpectedly reached the control pipe' }
     if ($ExpectSuccess) { return ([IO.File]::ReadAllText($out) | ConvertFrom-Json) }
+}
+function Verify-RuntimeCollision {
+    $otherState = Join-Path $dir 'state for installation B'
+    & (Join-Path $PSScriptRoot '..\..\install.ps1') -Archive $archive -SHA256 (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -InstallDir $collisionInstall
+    $otherAgent = Join-Path $collisionInstall 'peerimeter-agent.exe'
+    $marker = Join-Path $state '.peerimeter-agent.runtime'
+    $markerBefore = (Get-FileHash -LiteralPath $marker).Hash
+    $arguments = @('run','--config',('"{0}"' -f $configPath),'--state-dir',('"{0}"' -f $otherState),'--runtime-dir',('"{0}"' -f $state))
+    $process = Start-Process -FilePath $otherAgent -ArgumentList $arguments -RedirectStandardOutput (Join-Path $dir 'collision.log') -RedirectStandardError (Join-Path $dir 'collision-error.log') -PassThru
+    if (-not $process.WaitForExit(8000)) { Stop-Process -Id $process.Id -Force; throw 'Installation B failed to reject the occupied runtime promptly' }
+    if ($process.ExitCode -eq 0) { throw 'Installation B accepted installation A runtime' }
+    $inventory = Get-Content -LiteralPath (Join-Path $collisionInstall '.peerimeter-agent.install.json') -Raw | ConvertFrom-Json
+    $profiles = @($inventory.profiles)
+    if ($profiles.Count -ne 1 -or $profiles[0].runtime_owned -or $profiles[0].runtime_dir -ne $state) { throw 'Failed installation did not retain a non-owned planned runtime profile' }
+    $removal = & $otherAgent uninstall --install-dir $collisionInstall | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0) { throw 'Installation B cleanup failed' }
+    if ($removal.state -eq 'pending') {
+        $done = $false
+        for ($attempt=0; $attempt -lt 120; $attempt++) {
+            if (Test-Path -LiteralPath $removal.result_file) {
+                try {
+                    $receipt = Get-Content -LiteralPath $removal.result_file -Raw | ConvertFrom-Json
+                    if ($receipt.state -eq 'failed') { throw 'Installation B removal helper could not finish' }
+                    if ($receipt.state -eq 'removed') { $done = $true; break }
+                } catch { if ($_.Exception.Message -eq 'Installation B removal helper could not finish') { throw } }
+            }
+            Start-Sleep -Milliseconds 500
+        }
+        if (-not $done) { throw 'Installation B cleanup exceeded 60 seconds' }
+        Remove-Item -LiteralPath $removal.result_file -Force
+    } elseif ($removal.state -ne 'removed') { throw 'Unexpected installation B cleanup status' }
+    if ((Get-FileHash -LiteralPath $marker).Hash -ne $markerBefore -or (Agent-Status $state).state -ne 'running') { throw 'Installation B uninstall changed installation A runtime or stopped its manager' }
+    Verify-Traffic $state | Out-Null
+    Write-Output 'PASS failed installation B startup/full uninstall preserves installation A runtime identity, named pipe and real tunnel traffic'
 }
 function Assert-OperatorCannotReadKey {
     $path = Join-Path $serviceState 'service.key'
@@ -129,6 +184,11 @@ function Verify-Traffic([string]$StateDir) {
     $status = Agent-Status $StateDir
     $peers = @($status.peers)
     if ($peers.Count -ne 1 -or [DateTime]$peers[0].last_handshake -lt [DateTime]::UtcNow.AddMinutes(-3) -or [long]$peers[0].received_bytes -le 0 -or [long]$peers[0].sent_bytes -le 0) { throw 'Actual agent did not report fresh native WireGuard handshake and counters' }
+    if ($status.public_key -ne [IO.File]::ReadAllText((Join-Path $dir 'native.pub')).Trim() -or $status.listen_port -ne 51820 -or @($peers[0].allowed_ips).Count -ne 1 -or $peers[0].allowed_ips[0] -ne '10.203.0.2/32' -or $peers[0].persistent_keepalive_seconds -ne 1) { throw 'Native public key/listen port/AllowedIPs/keepalive snapshot is incorrect' }
+    $human = (& $agentExe peers --state-dir $StateDir | Out-String)
+    if ($LASTEXITCODE -ne 0) { throw 'Human-readable peers command failed' }
+    foreach ($label in @('interface:','public key:','listening port:','peer:','allowed ips:','latest handshake:','transfer:','private key: (hidden)')) { if (-not $human.Contains($label)) { throw 'Human peers output omitted a wgshow-style field' } }
+    if ($human.Contains([IO.File]::ReadAllText((Join-Path $dir 'native.key')).Trim())) { throw 'Human peers output leaked private key material' }
     $route = Get-NetRoute -DestinationPrefix '10.203.0.2/32' -InterfaceAlias $status.interface_name -ErrorAction Stop
     if (Get-NetIPAddress -IPAddress '10.203.0.2' -ErrorAction SilentlyContinue) { throw 'Reference overlay address leaked into host stack' }
     Write-Output "PASS actual Windows agent: adapter=$($status.interface_name), route=$($route.DestinationPrefix), authenticated handshake and TCP payloads in both directions"
@@ -140,10 +200,19 @@ try {
     New-Item -ItemType Directory -Path $dir,$installation | Out-Null
     Protect-Resource $dir
     Protect-Resource $installation $true
-    Copy-Item -LiteralPath $Agent -Destination $agentExe
+    # Use the real verified operator installer so inventory ownership is tested,
+    # not a manually copied executable that full uninstall must refuse to own.
+    $stage = Join-Path $dir 'package staging'
+    New-Item -ItemType Directory -Path $stage | Out-Null
+    Copy-Item -LiteralPath $Agent -Destination (Join-Path $stage 'peerimeter-agent.exe')
+    Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $Agent) 'wireguard.dll') -Destination (Join-Path $stage 'wireguard.dll')
+    [IO.File]::WriteAllText((Join-Path $stage 'peerimeter-agent.NOTICES.txt'),'Native integration archive fixture; release packages carry full dependency notices.')
+    $archive = Join-Path $dir 'native package.zip'
+    Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive
+    & (Join-Path $PSScriptRoot '..\..\install.ps1') -Archive $archive -SHA256 (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -InstallDir $installation
+    if (-not (Test-Path -LiteralPath (Join-Path $installation '.peerimeter-agent.install.json'))) { throw 'Verified installer did not register its protected inventory' }
     Copy-Item -LiteralPath $Helper -Destination $helperExe
-    Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $Agent) 'wireguard.dll') -Destination (Join-Path $installation 'wireguard.dll')
-    foreach ($path in @($agentExe,$helperExe,(Join-Path $installation 'wireguard.dll'))) { Protect-Resource $path $true }
+    Protect-Resource $helperExe $true
     $securePassword = ConvertTo-SecureString ('Pm!' + [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')) -AsPlainText -Force
     $newUser = New-LocalUser -Name $operatorName -Password $securePassword -AccountNeverExpires -PasswordNeverExpires -UserMayNotChangePassword
     $operatorCreated = $true
@@ -176,6 +245,7 @@ try {
     New-NetFirewallRule -DisplayName $tcpRule -Direction Inbound -Action Allow -Protocol TCP -LocalPort 18081 -LocalAddress '10.203.0.1' -RemoteAddress '10.203.0.2' | Out-Null
     Start-Foreground | Out-Null
     $before = Verify-Traffic $state | Select-Object -Last 1
+    Verify-RuntimeCollision
     Invoke-OperatorAgent 'status' $state $false
     Write-Output 'PASS undelegated nonadmin CLI is denied access to the agent control pipe'
     $index = (Get-NetAdapter -Name $adapterName).ifIndex
@@ -220,6 +290,60 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $serviceState 'service.key')) -or -not (Test-Path -LiteralPath (Join-Path $serviceState 'service.json'))) { throw 'Service uninstall removed operator credentials or config' }
     if (Get-Service -Name 'PeerimeterAgent' -ErrorAction SilentlyContinue) { throw 'SCM registration leaked after uninstall' }
     Write-Output 'PASS Windows SCM install/start/status/stop/restart/uninstall, config/key preservation'
+
+    # Reinstall the preserved profile and prove full uninstall stops a live
+    # service, rather than merely deleting an already stopped package.
+    Invoke-Agent -CommandArgs @('service','install','--config',$configPath,'--state-dir',$serviceState,'--operator',$operatorSID) | Out-Null
+    $serviceInstalled = $true
+    Invoke-Agent -CommandArgs @('service','start') | Out-Null
+    Wait-Agent $serviceState | Out-Null
+    Verify-Traffic $serviceState | Out-Null
+    $originalKeyHash = (Get-FileHash -LiteralPath (Join-Path $dir 'native.key')).Hash
+    foreach ($folder in @($installation,$state,$serviceState)) { [IO.File]::WriteAllText((Join-Path $folder 'unrelated.txt'),'unrelated operator file') }
+    $beforeDry = Snapshot-ManagedTrees @($installation,$state)
+    $dry = Invoke-Agent -CommandArgs @('uninstall','--install-dir',$installation,'--dry-run') | ConvertFrom-Json
+    if ($dry.state -ne 'dry_run' -or @($dry.paths).Count -lt 5) { throw 'Full uninstall dry-run omitted tracked resources' }
+    if ((Snapshot-ManagedTrees @($installation,$state)) -ne $beforeDry) { throw 'Full uninstall dry-run mutated files, ACLs or inventory' }
+    if ((Agent-Status $serviceState).state -ne 'running') { throw 'Dry-run stopped the live service' }
+    $noticePath = Join-Path $installation 'peerimeter-agent.NOTICES.txt'
+    $noticeBytes = [IO.File]::ReadAllBytes($noticePath)
+    [IO.File]::AppendAllText($noticePath,'modified tracked notice')
+    & $agentExe uninstall --install-dir $installation *> $null
+    if ($LASTEXITCODE -eq 0) { throw 'Full uninstall ignored a changed inventoried program file' }
+    if ((Agent-Status $serviceState).state -ne 'running') { throw 'Hash-conflict preflight stopped the working service' }
+    [IO.File]::WriteAllBytes($noticePath,$noticeBytes)
+    # Resume safely when a previous attempt already removed one tracked member.
+    Remove-Item -LiteralPath $noticePath -Force
+    $removal = Invoke-Agent -CommandArgs @('uninstall','--install-dir',$installation) | ConvertFrom-Json
+    if ($removal.state -eq 'pending') {
+        $removalResult = $removal.result_file
+        if (-not $removalResult) { throw 'Windows pending removal omitted its result path' }
+        $completed = $false
+        for ($attempt=0; $attempt -lt 120; $attempt++) {
+            if (Test-Path -LiteralPath $removalResult) {
+                try {
+                    $result = Get-Content -LiteralPath $removalResult -Raw | ConvertFrom-Json
+                    if ($result.state -eq 'failed') { throw 'Bounded Windows removal helper reported remaining files' }
+                    if ($result.state -eq 'removed') { $completed = $true; break }
+                } catch { if ($_.Exception.Message -eq 'Bounded Windows removal helper reported remaining files') { throw } }
+            }
+            Start-Sleep -Milliseconds 500
+        }
+        if (-not $completed) { throw 'Windows removal helper did not report complete deletion within 60 seconds' }
+    } elseif ($removal.state -ne 'removed') { throw 'Unexpected full uninstall status' }
+    $serviceInstalled = $false
+    Assert-Removed
+    if (Get-Service -Name 'PeerimeterAgent' -ErrorAction SilentlyContinue) { throw 'Full uninstall left an SCM registration' }
+    foreach ($path in @($agentExe,(Join-Path $installation 'wireguard.dll'),(Join-Path $installation 'peerimeter-agent.NOTICES.txt'),(Join-Path $installation '.peerimeter-agent.install.json'),(Join-Path $installation '.peerimeter-agent.install.lock'),(Join-Path $serviceState 'service.key'),(Join-Path $serviceState 'service.json'),(Join-Path $serviceState 'ownership'),(Join-Path $serviceState 'agent.lock'),(Join-Path $state 'ownership'),(Join-Path $state 'agent.lock'),(Join-Path $serviceState '.peerimeter-agent.profile'),(Join-Path $state '.peerimeter-agent.profile'))) {
+        if (Test-Path -LiteralPath $path) { throw "Tracked resource survived full uninstall: $path" }
+    }
+    foreach ($folder in @($installation,$state,$serviceState)) {
+        if ([IO.File]::ReadAllText((Join-Path $folder 'unrelated.txt')) -ne 'unrelated operator file') { throw 'Full uninstall deleted unrelated data' }
+    }
+    if (-not (Test-Path -LiteralPath $helperExe) -or (Get-FileHash -LiteralPath (Join-Path $dir 'native.key')).Hash -ne $originalKeyHash) { throw 'Full uninstall removed an unrelated helper or original source key' }
+    $again = & $Agent uninstall --install-dir $installation | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or $again.state -ne 'already_absent') { throw 'Repeated full uninstall was not safe and idempotent' }
+    Write-Output 'PASS Windows actual installer inventory, read-only dry-run, live full removal, changed-file refusal, partial-state retry, idempotency and unrelated/source-key preservation'
 } catch {
     foreach ($name in @('agent-error.log','reference.log','reference-error.log')) {
         $path = Join-Path $dir $name
@@ -240,6 +364,8 @@ try {
     if ($operatorCreated) { Remove-LocalUser -Name $operatorName -ErrorAction SilentlyContinue }
     Remove-TestDirectory $dir
     Remove-TestDirectory $installation
+    Remove-TestDirectory $collisionInstall
+    if ($removalResult -and (Test-Path -LiteralPath $removalResult)) { Remove-Item -LiteralPath $removalResult -Force }
 }
 if ($operatorCreated -and (Get-LocalUser -Name $operatorName -ErrorAction SilentlyContinue)) { throw 'Ephemeral nonadmin test account leaked' }
 if ($adapterName -and (Get-NetAdapter -Name $adapterName -ErrorAction SilentlyContinue)) { throw 'Native Windows adapter remained after cleanup' }
