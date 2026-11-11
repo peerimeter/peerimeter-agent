@@ -2,14 +2,14 @@
 
 ## Current status
 
-Phase 0 baseline natively verified on all three platforms with Go 1.27.4. Backend feasibility also passed all three. Phase 0 remains open for operational run/status/peers, delivered with the Phase 1 native/IPC backends.
+Phase 0 complete: baseline natively verified on all three platforms with Go 1.27.4, including backend feasibility. Phase 1 is next and remains not started; operational run/status/peers are its native/IPC runtime requirements.
 No agent-managed WireGuard tunnel or service implementation is claimed.
 
 ## Phase checklist
 
 | Phase | Status |
 |---|---|
-| 0 — Static contract and cross-platform baseline | In progress |
+| 0 — Static contract and cross-platform baseline | Complete |
 | 1 — Native offline WireGuard agent and services | Not started |
 | 2 — Service, enrollment, sync | Not started |
 | 3 — NAT and recovery | Not started |
@@ -105,3 +105,14 @@ No agent connectivity, service lifecycle or cross-OS connectivity pass is claime
 Next: implement the real Phase 1 adapters/IPC so `run`, `status`, `peers` and
 service commands become operational. The other Phase 0 checklist items are
 implemented and natively tested. The service repository remains unstarted.
+
+## Phase boundary clarification — 2026-11-11
+
+The planning contract now separates the implemented Phase 0 command/argument
+surface, functional offline validation and testable lifecycle/backend interfaces
+from the operational `run`, local `status`/`peers`, IPC and services required in
+Phase 1. The earlier decision to hold Phase 0 open for these runtime commands is
+superseded. Phase 0 is complete using the native evidence above; Phase 1 remains
+not started. This is a scheduling/documentation correction with no new runtime
+implementation or test pass claimed. Runtime-dependent commands still return
+explicit unavailable errors until native backends are implemented.
