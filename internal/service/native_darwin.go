@@ -24,6 +24,9 @@ func nativeSecureFiles(paths ...string) error                             { retu
 
 func darwinPlist(executable string, cfg Config) ([]byte, error) {
 	args := []string{executable, "run", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory}
+	if cfg.Operator != "" {
+		args = append(args, "--operator", cfg.Operator)
+	}
 	var out bytes.Buffer
 	out.WriteString(xml.Header)
 	out.WriteString("<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>Label</key><string>" + darwinServiceLabel + "</string><key>ProgramArguments</key><array>")

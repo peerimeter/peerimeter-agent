@@ -21,8 +21,13 @@ $reference = $null
 $foreground = $null
 $serviceInstalled = $false
 $adapterName = $null
+$operatorName = "pmci" + $id.Substring(0,12)
+$operatorSID = $null
+$operatorCredential = $null
+$operatorCreated = $false
+$operatorOutput = Join-Path $installation 'operator-output'
 
-function Protect-Resource([string]$Path) {
+function Protect-Resource([string]$Path,[bool]$Public=$false) {
     $isDirectory = Test-Path -LiteralPath $Path -PathType Container
     if ($isDirectory) {
         $acl = [Security.AccessControl.DirectorySecurity]::new()
@@ -39,7 +44,25 @@ function Protect-Resource([string]$Path) {
         $rule = [Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]::FullControl,$inherit,[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow)
         $acl.AddAccessRule($rule)
     }
+    if ($Public) {
+        $rule = [Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-5-32-545'),[Security.AccessControl.FileSystemRights]::ReadAndExecute,$inherit,[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow)
+        $acl.AddAccessRule($rule)
+    }
     Set-Acl -LiteralPath $Path -AclObject $acl
+}
+function Remove-TestDirectory([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    try {
+        Remove-Item -LiteralPath $Path -Recurse -Force
+    } catch {
+        # SCM runs as SYSTEM and may create protected metadata. Reclaim only
+        # this run's temporary test tree; grant no access to ordinary users.
+        & takeown.exe /F $Path /A /R /D Y | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Could not reclaim temporary SYSTEM-owned test metadata' }
+        & icacls.exe $Path /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' /T /C | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Could not grant administrator cleanup access to temporary test tree' }
+        Remove-Item -LiteralPath $Path -Recurse -Force
+    }
 }
 function Invoke-Agent([string[]]$CommandArgs) {
     $output = & $agentExe @CommandArgs 2>$null
@@ -79,6 +102,24 @@ function Assert-Removed {
     if (Get-NetAdapter -Name $adapterName -ErrorAction SilentlyContinue) { throw 'Agent adapter leaked after shutdown' }
     if (Get-NetRoute -DestinationPrefix '10.203.0.2/32' -InterfaceAlias $adapterName -ErrorAction SilentlyContinue) { throw 'Agent route leaked after shutdown' }
 }
+function Invoke-OperatorAgent([string]$Operation,[string]$StateDir,[bool]$ExpectSuccess) {
+    $out = Join-Path $operatorOutput ($Operation + '.json')
+    $err = Join-Path $operatorOutput ($Operation + '-error.json')
+    $p = Start-Process -FilePath $agentExe -Credential $operatorCredential -WorkingDirectory $operatorOutput -ArgumentList @($Operation,'--state-dir',('"{0}"' -f $StateDir)) -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
+    if (-not $p.WaitForExit(30000)) { Stop-Process -Id $p.Id -Force; throw 'Nonadmin CLI did not finish within 30 seconds' }
+    if ($ExpectSuccess -and $p.ExitCode -ne 0) { throw "Delegated nonadmin CLI $Operation failed" }
+    if (-not $ExpectSuccess -and $p.ExitCode -eq 0) { throw 'Undelegated nonadmin CLI unexpectedly reached the control pipe' }
+    if ($ExpectSuccess) { return ([IO.File]::ReadAllText($out) | ConvertFrom-Json) }
+}
+function Assert-OperatorCannotReadKey {
+    $path = Join-Path $serviceState 'service.key'
+    $scriptText = '$ErrorActionPreference = "Stop"; try { $null = [IO.File]::ReadAllBytes(' + "'" + $path.Replace("'","''") + "'" + '); exit 1 } catch { if ($_.Exception.GetBaseException() -is [UnauthorizedAccessException]) { exit 0 }; exit 2 }'
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($scriptText))
+    $powershell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $p = Start-Process -FilePath $powershell -Credential $operatorCredential -WorkingDirectory $operatorOutput -ArgumentList @('-NoProfile','-NonInteractive','-EncodedCommand',$encoded) -PassThru
+    if (-not $p.WaitForExit(30000)) { Stop-Process -Id $p.Id -Force; throw 'Private-key access test timed out' }
+    if ($p.ExitCode -ne 0) { throw 'Delegated nonadmin operator could read the protected service private key' }
+}
 function Verify-Traffic([string]$StateDir) {
     $before = @(Select-String -Path (Join-Path $dir 'reference.log') -Pattern '^PASS reference' -ErrorAction SilentlyContinue).Count
     & $helperExe host $dir
@@ -98,11 +139,23 @@ try {
     if (Get-Service -Name 'PeerimeterAgent' -ErrorAction SilentlyContinue) { throw 'Existing PeerimeterAgent service found; refusing to alter it' }
     New-Item -ItemType Directory -Path $dir,$installation | Out-Null
     Protect-Resource $dir
-    Protect-Resource $installation
+    Protect-Resource $installation $true
     Copy-Item -LiteralPath $Agent -Destination $agentExe
     Copy-Item -LiteralPath $Helper -Destination $helperExe
     Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $Agent) 'wireguard.dll') -Destination (Join-Path $installation 'wireguard.dll')
-    foreach ($path in @($agentExe,$helperExe,(Join-Path $installation 'wireguard.dll'))) { Protect-Resource $path }
+    foreach ($path in @($agentExe,$helperExe,(Join-Path $installation 'wireguard.dll'))) { Protect-Resource $path $true }
+    $securePassword = ConvertTo-SecureString ('Pm!' + [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')) -AsPlainText -Force
+    $newUser = New-LocalUser -Name $operatorName -Password $securePassword -AccountNeverExpires -PasswordNeverExpires -UserMayNotChangePassword
+    $operatorCreated = $true
+    $operatorSID = $newUser.SID.Value
+    $usersSID = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-545')
+    if (-not (Get-LocalGroupMember -SID $usersSID | Where-Object { $_.SID.Value -eq $operatorSID })) { Add-LocalGroupMember -SID $usersSID -Member $operatorName }
+    $operatorCredential = [Management.Automation.PSCredential]::new(($env:COMPUTERNAME + '\' + $operatorName),$securePassword)
+    New-Item -ItemType Directory -Path $operatorOutput | Out-Null
+    Protect-Resource $operatorOutput
+    $outputACL = Get-Acl -LiteralPath $operatorOutput
+    $outputACL.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($operatorSID),[Security.AccessControl.FileSystemRights]::Modify,[Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit',[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow))
+    Set-Acl -LiteralPath $operatorOutput -AclObject $outputACL
     & $helperExe keygen $dir
     if ($LASTEXITCODE -ne 0) { throw 'Reference key generation failed' }
     # The helper emits an official-client config containing a private key. It is
@@ -123,6 +176,8 @@ try {
     New-NetFirewallRule -DisplayName $tcpRule -Direction Inbound -Action Allow -Protocol TCP -LocalPort 18081 -LocalAddress '10.203.0.1' -RemoteAddress '10.203.0.2' | Out-Null
     Start-Foreground | Out-Null
     $before = Verify-Traffic $state | Select-Object -Last 1
+    Invoke-OperatorAgent 'status' $state $false
+    Write-Output 'PASS undelegated nonadmin CLI is denied access to the agent control pipe'
     $index = (Get-NetAdapter -Name $adapterName).ifIndex
     Invoke-Agent -CommandArgs @('sync','--state-dir',$state) | Out-Null
     $unchanged = Agent-Status $state
@@ -143,12 +198,17 @@ try {
     Assert-Removed
     Write-Output 'PASS foreground restart, native adapter and route teardown'
 
-    Invoke-Agent -CommandArgs @('service','install','--config',$configPath,'--state-dir',$serviceState) | Out-Null
+    Invoke-Agent -CommandArgs @('service','install','--config',$configPath,'--state-dir',$serviceState,'--operator',$operatorSID) | Out-Null
     $serviceInstalled = $true
     Invoke-Agent -CommandArgs @('service','start') | Out-Null
     $serviceStatus = Wait-Agent $serviceState
     $adapterName = $serviceStatus.interface_name
     Verify-Traffic $serviceState | Out-Null
+    $delegated = Invoke-OperatorAgent 'status' $serviceState $true
+    if ($delegated.state -ne 'running') { throw 'Delegated nonadmin status did not report the native service' }
+    $null = Invoke-OperatorAgent 'peers' $serviceState $true
+    Assert-OperatorCannotReadKey
+    Write-Output 'PASS delegated nonadmin CLI status/peers with private key access denied'
     Invoke-Agent -CommandArgs @('service','stop') | Out-Null
     Assert-Removed
     Invoke-Agent -CommandArgs @('service','start') | Out-Null
@@ -177,9 +237,11 @@ try {
     if ($reference -and -not $reference.HasExited) { Stop-Process -Id $reference.Id -Force -ErrorAction SilentlyContinue }
     Remove-NetFirewallRule -DisplayName $tcpRule -ErrorAction SilentlyContinue
     Remove-NetFirewallRule -DisplayName $udpRule -ErrorAction SilentlyContinue
-    if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
-    if (Test-Path -LiteralPath $installation) { Remove-Item -LiteralPath $installation -Recurse -Force }
+    if ($operatorCreated) { Remove-LocalUser -Name $operatorName -ErrorAction SilentlyContinue }
+    Remove-TestDirectory $dir
+    Remove-TestDirectory $installation
 }
+if ($operatorCreated -and (Get-LocalUser -Name $operatorName -ErrorAction SilentlyContinue)) { throw 'Ephemeral nonadmin test account leaked' }
 if ($adapterName -and (Get-NetAdapter -Name $adapterName -ErrorAction SilentlyContinue)) { throw 'Native Windows adapter remained after cleanup' }
 if (Get-NetFirewallRule -DisplayName $udpRule,$tcpRule -ErrorAction SilentlyContinue) { throw 'Temporary firewall rules leaked' }
 Write-Output 'PASS Windows agent integration cleanup: no test adapter/routes/service/firewall rules/keys/install directory'

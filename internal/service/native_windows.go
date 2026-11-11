@@ -92,7 +92,11 @@ func serviceSecureObject(path string, directory, private bool) error {
 }
 
 func serviceArguments(cfg Config) []string {
-	return []string{"run", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory}
+	args := []string{"run", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory}
+	if cfg.Operator != "" {
+		args = append(args, "--operator", cfg.Operator)
+	}
+	return args
 }
 
 func waitWindowsService(s *mgr.Service, wanted svc.State) error {

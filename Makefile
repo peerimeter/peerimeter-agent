@@ -10,8 +10,7 @@ lint:
 build:
 	go build -o bin/peerimeter-agent ./cmd/peerimeter-agent
 test-integration:
-	@echo 'Run the WireGuard backend feasibility GitHub workflow; see README.md for native scripts.'
-	@exit 1
+	bash scripts/ci/run-agent-integration.sh
 test-network:
 	@echo 'blocked: Phase 1 agent tunnel implementation and reachable mixed-OS test infrastructure required.'
 	@exit 1

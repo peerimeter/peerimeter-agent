@@ -45,6 +45,10 @@ jobs:
         id: smoke
         run: |
           ./"$AGENT_EXE" version
+          ./"$AGENT_EXE" --help
+          ./"$AGENT_EXE" run --help
+          ./"$AGENT_EXE" service install --help
+          ./"$AGENT_EXE" completion bash > "$RUNNER_TEMP/peerimeter-completion.bash"
           ./"$AGENT_EXE" generate-example --directory "$RUNNER_TEMP/peerimeter-example"
           ./"$AGENT_EXE" validate-config --config "$RUNNER_TEMP/peerimeter-example/peer-a.json"
           ./"$AGENT_EXE" validate-config --config "$RUNNER_TEMP/peerimeter-example/peer-b.json"

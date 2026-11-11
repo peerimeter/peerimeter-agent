@@ -60,3 +60,11 @@ func TestWindowsServiceStopWaitsForRuntimeCleanup(t *testing.T) {
 		t.Fatal("service did not finish after cleanup")
 	}
 }
+
+func TestWindowsServiceArgumentsDelegateOperator(t *testing.T) {
+	cfg := Config{ConfigPath: `C:\ProgramData\Peerimeter\service.json`, StateDirectory: `C:\ProgramData\Peerimeter`, Operator: "S-1-5-21-100-200-300-1001"}
+	got := serviceArguments(cfg)
+	if len(got) != 7 || got[5] != "--operator" || got[6] != cfg.Operator {
+		t.Fatal("Windows service must preserve the explicit local operator identity")
+	}
+}

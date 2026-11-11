@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""Build a self-contained release artifact. Never publishes a release."""
+import argparse
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import tarfile
+import tempfile
+import urllib.request
+import zipfile
+
+NT_URL = 'https://download.wireguard.com/wireguard-nt/wireguard-nt-1.1.zip'
+NT_SHA = 'dceb30a9bc4be48cce0f74160fc88a585a2c2627366e8f846fc6658f9038dace'
+parser = argparse.ArgumentParser()
+parser.add_argument('--version', required=True)
+parser.add_argument('--os', choices=['linux', 'darwin', 'windows'], required=True)
+parser.add_argument('--arch', choices=['amd64', 'arm64'], required=True)
+parser.add_argument('--output', default='dist')
+parser.add_argument('--binary', help='existing binary built for the selected target')
+args = parser.parse_args()
+if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', args.version):
+    parser.error('version must be a v-prefixed release tag')
+env = dict(os.environ, GOOS=args.os, GOARCH=args.arch, CGO_ENABLED='0')
+if subprocess.check_output(['go', 'env', 'GOVERSION'], env=env, text=True).strip() != 'go1.27.4':
+    raise SystemExit('Release builds require exact Go 1.27.4')
+output = Path(args.output).absolute()
+output.mkdir(parents=True, exist_ok=True)
+with tempfile.TemporaryDirectory(prefix='peerimeter-package-') as tmp:
+    root = Path(tmp)
+    binary_name = 'peerimeter-agent' + ('.exe' if args.os == 'windows' else '')
+    binary = root / binary_name
+    if args.binary:
+        binary.write_bytes(Path(args.binary).read_bytes())
+    else:
+        subprocess.run(['go', 'build', '-mod=readonly', '-trimpath', '-ldflags',
+                        '-s -w -X github.com/peerimeter/peerimeter-agent/internal/cli.Version=' + args.version,
+                        '-o', str(binary), './cmd/peerimeter-agent'], env=env, check=True)
+    binary.chmod(0o755)
+    # Include license notices for every module present in this target's build.
+    raw = subprocess.check_output(['go', 'list', '-deps', '-json', './cmd/peerimeter-agent'], env=env, text=True)
+    decoder = json.JSONDecoder()
+    modules = {}
+    while raw.strip():
+        raw = raw.lstrip()
+        package, index = decoder.raw_decode(raw)
+        raw = raw[index:]
+        mod = package.get('Module', {})
+        if mod and not mod.get('Main') and mod.get('Dir'):
+            modules[mod['Path']] = mod
+    notices = ['Peerimeter Agent: bundled third-party software notices.\n']
+    for name, mod in sorted(modules.items()):
+        files = [p for p in Path(mod['Dir']).iterdir() if p.is_file() and p.name.upper().startswith(('LICENSE', 'COPYING', 'NOTICE'))]
+        if not files:
+            # Nested modules can share an upstream repository license in parent.
+            directory = Path(mod['Dir'])
+            for parent in list(directory.parents)[:2]:
+                files = [p for p in parent.glob('LICENSE*') if p.is_file()]
+                if files:
+                    break
+        if not files:
+            raise SystemExit('Missing third-party license notice for ' + name)
+        notices.append('\n=== ' + name + ' ' + mod.get('Version', '') + ' ===\n')
+        for source in sorted(files):
+            notices.append(source.read_text(errors='replace') + '\n')
+    if args.os == 'windows':
+        with urllib.request.urlopen(NT_URL, timeout=60) as response:
+            archive = response.read(32 << 20)
+        if hashlib.sha256(archive).hexdigest() != NT_SHA:
+            raise SystemExit('Official WireGuardNT archive hash mismatch')
+        with zipfile.ZipFile(io.BytesIO(archive)) as archive:
+            binary_path = f'wireguard-nt/bin/{args.arch}/wireguard.dll'
+            (root / 'wireguard.dll').write_bytes(archive.read(binary_path))
+            licenses = [name for name in archive.namelist() if re.search(r'/(?:COPYING|LICENSE)(?:\.[^/]*)?$', name, re.I)]
+            if not licenses:
+                raise SystemExit('Missing official WireGuardNT license')
+            notices.append('\n=== Official WireGuardNT 1.1 ===\n')
+            for name in licenses:
+                notices.append(archive.read(name).decode(errors='replace') + '\n')
+    (root / 'peerimeter-agent.NOTICES.txt').write_text(''.join(notices))
+    suffix = 'zip' if args.os == 'windows' else 'tar.gz'
+    asset = output / f'peerimeter-agent_{args.version}_{args.os}_{args.arch}.{suffix}'
+    if args.os == 'windows':
+        with zipfile.ZipFile(asset, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+            for source in sorted(root.iterdir()):
+                archive.write(source, source.name)
+    else:
+        with tarfile.open(asset, 'w:gz') as archive:
+            for source in sorted(root.iterdir()):
+                info = archive.gettarinfo(str(source), arcname=source.name)
+                info.uid = info.gid = 0
+                info.uname = info.gname = ''
+                with source.open('rb') as stream:
+                    archive.addfile(info, stream)
+    digest = hashlib.sha256(asset.read_bytes()).hexdigest()
+    (output / 'SHA256SUMS').write_text(f'{digest}  {asset.name}\n')
+    print(asset)

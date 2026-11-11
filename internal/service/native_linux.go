@@ -34,7 +34,14 @@ func linuxServiceUnit(executable string, cfg Config) ([]byte, error) {
 			return nil, errors.New("systemd service paths must be absolute and contain no newlines or NUL")
 		}
 	}
-	command := strings.Join([]string{linuxSystemdQuote(executable), "run", "--config", linuxSystemdQuote(cfg.ConfigPath), "--state-dir", linuxSystemdQuote(cfg.StateDirectory)}, " ")
+	args := []string{linuxSystemdQuote(executable), "run", "--config", linuxSystemdQuote(cfg.ConfigPath), "--state-dir", linuxSystemdQuote(cfg.StateDirectory)}
+	if cfg.Operator != "" {
+		if len(cfg.Operator) > 256 || strings.TrimSpace(cfg.Operator) != cfg.Operator || strings.ContainsAny(cfg.Operator, "\x00\r\n") {
+			return nil, errors.New("invalid systemd local operator identity")
+		}
+		args = append(args, "--operator", linuxSystemdQuote(cfg.Operator))
+	}
+	command := strings.Join(args, " ")
 	unit := linuxServiceMarker + `[Unit]
 Description=Peerimeter offline WireGuard agent
 After=network.target

@@ -103,14 +103,22 @@ func (g *Guard) InterfaceChoice(id, display, override string) (string, error) {
 	return name, nil
 }
 
+// ValidateOperator resolves a control-channel delegate without changing OS state.
+func ValidateOperator(operator string) error {
+	_, err := resolveOperator(operator)
+	return err
+}
+
 type Operations struct {
+	// Operator delegates local control only; private configuration remains protected.
+	Operator string
 	Snapshot func(context.Context) (platform.Snapshot, error)
 	Reload   func(context.Context) error
 	Stop     func()
 }
 
 func Serve(ctx context.Context, dir string, ops Operations) (func() error, error) {
-	listener, err := listen(dir)
+	listener, err := listen(dir, ops.Operator)
 	if err != nil {
 		return nil, err
 	}

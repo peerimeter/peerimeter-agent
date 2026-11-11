@@ -5,7 +5,10 @@ umask 077
 [[ $(id -u) -eq 0 ]] || { echo 'Run the Linux integration test as root.' >&2; exit 1; }
 AGENT=$(realpath "${AGENT:-${1:-./peerimeter-agent}}")
 [[ -x "$AGENT" ]] || { echo 'AGENT must name the built executable.' >&2; exit 1; }
-for dependency in ip ping python3 timeout systemctl; do command -v "$dependency" >/dev/null; done
+for dependency in ip ping python3 timeout systemctl runuser; do command -v "$dependency" >/dev/null; done
+operator=nobody
+[[ $(id -u "$operator") -ne 0 ]]
+[[ $(id -u daemon) -ne 0 && $(id -u daemon) -ne $(id -u "$operator") ]]
 work=$(mktemp -d /tmp/peerimeter-agent-linux.XXXXXXXX)
 left="pm-left-$BASHPID"
 right="pm-right-$BASHPID"
@@ -66,6 +69,9 @@ trap 'exit 143' TERM
 # Actions build directory belongs to runner, so stage this run's private copy.
 install -m 0755 "$AGENT" "$work/peerimeter-agent"
 AGENT="$work/peerimeter-agent"
+# Permit reaching only known paths; credentials/config subdirectories stay0700
+# and all protected state files remain0600. The daemon delegates its socket only.
+chmod 0711 "$work"
 
 control() {
   local namespace=$1 state=$2 operation=$3
@@ -73,6 +79,14 @@ control() {
     timeout 12s ip netns exec "$namespace" "$AGENT" "$operation" --state-dir "$state"
   else
     timeout 12s "$AGENT" "$operation" --state-dir "$state"
+  fi
+}
+operator_control() {
+  local namespace=$1 state=$2 operation=$3
+  if [[ -n "$namespace" ]]; then
+    timeout 12s ip netns exec "$namespace" runuser -u "$operator" -- "$AGENT" "$operation" --state-dir "$state"
+  else
+    timeout 12s runuser -u "$operator" -- "$AGENT" "$operation" --state-dir "$state"
   fi
 }
 wait_running() {
@@ -148,27 +162,50 @@ ip -n "$right" link set "$vright" up
 
 # Refuse to adopt or remove an unrelated interface, even with the desired name.
 ip -n "$left" link add pm-probe type dummy
-if timeout 10s ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --state-dir "$work/left-state" >"$work/refuse-existing.log" 2>&1; then
+if timeout 10s ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --state-dir "$work/left-state" --operator "$operator" >"$work/refuse-existing.log" 2>&1; then
   echo 'Agent incorrectly accepted an existing unrelated interface.' >&2; exit 1
 fi
 ip -n "$left" -j -d link show dev pm-probe | python3 -c 'import json,sys; assert json.load(sys.stdin)[0]["linkinfo"]["info_kind"]=="dummy"'
 ip -n "$left" link del pm-probe
 
-ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --state-dir "$work/left-state" >"$work/left.log" 2>&1 &
+ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --state-dir "$work/left-state" --operator "$operator" >"$work/left.log" 2>&1 &
 left_pid=$!
-ip netns exec "$right" "$AGENT" run --config "$work/config/peer-b.json" --interface pm-custom --state-dir "$work/right-state" >"$work/right.log" 2>&1 &
+ip netns exec "$right" "$AGENT" run --config "$work/config/peer-b.json" --interface pm-custom --state-dir "$work/right-state" --operator "$operator" >"$work/right.log" 2>&1 &
 right_pid=$!
 wait_running "$left" "$work/left-state" "$work/left-status.json"
 wait_running "$right" "$work/right-state" "$work/right-status.json"
 left_index=$(index_of "$left" pm-probe)
 right_index=$(index_of "$right" pm-custom)
+operator_control "$left" "$work/left-state" status >"$work/operator-status.json"
+operator_control "$left" "$work/left-state" peers >"$work/operator-peers.json"
+python3 - "$work/operator-status.json" "$work/operator-peers.json" <<'PYOP'
+import json, sys
+s=json.load(open(sys.argv[1])); p=json.load(open(sys.argv[2]))
+assert s['state']=='running' and len(p)==1 and p[0]['public_key']==s['peers'][0]['public_key']
+PYOP
+if runuser -u "$operator" -- test -r "$work/config/peer-a.key" || runuser -u "$operator" -- test -w "$work/left-state/ownership"; then
+  echo 'Delegated operator could access protected keys or modify ownership state.' >&2; exit 1
+fi
+# Prove the unrelated account can execute the CLI but cannot reach control IPC.
+runuser -u daemon -- "$AGENT" version >/dev/null
+if timeout 12s ip netns exec "$left" runuser -u daemon -- "$AGENT" status --state-dir "$work/left-state" >"$work/unauthorized.log" 2>&1; then
+  echo 'An unrelated Unix user reached delegated agent control.' >&2; exit 1
+fi
+# Authorization must remain strict even if the socket owner broadens DAC mode.
+runuser -u "$operator" -- chmod 0666 "$work/left-state/control.sock"
+if timeout 12s ip netns exec "$left" runuser -u daemon -- "$AGENT" status --state-dir "$work/left-state" >"$work/unauthorized-broad-mode.log" 2>&1; then
+  echo 'An unrelated Unix user bypassed peer-UID authorization through socket chmod.' >&2; exit 1
+fi
+runuser -u "$operator" -- chmod 0600 "$work/left-state/control.sock"
+operator_control "$left" "$work/left-state" status >"$work/operator-status-after-denial.json"
+echo 'Passed: non-root operator status/peers work without key access; unrelated user is denied even after socket chmod0666.'
 ping_both
 check_handshake "$left" "$work/left-state" "$work/left-before.json"
 check_handshake "$right" "$work/right-state" "$work/right-before.json"
 echo 'Passed: two real agents, Linux kernel interfaces, authenticated handshake, bidirectional traffic.'
 
-control "$left" "$work/left-state" sync
-control "$right" "$work/right-state" sync
+operator_control "$left" "$work/left-state" sync
+operator_control "$right" "$work/right-state" sync
 check_handshake "$left" "$work/left-state" "$work/left-unchanged.json"
 check_handshake "$right" "$work/right-state" "$work/right-unchanged.json"
 python3 - "$work" <<'PY'
@@ -223,7 +260,7 @@ control "$left" "$work/left-state" stop
 wait_process "$left_pid"
 left_pid=''
 assert_removed "$left" pm-probe
-ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --state-dir "$work/left-state" >"$work/left-restarted.log" 2>&1 &
+ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --state-dir "$work/left-state" --operator "$operator" >"$work/left-restarted.log" 2>&1 &
 left_pid=$!
 wait_running "$left" "$work/left-state" "$work/left-restarted.json"
 python3 - "$work/left-restarted.json" <<'PY'
@@ -239,7 +276,7 @@ kill -KILL "$left_pid"
 wait "$left_pid" 2>/dev/null || true
 left_pid=''
 ip -n "$left" link show dev pm-probe >/dev/null
-ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --state-dir "$work/left-state" >"$work/left-crash-recovered.log" 2>&1 &
+ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --state-dir "$work/left-state" --operator "$operator" >"$work/left-crash-recovered.log" 2>&1 &
 left_pid=$!
 wait_running "$left" "$work/left-state" "$work/left-crash-recovered.json"
 ping_both
@@ -265,15 +302,19 @@ c['interface'].update(name='pm-service',address=['10.254.254.1/32'],listen_port=
 c['peers'][0].update(allowed_ips=['10.254.254.2/32'],endpoint='127.0.0.1:51791')
 p.write_text(json.dumps(c)+'\n')
 PY
-"$AGENT" service install --config "$work/service-config/peer-a.json" --state-dir "$work/service-state"
+"$AGENT" service install --config "$work/service-config/peer-a.json" --state-dir "$work/service-state" --operator "$operator"
 service_installed=true
 systemctl is-enabled peerimeter-agent.service
 "$AGENT" service start --state-dir "$work/service-state"
 wait_running '' "$work/service-state" "$work/service-status.json"
+operator_control '' "$work/service-state" status >"$work/service-operator-status.json"
+operator_control '' "$work/service-state" peers >"$work/service-operator-peers.json"
+operator_control '' "$work/service-state" sync
 "$AGENT" service stop --state-dir "$work/service-state"
 if ip link show dev pm-service >/dev/null 2>&1; then echo 'systemd stop left its interface behind.' >&2; exit 1; fi
 "$AGENT" service start --state-dir "$work/service-state"
 wait_running '' "$work/service-state" "$work/service-restarted.json"
+operator_control '' "$work/service-state" status >"$work/service-operator-restarted.json"
 "$AGENT" service stop --state-dir "$work/service-state"
 "$AGENT" service uninstall --state-dir "$work/service-state"
 service_installed=false
