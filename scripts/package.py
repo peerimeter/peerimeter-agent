@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a self-contained release artifact. Never publishes a release."""
+"""Build versioned binaries and platform-specific release assets."""
 import argparse
 import hashlib
 import io
@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 import re
 import subprocess
-import tarfile
 import tempfile
 import urllib.request
 import zipfile
@@ -83,20 +82,21 @@ with tempfile.TemporaryDirectory(prefix='peerimeter-package-') as tmp:
             for name in licenses:
                 notices.append(archive.read(name).decode(errors='replace') + '\n')
     (root / 'peerimeter-agent.NOTICES.txt').write_text(''.join(notices))
-    suffix = 'zip' if args.os == 'windows' else 'tar.gz'
-    asset = output / f'peerimeter-agent_{args.version}_{args.os}_{args.arch}.{suffix}'
+    asset_arch = {'amd64': 'x86_64', 'arm64': 'aarch64'}[args.arch]
+    suffix = '.zip' if args.os == 'windows' else ''
+    asset = output / f'peerimeter-agent-{args.os}-{asset_arch}{suffix}'
     if args.os == 'windows':
         with zipfile.ZipFile(asset, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
             for source in sorted(root.iterdir()):
                 archive.write(source, source.name)
     else:
-        with tarfile.open(asset, 'w:gz') as archive:
-            for source in sorted(root.iterdir()):
-                info = archive.gettarinfo(str(source), arcname=source.name)
-                info.uid = info.gid = 0
-                info.uname = info.gname = ''
-                with source.open('rb') as stream:
-                    archive.addfile(info, stream)
-    digest = hashlib.sha256(asset.read_bytes()).hexdigest()
-    (output / 'SHA256SUMS').write_text(f'{digest}  {asset.name}\n')
+        asset.write_bytes(binary.read_bytes())
+        asset.chmod(0o755)
+        notice_asset = output / f'{asset.name}.NOTICES.txt'
+        notice_asset.write_bytes((root / 'peerimeter-agent.NOTICES.txt').read_bytes())
+    checksummed = [asset]
+    if args.os != 'windows':
+        checksummed.append(notice_asset)
+    sums = ''.join(f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n' for path in checksummed)
+    (output / 'SHA256SUMS').write_text(sums)
     print(asset)

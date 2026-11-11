@@ -53,7 +53,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Build complete package with licenses and bundled Windows driver
+      - name: Build release asset with licenses and bundled Windows driver
         shell: bash
         run: python scripts/package.py --os '${{ matrix.os }}' --arch '${{ matrix.arch }}' --version "$RELEASE_VERSION"
       - name: Unix installer latest/pin/offline/custom-path tests
@@ -61,9 +61,11 @@ jobs:
         shell: bash
         run: |
           bash scripts/ci/unix-installer.sh
-          asset="peerimeter-agent_${RELEASE_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.tar.gz"
+          asset="peerimeter-agent-${{ matrix.os }}-${{ matrix.arch == 'amd64' && 'x86_64' || 'aarch64' }}"
           digest=$(awk -v name="$asset" '$2 == name {print $1}' dist/SHA256SUMS)
-          sh install.sh --archive "dist/$asset" --sha256 "$digest" --install-dir "$RUNNER_TEMP/real package install/bin"
+          notices="$asset.NOTICES.txt"
+          notices_digest=$(awk -v name="$notices" '$2 == name {print $1}' dist/SHA256SUMS)
+          sh install.sh --binary "dist/$asset" --sha256 "$digest" --notices "dist/$notices" --notices-sha256 "$notices_digest" --install-dir "$RUNNER_TEMP/real package install/bin"
           "$RUNNER_TEMP/real package install/bin/peerimeter-agent" version --json > "$RUNNER_TEMP/installed-version.json"
           python -c 'import json,os; p=json.load(open(os.environ["RUNNER_TEMP"]+"/installed-version.json")); assert p["version"]==os.environ["RELEASE_VERSION"] and p["go_version"]=="go1.27.4"'
       - name: Windows installer latest/pin/offline/custom-path tests

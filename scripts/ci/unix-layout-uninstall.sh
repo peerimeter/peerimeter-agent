@@ -69,10 +69,9 @@ source_cli="$base/source-agent"
 mkdir -m 0755 "$base/package"
 install -m 0755 "$agent_source" "$base/package/peerimeter-agent"
 printf 'Native integration archive fixture; release packages carry full dependency notices.\n' >"$base/package/peerimeter-agent.NOTICES.txt"
-tar -czf "$base/package.tar.gz" -C "$base/package" peerimeter-agent peerimeter-agent.NOTICES.txt
-if command -v sha256sum >/dev/null; then digest=$(sha256sum "$base/package.tar.gz" | awk '{print $1}'); else digest=$(shasum -a 256 "$base/package.tar.gz" | awk '{print $1}'); fi
+if command -v sha256sum >/dev/null; then digest=$(sha256sum "$base/package/peerimeter-agent" | awk '{print $1}'); notice_digest=$(sha256sum "$base/package/peerimeter-agent.NOTICES.txt" | awk '{print $1}'); else digest=$(shasum -a 256 "$base/package/peerimeter-agent" | awk '{print $1}'); notice_digest=$(shasum -a 256 "$base/package/peerimeter-agent.NOTICES.txt" | awk '{print $1}'); fi
 install_program() {
- sh "$repo/install.sh" --archive "$base/package.tar.gz" --sha256 "$digest" --install-dir "$1"
+ sh "$repo/install.sh" --binary "$base/package/peerimeter-agent" --sha256 "$digest" --notices "$base/package/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notice_digest" --install-dir "$1"
  [[ -f "$1/.peerimeter-agent.install.json" ]]
  chmod 0755 "$(dirname "$1")" "$1"
 }
@@ -186,7 +185,7 @@ for member in peerimeter-agent peerimeter-agent.NOTICES.txt .peerimeter-agent.in
  [[ ! -e "$program_default/$member" && ! -L "$program_default/$member" ]] || { echo 'Default program install destination is already occupied.' >&2; exit 1; }
 done
 # Omit --install-dir to verify the actual Unix installer destination default.
-sh "$repo/install.sh" --archive "$base/package.tar.gz" --sha256 "$digest"
+sh "$repo/install.sh" --binary "$base/package/peerimeter-agent" --sha256 "$digest" --notices "$base/package/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notice_digest"
 [[ -f "$program_default/.peerimeter-agent.install.json" ]]
 printf 'unrelated shared-bin resource\n' >"$default_sentinel"
 agent="$program_default/peerimeter-agent"
