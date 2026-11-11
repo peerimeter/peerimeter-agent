@@ -287,3 +287,18 @@ fixture-tested with actual native packages). These limits belong to the later
 network/resilience/release work and are not claims of verified connectivity.
 
 ✅ Phase 0 complete · ✅ Phase 1 complete · ⬜ Phase 2 not started.
+
+## 🔄 Phase 1 add-on: STUN probe command
+
+Implemented `peerimeter-agent stun [local-udp-port]` with the standard-library RFC
+5389 UDP Binding exchange. Omitting the port binds an OS-assigned available port;
+passing a port binds it explicitly. The command emits JSON with the bound local
+address and STUN-mapped public endpoint, supports `--server`, handles IPv4/IPv6
+servers, validates responses and closes the socket. README usage is documented.
+
+A local Go 1.26.4 diagnostic build passed with the external temporary manifest;
+Windows amd64 and macOS arm64 cross-builds passed. The installed Go 1.27.4
+segfaults in this Termux/Nix environment, so native Go 1.27.4 CI is pending.
+No live STUN request or native per-OS port test was run in this turn. Phase 1's
+original accepted scope remains complete; STUN add-on native review/verification
+is pending.

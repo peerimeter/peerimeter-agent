@@ -59,6 +59,6 @@ func newRootCommand(app *application) *cobra.Command {
 		}
 		return target.Help()
 	}})
-	root.AddCommand(newVersionCommand(app), newGenerateExampleCommand(app), newRunCommand(app), newValidateConfigCommand(app), newStatusCommand(app), newPeersCommand(app), newSyncCommand(app), newStopCommand(app), newServiceCommand(app), newUninstallCommand(app), newRegisterInstallationCommand(app))
+	root.AddCommand(newVersionCommand(app), newGenerateExampleCommand(app), newRunCommand(app), newValidateConfigCommand(app), newStatusCommand(app), newPeersCommand(app), newSyncCommand(app), newStopCommand(app), newServiceCommand(app), newUninstallCommand(app), newRegisterInstallationCommand(app), newStunCommand(app))
 	return root
 }

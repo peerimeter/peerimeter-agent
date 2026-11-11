@@ -287,3 +287,19 @@ NAT/IP-change recovery require dedicated topology and remain unverified;
 separate hosted jobs are not a LAN. No cross-compilation result is treated as
 native connectivity proof. See [progress.md](progress.md) for exact tested
 commits and limitations.
+
+## STUN port probe
+
+The standalone STUN command reports the UDP endpoint observed by a STUN server.
+Pass a local port to bind it explicitly, or omit the port to let the operating
+system select an available one:
+
+```sh
+peerimeter-agent stun
+peerimeter-agent stun 51820
+peerimeter-agent stun --server stun.l.google.com:19302 51820
+```
+
+The JSON result includes the bound local address and the mapped public address.
+A STUN mapping alone does not establish WireGuard connectivity or promise NAT
+traversal.
