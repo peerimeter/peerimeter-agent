@@ -16,6 +16,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/peerimeter/peerimeter-agent/internal/diagnostic"
 )
 
 const MaxSize = 1 << 20
@@ -52,36 +54,36 @@ func Load(path string) (Config, error) {
 	var cfg Config
 	f, err := os.Open(path)
 	if err != nil {
-		return cfg, errors.New("cannot open static config")
+		return cfg, diagnostic.Wrap(fmt.Errorf("open static config %q: %w", path, err))
 	}
 	defer f.Close()
 	data, err := io.ReadAll(io.LimitReader(f, MaxSize+1))
 	if err != nil {
-		return cfg, errors.New("cannot read static config")
+		return cfg, diagnostic.Wrap(fmt.Errorf("read static config %q: %w", path, err))
 	}
 	if len(data) > MaxSize {
-		return cfg, errors.New("static config exceeds 1 MiB")
+		return cfg, diagnostic.Wrap(errors.New("static config exceeds 1 MiB"))
 	}
 	if err := checkJSON(data); err != nil {
-		return cfg, err
+		return cfg, diagnostic.Wrap(err)
 	}
 	if err := checkShape(data); err != nil {
-		return cfg, err
+		return cfg, diagnostic.Wrap(err)
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&cfg); err != nil {
-		return Config{}, errors.New("static config has invalid fields or field types")
+		return Config{}, diagnostic.Wrap(fmt.Errorf("decode static config %q (check field names and value types): %w", path, err))
 	}
 	if err := Validate(cfg, runtime.GOOS); err != nil {
-		return Config{}, err
+		return Config{}, diagnostic.Wrap(err)
 	}
 	if !filepath.IsAbs(cfg.Interface.PrivateKeyFile) {
 		cfg.Interface.PrivateKeyFile = filepath.Join(filepath.Dir(path), cfg.Interface.PrivateKeyFile)
 	}
 	cfg.Interface.PrivateKeyFile, err = filepath.Abs(cfg.Interface.PrivateKeyFile)
 	if err != nil {
-		return Config{}, errors.New("cannot resolve private key path")
+		return Config{}, diagnostic.Wrap(fmt.Errorf("resolve private key path %q from static config %q: %w", cfg.Interface.PrivateKeyFile, path, err))
 	}
 	return cfg, nil
 }

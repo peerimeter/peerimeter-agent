@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/peerimeter/peerimeter-agent/internal/diagnostic"
 	"github.com/peerimeter/peerimeter-agent/internal/logging"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
 	"github.com/spf13/cobra"
@@ -18,6 +19,7 @@ type application struct {
 	out     io.Writer
 	backend platform.Backend
 	ran     bool
+	debug   bool
 }
 
 func (app *application) handle(f func(*cobra.Command) error) func(*cobra.Command, []string) error {
@@ -47,7 +49,16 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer, backend 
 	if handlerErr != nil {
 		_, _ = io.WriteString(errOut, "ERROR: "+err.Error()+"\n")
 	} else {
-		slog.New(handler).Error(err.Error())
+		logger := slog.New(handler)
+		if app.debug {
+			if trace, ok := diagnostic.StackTrace(err); ok {
+				logger.Error(err.Error(), "stacktrace", trace)
+			} else {
+				logger.Error(err.Error())
+			}
+		} else {
+			logger.Error(err.Error())
+		}
 	}
 	if errors.Is(err, platform.ErrUnavailable) {
 		return 3
@@ -57,6 +68,7 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer, backend 
 func newRootCommand(app *application) *cobra.Command {
 	root := &cobra.Command{Use: "peerimeter-agent", Short: "Offline cross-platform WireGuard agent", SilenceUsage: true, SilenceErrors: true, DisableSuggestions: true, RunE: app.handle(func(*cobra.Command) error { return errors.New("command required; use --help") })}
 	root.SetOut(app.out)
+	root.PersistentFlags().BoolVar(&app.debug, "debug", false, "include captured stack trace when an error occurs")
 	root.SetErr(io.Discard)
 	root.SetFlagErrorFunc(func(*cobra.Command, error) error { return errors.New("invalid command flags; use --help") })
 	root.SetHelpCommand(&cobra.Command{Use: "help [command]", Short: "Show command help", RunE: func(_ *cobra.Command, args []string) error {
