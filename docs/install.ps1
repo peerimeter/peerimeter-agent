@@ -64,8 +64,8 @@ try {
         $asset = "peerimeter-agent-windows-$assetArch.zip"
         $base = "https://github.com/peerimeter/peerimeter-agent/releases/download/$Version"
         $Archive = Join-Path $work 'package.zip'
-        Invoke-WebRequest "$base/$asset" -OutFile $Archive
-        $checksums = (Invoke-WebRequest "$base/SHA256SUMS").Content
+        Invoke-WebRequest "$base/$asset" -OutFile $Archive -UseBasicParsing
+        $checksums = (Invoke-WebRequest "$base/SHA256SUMS" -UseBasicParsing).Content
         $matches = @($checksums -split "`n" | Where-Object { $_.Trim() -match ('^[a-fA-F0-9]{64}\s+' + [regex]::Escape($asset) + '$') })
         if ($matches.Count -ne 1) { throw 'Missing or ambiguous release checksum' }
         $SHA256 = ($matches[0].Trim() -split '\s+')[0]
