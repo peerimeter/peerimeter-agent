@@ -443,9 +443,6 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	if err := removeServices(ctx, filepath.Join(dir, exeName), inv.Profiles); err != nil {
 		return fmt.Errorf("owned service registration could not be removed: %w", err)
 	}
-	if err := requireNoOwnedRegistration(ctx, filepath.Join(dir, exeName), probe); err != nil {
-		return err
-	}
 	var guards []*local.Guard
 	defer func() {
 		for _, g := range guards {
@@ -460,6 +457,15 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		if guard != nil {
 			guards = append(guards, guard)
 		}
+	}
+	// Native supervisor removal can return before its process exits. In
+	// particular, launchd may still report a booted-out label during that
+	// interval. Establish process shutdown through every profile lock before
+	// treating a remaining registration as orphaned or cleaning its tunnel.
+	if err := requireNoOwnedRegistration(ctx, filepath.Join(dir, exeName), probe); err != nil {
+		return err
+	}
+	for _, p := range inv.Profiles {
 		if err := verifyProfile(inv, p); err != nil {
 			return err
 		}
