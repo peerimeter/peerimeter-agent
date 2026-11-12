@@ -100,7 +100,9 @@ func scheduleRemoval(plan removalPlan) (string, error) {
 	// removal guards. The helper cannot delete installation data before parent
 	// exit, so terminating an uninitialized child leaves managed data untouched.
 	ready := false
-	deadline := time.Now().Add(10 * time.Second)
+	// Starting Windows PowerShell can take longer on cold or busy Windows hosts.
+	// The helper cannot remove managed files until the parent exits.
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		var response struct {
 			State string `json:"state"`

@@ -33,8 +33,10 @@ $global:PeerimeterInstallerFixture = @{
     Archive=$Archive; SHA256=$checksum; Asset=$asset; Requests=[Collections.Generic.List[string]]::new(); FailReplace=$false
 }
 
-function Show-RecentRemovalDiagnostics {
-    $logs = @(Get-ChildItem -LiteralPath $env:TEMP -Filter 'peerimeter-uninstall-*.helper.log' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 2)
+function Show-RecentRemovalDiagnostics([string]$Directory) {
+    # The helper writes beside the installation directory, not under TEMP.
+    $parent = Split-Path -Parent $Directory
+    $logs = @(Get-ChildItem -LiteralPath $parent -Filter '.peerimeter-uninstall-*.helper.log' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 2)
     foreach ($log in $logs) {
         Write-Host 'Recent bounded removal helper diagnostics:'
         Get-Content -LiteralPath $log.FullName -Tail 40 | ForEach-Object { Write-Host $_ }
@@ -83,7 +85,7 @@ function Remove-InstalledPackage([string]$Directory,[string]$ExternalCLI) {
     $sentinel = Join-Path $Directory 'unrelated.txt'
     [IO.File]::WriteAllText($sentinel,'operator data stays')
     $result = & $binary uninstall --install-dir $Directory | ConvertFrom-Json
-    if ($LASTEXITCODE -ne 0) { Show-RecentRemovalDiagnostics; throw 'Installed package full uninstall failed' }
+    if ($LASTEXITCODE -ne 0) { Show-RecentRemovalDiagnostics $Directory; throw 'Installed package full uninstall failed' }
     if ($result.state -eq 'pending') {
         if (-not $result.result_file) { throw 'Pending Windows removal omitted its completion report' }
         $done = $false
