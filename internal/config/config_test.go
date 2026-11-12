@@ -1,8 +1,12 @@
 package config
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+
+	"github.com/peerimeter/peerimeter-agent/internal/diagnostic"
 	"os"
 	"path/filepath"
 	"strings"
@@ -160,5 +164,37 @@ func TestPublicTemplates(t *testing.T) {
 		if len(cfg.Peers) != 1 {
 			t.Fatal("each template must describe the other peer")
 		}
+	}
+}
+
+func TestLoadPreservesOpenError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.json")
+	_, err := Load(path)
+	var pathErr *os.PathError
+	if !errors.Is(err, os.ErrNotExist) || !errors.As(err, &pathErr) || pathErr.Path != path {
+		t.Fatalf("lost underlying open error: %v", err)
+	}
+	if trace, ok := diagnostic.StackTrace(err); !ok || !strings.Contains(trace, "internal/config.Load") {
+		t.Fatalf("missing load stack: %q", trace)
+	}
+}
+
+func TestLoadPreservesDecodeError(t *testing.T) {
+	data, err := json.Marshal(fixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "invalid.json")
+	data = bytes.Replace(data, []byte(`"version":1`), []byte(`"version":"SECRET-VALUE"`), 1)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Load(path)
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) || typeErr.Field != "version" {
+		t.Fatalf("lost underlying decode error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "decode static config") || strings.Contains(err.Error(), "SECRET-VALUE") {
+		t.Fatalf("unsafe or missing decode context: %v", err)
 	}
 }

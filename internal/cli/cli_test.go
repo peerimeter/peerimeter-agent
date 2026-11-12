@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -122,10 +123,72 @@ func TestSelfPeerRejected(t *testing.T) {
 	}
 }
 func TestErrorRedaction(t *testing.T) {
-	for _, args := range [][]string{{"SECRET-UNKNOWN-COMMAND"}, {"run", "--private-key", "SUPERSECRET"}, {"run", "--config", "SECRET-MISSING-PATH"}} {
+	for _, args := range [][]string{{"SECRET-UNKNOWN-COMMAND"}, {"run", "--private-key", "SUPERSECRET"}} {
 		c, _, e := invoke(t, args...)
 		if c == 0 || strings.Contains(e, "SECRET") {
 			t.Fatalf("unsafe error %d %s", c, e)
+		}
+	}
+}
+
+func TestConfigLoadErrorDiagnostics(t *testing.T) {
+	for _, format := range []string{"console", "text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			t.Setenv("PEERIMETER_LOG_FORMAT", format)
+			path := filepath.Join(t.TempDir(), "missing-config.json")
+			for _, debug := range []bool{false, true} {
+				args := []string{"validate-config", "--config", path}
+				if debug {
+					args = append(args, "--debug")
+				}
+				code, out, stderr := invoke(t, args...)
+				message := stderr
+				trace := ""
+				if format == "json" {
+					var entry struct {
+						Message    string `json:"msg"`
+						StackTrace string `json:"stacktrace"`
+					}
+					if err := json.Unmarshal([]byte(stderr), &entry); err != nil {
+						t.Fatal(err)
+					}
+					message, trace = entry.Message, entry.StackTrace
+				} else if strings.Contains(stderr, "stacktrace=") {
+					trace = stderr
+				}
+				if code != 1 || out != "" || !strings.Contains(message, "open static config") || !strings.Contains(message, strconv.Quote(path)) {
+					t.Fatalf("missing config context: %d %q %s", code, out, stderr)
+				}
+				if debug {
+					if !strings.Contains(trace, "internal/config.Load") || !strings.Contains(trace, "config.go:") {
+						t.Fatalf("missing source stack: %s", stderr)
+					}
+				} else if trace != "" {
+					t.Fatalf("stack shown without --debug: %s", stderr)
+				}
+			}
+		})
+	}
+}
+
+func TestDebugErrorRedaction(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "invalid.json")
+	for _, data := range []string{
+		`{"private_key":"SUPERSECRET"}`,
+		`{"version":"SUPERSECRET"}`,
+		`{"secret":"SUPERSECRET"`,
+	} {
+		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+		for _, debug := range []bool{false, true} {
+			args := []string{"validate-config", "--config", path}
+			if debug {
+				args = append(args, "--debug")
+			}
+			if code, _, stderr := invoke(t, args...); code != 1 || strings.Contains(stderr, "SUPERSECRET") {
+				t.Fatalf("unsafe config error: %d %s", code, stderr)
+			}
 		}
 	}
 }
