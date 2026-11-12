@@ -1,4 +1,4 @@
-name: Native CI
+name: Cross-platform Agent Build and Test
 on:
   push:
     branches: [main]
