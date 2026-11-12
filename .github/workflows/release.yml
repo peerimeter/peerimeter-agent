@@ -7,6 +7,7 @@ permissions:
   contents: read
 concurrency:
   group: release-${{ github.ref }}
+  # A release may already be publishing assets or tags; do not cancel it mid-run.
   cancel-in-progress: false
 jobs:
   version:
