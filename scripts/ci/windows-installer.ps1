@@ -153,7 +153,8 @@ try {
         return [pscustomobject]@{tag_name='v0.0.0-ci'}
     }
     function global:Invoke-WebRequest {
-        param([string]$Uri,[string]$OutFile)
+        param([string]$Uri,[string]$OutFile,[switch]$UseBasicParsing)
+        if (-not $UseBasicParsing) { throw 'Installer omitted -UseBasicParsing for Windows PowerShell 5.1' }
         $fixture = $global:PeerimeterInstallerFixture
         $fixture.Requests.Add($Uri)
         $prefix = 'https://github.com/peerimeter/peerimeter-agent/releases/download/v0.0.0-ci/'
