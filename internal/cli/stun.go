@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 
 	"github.com/peerimeter/peerimeter-agent/internal/stunprobe"
@@ -11,6 +12,7 @@ import (
 
 func newStunCommand(app *application) *cobra.Command {
 	var server string
+	var jsonOutput bool
 	port := 0
 	cmd := &cobra.Command{
 		Use:   "stun [local-udp-port]",
@@ -33,9 +35,14 @@ func newStunCommand(app *application) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return json.NewEncoder(app.out).Encode(result)
+			if jsonOutput {
+				return json.NewEncoder(app.out).Encode(result)
+			}
+			_, err = fmt.Fprintf(app.out, "STUN server: %s\nLocal address: %s\nMapped address: %s\n", result.Server, result.LocalAddress, result.MappedAddress)
+			return err
 		}),
 	}
 	cmd.Flags().StringVar(&server, "server", "", "Use only this STUN server instead of the default Google fallback list")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print the result as JSON")
 	return cmd
 }

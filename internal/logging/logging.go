@@ -22,9 +22,9 @@ func NewHandler(format string, out io.Writer) (slog.Handler, error) {
 		if terminalColorEnabled(out) {
 			writer = coloredLevels{out: out}
 		}
-		return slog.NewTextHandler(writer, nil), nil
+		return newConsoleHandler(writer), nil
 	case "text":
-		return slog.NewTextHandler(out, nil), nil
+		return newConsoleHandler(out), nil
 	case "json":
 		return slog.NewJSONHandler(out, nil), nil
 	default:
@@ -39,7 +39,7 @@ func (w coloredLevels) Write(p []byte) (int, error) {
 	for _, level := range []struct{ name, color string }{
 		{"DEBUG", "36"}, {"INFO", "35"}, {"WARN", "33"}, {"ERROR", "31"},
 	} {
-		formatted = strings.Replace(formatted, "level="+level.name, "level=\x1b["+level.color+"m"+level.name+"\x1b[0m", 1)
+		formatted = strings.Replace(formatted, level.name+" ", "\x1b["+level.color+"m"+level.name+"\x1b[0m ", 1)
 	}
 	n, err := io.WriteString(w.out, formatted)
 	if err != nil {
