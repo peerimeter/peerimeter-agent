@@ -163,7 +163,11 @@ try {
             Copy-Item -LiteralPath $fixture.Archive -Destination $OutFile
             return
         }
-        if ($Uri -eq ($prefix+'SHA256SUMS')) { return [pscustomobject]@{Content=($fixture.SHA256+'  '+$fixture.Asset+"`n")} }
+        if ($Uri -eq ($prefix+'SHA256SUMS')) {
+            if (-not $OutFile) { throw 'Checksum request omitted output path' }
+            [IO.File]::WriteAllText($OutFile,($fixture.SHA256+'  '+$fixture.Asset+"`n"),[Text.Encoding]::ASCII)
+            return
+        }
         throw 'Unexpected release asset request'
     }
     & $Installer -InstallDir $latest

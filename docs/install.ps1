@@ -65,10 +65,13 @@ try {
         $base = "https://github.com/peerimeter/peerimeter-agent/releases/download/$Version"
         $Archive = Join-Path $work 'package.zip'
         Invoke-WebRequest "$base/$asset" -OutFile $Archive -UseBasicParsing
-        $checksums = (Invoke-WebRequest "$base/SHA256SUMS" -UseBasicParsing).Content
-        $matches = @($checksums -split "`n" | Where-Object { $_.Trim() -match ('^[a-fA-F0-9]{64}\s+' + [regex]::Escape($asset) + '$') })
-        if ($matches.Count -ne 1) { throw 'Missing or ambiguous release checksum' }
-        $SHA256 = ($matches[0].Trim() -split '\s+')[0]
+        # GitHub serves SHA256SUMS as application/octet-stream. PowerShell 5.1
+        # can expose that response as bytes rather than text in .Content.
+        $checksumFile = Join-Path $work 'SHA256SUMS'
+        Invoke-WebRequest "$base/SHA256SUMS" -OutFile $checksumFile -UseBasicParsing
+        $matchingLines = @(Get-Content -LiteralPath $checksumFile -Encoding ASCII | Where-Object { $_.Trim() -match ('^[a-fA-F0-9]{64}\s+' + [regex]::Escape($asset) + '$') })
+        if ($matchingLines.Count -ne 1) { throw 'Missing or ambiguous release checksum' }
+        $SHA256 = ($matchingLines[0].Trim() -split '\s+')[0]
     }
     if ($SHA256 -notmatch '^[a-fA-F0-9]{64}$' -or (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash -ne $SHA256) { throw 'Package integrity check failed; local archives require -SHA256' }
     $unpacked = Join-Path $work 'unpacked'
