@@ -9,6 +9,7 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
 	"github.com/peerimeter/peerimeter-agent/internal/secret"
+	"github.com/peerimeter/peerimeter-agent/internal/stunprobe"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -49,6 +50,51 @@ func TestExampleValidatesAndRefusesOverwrite(t *testing.T) {
 		t.Fatalf("unsafe backend failure: %d %s", code, errOut.String())
 	}
 
+}
+
+func TestGenerateThreePeerMeshWithLocalSTUNMapping(t *testing.T) {
+	previous := probeExampleEndpoint
+	probeExampleEndpoint = func(port int, server string) (stunprobe.Result, error) {
+		if port != 51821 || server != "stun.example:3478" {
+			t.Fatalf("unexpected STUN request: %d %s", port, server)
+		}
+		return stunprobe.Result{MappedAddress: "203.0.113.5:62000"}, nil
+	}
+	defer func() { probeExampleEndpoint = previous }()
+	dir := filepath.Join(t.TempDir(), "mesh")
+	if code, _, stderr := invoke(t, "generate-example", "--directory", dir, "--peers", "3", "--stun-peer", "2", "--stun-server", "stun.example:3478"); code != 0 {
+		t.Fatal(stderr)
+	}
+	for i, name := range []string{"a", "b", "c"} {
+		path := filepath.Join(dir, "peer-"+name+".json")
+		cfg, err := config.Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cfg.Peers) != 2 || cfg.Interface.ListenPort != 51820+i {
+			t.Fatalf("unexpected peer %s config: %+v", name, cfg)
+		}
+		if code, _, stderr := invoke(t, "validate-config", "--config", path); code != 0 {
+			t.Fatal(stderr)
+		}
+		for _, peer := range cfg.Peers {
+			if peer.AllowedIPs[0] == "10.80.0.2/32" && peer.Endpoint != "203.0.113.5:62000" {
+				t.Fatalf("STUN endpoint missing from %s", name)
+			}
+		}
+	}
+}
+
+func TestGenerateRejectsInvalidCountBeforeCreatingDirectory(t *testing.T) {
+	for _, count := range []string{"1", "254"} {
+		dir := filepath.Join(t.TempDir(), "mesh")
+		if code, _, _ := invoke(t, "generate-example", "--directory", dir, "--peers", count); code == 0 {
+			t.Fatalf("accepted %s peers", count)
+		}
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Fatalf("created directory for invalid peer count %s", count)
+		}
+	}
 }
 func TestSelfPeerRejected(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "example")

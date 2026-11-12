@@ -54,6 +54,13 @@ numeric IP:port endpoints for separate devices. Each device needs a unique mesh
 address. A userspace reference peer or separate network namespaces are needed to
 test encrypted traffic on one host without local routing shortcuts.
 
+Use `generate-example --directory ./mesh --peers 3` for three configs, each
+listing the other two peers. When generating on one target machine, add
+`--stun-peer 1` (or its one-based peer number) to probe that machine's public
+UDP mapping and place it in the other generated configs. The remaining remote
+endpoints still require their actual reachable addresses; see
+[the examples guide](examples/README.md).
+
 ## Release installation
 
 Install scripts are hosted at [agent.peerimeter.app](https://agent.peerimeter.app):

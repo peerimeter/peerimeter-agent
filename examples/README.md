@@ -26,6 +26,33 @@ go run ./cmd/peerimeter-agent validate-config --config ./local-example/peer-b.js
 
 **Do not commit `local-example` or its private keys.**
 
+For a three-device full mesh, generate three configs and private keys:
+
+```sh
+peerimeter-agent generate-example --directory ./three-peers --peers 3
+```
+
+The files are `peer-a`, `peer-b`, and `peer-c`; each JSON lists the other two
+peers. The supported count is 2–253, with `peer-27` and higher after `peer-z`.
+By default, endpoints are loopback examples and must be replaced with the
+reachable numeric IP and UDP port of each device before deployment.
+
+If generation runs on one of the target devices, `--stun-peer` can discover
+that device's observed public UDP mapping at its generated listening port:
+
+```sh
+peerimeter-agent generate-example --directory ./three-peers --peers 3 --stun-peer 1
+```
+
+This probes local UDP port 51820 and writes the observed endpoint into the
+other configs' entry for `peer-a`. Use `--stun-peer 2` for local port 51821, or
+`--stun-peer 3` for 51822. `--stun-server host:port` selects one STUN server.
+The probe closes its socket before the agent starts. It cannot discover the
+other machines' mappings from this machine: update their endpoints separately.
+The observed mapping may change when the agent binds its socket, and STUN does
+not guarantee that a NAT or firewall permits direct WireGuard traffic. Verify
+real handshakes and byte counters after starting the agents.
+
 Key paths inside the configs resolve relative to the config file, so working
 directory changes do not change which credentials are loaded. The generator
 refuses to overwrite an existing destination.
