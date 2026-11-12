@@ -227,6 +227,8 @@ function Verify-HistoricalRuntimeReuse {
             $prefix = @($reuseInstallX,$reuseInstallY)[$index]
             $binary = Join-Path $prefix 'peerimeter-agent.exe'
             $ownState = Join-Path $reuseRoot "state $index"
+            # Start-Process joins ArgumentList entries into one command line;
+            # preserve quotes around every path, including those with spaces.
             $arguments = @('run','--config',('"{0}"' -f $reuseConfig),'--state-dir',('"{0}"' -f $ownState),'--runtime-dir',('"{0}"' -f $sharedRuntime))
             $process = Start-Process -FilePath $binary -ArgumentList $arguments -RedirectStandardOutput (Join-Path $reuseRoot "agent-$index.log") -RedirectStandardError (Join-Path $reuseRoot "agent-$index-error.log") -PassThru
             $processes += $process
@@ -234,7 +236,13 @@ function Verify-HistoricalRuntimeReuse {
             for ($attempt=0; $attempt -lt 60; $attempt++) {
                 $raw = & $agentExe status --runtime-dir $sharedRuntime 2>$null
                 if ($LASTEXITCODE -eq 0) { $snapshot=$raw | ConvertFrom-Json; if ($snapshot.state -eq 'running') { $ready=$true;break } }
-                if ($process.HasExited) { throw 'Historical-reuse native agent exited before readiness' }
+                if ($process.HasExited) {
+                    $stdoutPath = Join-Path $reuseRoot "agent-$index.log"
+                    $stderrPath = Join-Path $reuseRoot "agent-$index-error.log"
+                    $stdout = if (Test-Path -LiteralPath $stdoutPath) { (Get-Content -LiteralPath $stdoutPath -Tail 20) -join "`n" } else { '<no stdout>' }
+                    $stderr = if (Test-Path -LiteralPath $stderrPath) { (Get-Content -LiteralPath $stderrPath -Tail 20) -join "`n" } else { '<no stderr>' }
+                    throw "Historical-reuse native agent $index exited before readiness (exit=$($process.ExitCode)). stdout: $stdout stderr: $stderr"
+                }
                 Start-Sleep -Milliseconds 500
             }
             if (-not $ready) { throw 'Historical-reuse native agent did not become ready' }
