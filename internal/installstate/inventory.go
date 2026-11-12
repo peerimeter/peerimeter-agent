@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 )
 
 const Filename = ".peerimeter-agent.install.json"
@@ -155,33 +156,46 @@ func CheckFile(path string) error {
 	return checkTrust(path, info, false)
 }
 func readPrivate(path string) ([]byte, error) {
+	for attempt := 0; attempt < 4; attempt++ {
+		data, changed, err := readPrivateOnce(path)
+		if !changed {
+			return data, err
+		}
+		if attempt < 3 {
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	return nil, errors.New("installation inventory changed during inspection")
+}
+
+func readPrivateOnce(path string) ([]byte, bool, error) {
 	if err := CheckFile(path); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer f.Close()
 	before, err := f.Stat()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	named, err := os.Lstat(path)
 	if err != nil || !os.SameFile(before, named) {
-		return nil, errors.New("installation inventory changed during inspection")
+		return nil, true, nil
 	}
 	if err := checkPrivate(path, before); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	data, err := io.ReadAll(io.LimitReader(f, MaxInventorySize+1))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if len(data) > MaxInventorySize {
-		return nil, errors.New("installation inventory is oversized")
+		return nil, false, errors.New("installation inventory is oversized")
 	}
-	return data, nil
+	return data, false, nil
 }
 func WritePrivate(path string, data []byte) error {
 	return WritePrivateWithPolicy(path, data, false)
