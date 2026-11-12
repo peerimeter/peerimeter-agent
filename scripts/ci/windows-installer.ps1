@@ -15,7 +15,9 @@ $defaultTarget = Join-Path $env:ProgramFiles 'Peerimeter'
 $defaultInstalled = $false
 $programDataTarget = Join-Path $env:ProgramData ('Peerimeter Installer CI ' + [guid]::NewGuid().ToString('N') + ' custom path')
 $programDataCreated = $false
-$arch = switch ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()) { 'x64' {'amd64'} 'arm64' {'arm64'} default {throw 'Unsupported test architecture'} }
+$nativeArch = $env:PROCESSOR_ARCHITEW6432
+if ([string]::IsNullOrWhiteSpace($nativeArch)) { $nativeArch = $env:PROCESSOR_ARCHITECTURE }
+$arch = switch ($nativeArch.ToUpperInvariant()) { 'AMD64' {'amd64'} 'X64' {'amd64'} 'ARM64' {'arm64'} default {throw 'Unsupported test architecture'} }
 if (-not $Archive) {
     if (-not $PackageDirectory) { throw 'Supply -PackageDirectory or -Archive' }
     $assetArch = switch ($arch) { 'amd64' { 'x86_64' } 'arm64' { 'aarch64' } }
