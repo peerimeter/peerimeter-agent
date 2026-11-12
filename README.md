@@ -86,16 +86,16 @@ curl -fsSL https://agent.peerimeter.app/install.sh | sudo sh -s -- --version v0.
 curl -fsSL https://agent.peerimeter.app/install.sh | sh -s -- --install-dir "$PREFIX/bin"
 
 # Running the checked-out script also works:
-sh install.sh --version latest --install-dir "$HOME/.local/bin"
+sh docs/install.sh --version latest --install-dir "$HOME/.local/bin"
 ```
 
 ### Windows
 
 ```powershell
 # Run from an elevated PowerShell terminal.
-.\install.ps1
-.\install.ps1 -Version v0.1.0 -InstallDir 'C:\Program Files\Peerimeter'
-.\install.ps1 -Version latest -InstallDir 'D:\Tools\Peerimeter Agent'
+.\docs\install.ps1
+.\docs\install.ps1 -Version v0.1.0 -InstallDir 'C:\Program Files\Peerimeter'
+.\docs\install.ps1 -Version latest -InstallDir 'D:\Tools\Peerimeter Agent'
 # The legacy -AllowInsecureInstallDir switch remains accepted for compatibility.
 ```
 

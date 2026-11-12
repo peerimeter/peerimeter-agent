@@ -69,7 +69,7 @@ jobs:
           digest=$(awk -v name="$asset" '$2 == name {print $1}' dist/SHA256SUMS)
           notices="$asset.NOTICES.txt"
           notices_digest=$(awk -v name="$notices" '$2 == name {print $1}' dist/SHA256SUMS)
-          sh install.sh --binary "dist/$asset" --sha256 "$digest" --notices "dist/$notices" --notices-sha256 "$notices_digest" --install-dir "$RUNNER_TEMP/real package install/bin"
+          sh docs/install.sh --binary "dist/$asset" --sha256 "$digest" --notices "dist/$notices" --notices-sha256 "$notices_digest" --install-dir "$RUNNER_TEMP/real package install/bin"
           "$RUNNER_TEMP/real package install/bin/peerimeter-agent" version --json > "$RUNNER_TEMP/installed-version.json"
           python -c 'import json,os; p=json.load(open(os.environ["RUNNER_TEMP"]+"/installed-version.json")); assert p["version"]==os.environ["RELEASE_VERSION"] and p["go_version"]=="go1.27.4"'
       - name: Windows installer latest/pin/offline/custom-path checks

@@ -190,7 +190,7 @@ function Confirm-RemovalReceipt($Removal) {
     Show-RemovalDiagnostics $Removal.result_file; throw 'Historical runtime test removal did not finish within 60 seconds'
 }
 function Verify-ConfigurationCollision {
-    & (Join-Path $PSScriptRoot '..\..\install.ps1') -Archive $archive -SHA256 (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -InstallDir $collisionInstall
+    & (Join-Path $PSScriptRoot '..\..\docs\install.ps1') -Archive $archive -SHA256 (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -InstallDir $collisionInstall
     $otherAgent = Join-Path $collisionInstall 'peerimeter-agent.exe'
     $before = Snapshot-ManagedTrees @($defaultState)
     $beforeService = Get-CimInstance Win32_Service -Filter "Name='PeerimeterAgent'"
@@ -217,7 +217,7 @@ function Verify-HistoricalRuntimeReuse {
     $c.peers[0].allowed_ips=@('10.245.245.2/32'); $c.peers[0].endpoint='127.0.0.1:51991'; $c.peers[0].persistent_keepalive_seconds=0
     [IO.File]::WriteAllText($reuseConfig,($c | ConvertTo-Json -Depth 8))
     foreach ($prefix in @($reuseInstallX,$reuseInstallY)) {
-        & (Join-Path $PSScriptRoot '..\..\install.ps1') -Archive $archive -SHA256 (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -InstallDir $prefix
+        & (Join-Path $PSScriptRoot '..\..\docs\install.ps1') -Archive $archive -SHA256 (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -InstallDir $prefix
     }
     $sharedRuntime = Join-Path $reuseRoot 'shared runtime'
     $processes = @()
@@ -280,7 +280,7 @@ function Verify-HistoricalRuntimeReuse {
 }
 function Verify-RuntimeCollision {
     $otherState = Join-Path $dir 'state for installation B'
-    & (Join-Path $PSScriptRoot '..\..\install.ps1') -Archive $archive -SHA256 (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -InstallDir $collisionInstall
+    & (Join-Path $PSScriptRoot '..\..\docs\install.ps1') -Archive $archive -SHA256 (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -InstallDir $collisionInstall
     $otherAgent = Join-Path $collisionInstall 'peerimeter-agent.exe'
     $marker = Join-Path $state '.peerimeter-agent.runtime'
     $markerBefore = (Get-FileHash -LiteralPath $marker).Hash
@@ -355,7 +355,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $stage 'peerimeter-agent.NOTICES.txt'),'Native integration archive fixture; release packages carry full dependency notices.')
     $archive = Join-Path $dir 'native package.zip'
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive
-    & (Join-Path $PSScriptRoot '..\..\install.ps1') -Archive $archive -SHA256 (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -InstallDir $installation
+    & (Join-Path $PSScriptRoot '..\..\docs\install.ps1') -Archive $archive -SHA256 (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -InstallDir $installation
     if (-not (Test-Path -LiteralPath (Join-Path $installation '.peerimeter-agent.install.json'))) { throw 'Verified installer did not register its protected inventory' }
     Copy-Item -LiteralPath $Helper -Destination $helperExe
     Protect-Resource $helperExe $true

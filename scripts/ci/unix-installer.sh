@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Portable Linux/macOS installer tests, requiring no published GitHub release.
 set -euo pipefail
-installer=$(cd "$(dirname "$0")/../.." && pwd)/install.sh
+installer=$(cd "$(dirname "$0")/../.." && pwd)/docs/install.sh
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 sha256() {
