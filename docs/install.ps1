@@ -11,8 +11,12 @@ $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 if (-not $admin) { throw 'Run the Windows installer from an elevated administrator terminal' }
 if ($InstallDir -notmatch '^[A-Za-z]:[\\/]') { throw 'InstallDir must be an absolute local drive path' }
 $InstallDir = [IO.Path]::GetFullPath($InstallDir)
-$arch = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
-$arch = switch ($arch) { 'x64' { 'amd64' } 'arm64' { 'arm64' } default { throw 'Unsupported architecture' } }
+# RuntimeInformation.OSArchitecture can be null in Windows PowerShell 5.1 on
+# older Windows 10/.NET Framework installations. Prefer the OS architecture
+# environment variable, which also handles a 32-bit PowerShell on 64-bit OS.
+$nativeArch = $env:PROCESSOR_ARCHITEW6432
+if ([string]::IsNullOrWhiteSpace($nativeArch)) { $nativeArch = $env:PROCESSOR_ARCHITECTURE }
+$arch = switch ($nativeArch.ToUpperInvariant()) { 'AMD64' { 'amd64' } 'X64' { 'amd64' } 'ARM64' { 'arm64' } default { throw 'Unsupported architecture' } }
 
 function Set-InstallerACL([string]$Path,[bool]$Private=$false) {
     $isDirectory = Test-Path -LiteralPath $Path -PathType Container
