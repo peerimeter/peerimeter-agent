@@ -17,7 +17,7 @@ concurrency:
   # Do not interrupt a release once main starts publishing it.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
-  native:
+  test:
     name: Build and tests / ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -202,16 +202,16 @@ jobs:
   check:
     name: check
     if: always()
-    needs: [native, integration, package]
+    needs: [test, integration, package]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every PR gate to pass
         env:
-          NATIVE_RESULT: ${{ needs.native.result }}
+          TEST_RESULT: ${{ needs.test.result }}
           INTEGRATION_RESULT: ${{ needs.integration.result }}
           PACKAGE_RESULT: ${{ needs.package.result }}
         run: |
-          test "$NATIVE_RESULT" = success
+          test "$TEST_RESULT" = success
           test "$INTEGRATION_RESULT" = success
           test "$PACKAGE_RESULT" = success
 
