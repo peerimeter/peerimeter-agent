@@ -40,7 +40,7 @@ func newRegisterInstallationCommand(app *application) *cobra.Command {
 		return json.NewEncoder(app.out).Encode(map[string]string{"state": "registered"})
 	})}
 	cmd.Flags().StringVar(&dir, "install-dir", "", "Absolute installed program directory")
-	cmd.Flags().BoolVar(&allowInsecureInstallDir, "allow-insecure-install-dir", false, "Allow group/other writable installation directories (keeps owner and link checks)")
+	cmd.Flags().BoolVar(&allowInsecureInstallDir, "allow-insecure-install-dir", false, "Deprecated compatibility flag; installation directory permission checks are disabled")
 	_ = cmd.MarkFlagRequired("install-dir")
 	return cmd
 }

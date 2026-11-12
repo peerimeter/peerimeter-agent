@@ -82,9 +82,8 @@ curl -fsSL https://agent.peerimeter.app/install.sh | sh -s -- --install-dir "$HO
 # Select a version and install it system-wide.
 curl -fsSL https://agent.peerimeter.app/install.sh | sudo sh -s -- --version v0.1.0 --install-dir /usr/local/bin
 
-# Termux: explicitly allow writable shared /data ancestors. Owner and
-# symbolic-link/reparse-point checks remain enabled.
-curl -fsSL https://agent.peerimeter.app/install.sh | sh -s -- --install-dir "$PREFIX/bin" --allow-insecure-install-dir
+# Termux can use its standard writable prefix without a directory permission override.
+curl -fsSL https://agent.peerimeter.app/install.sh | sh -s -- --install-dir "$PREFIX/bin"
 
 # Running the checked-out script also works:
 sh install.sh --version latest --install-dir "$HOME/.local/bin"
@@ -97,8 +96,7 @@ sh install.sh --version latest --install-dir "$HOME/.local/bin"
 .\install.ps1
 .\install.ps1 -Version v0.1.0 -InstallDir 'C:\Program Files\Peerimeter'
 .\install.ps1 -Version latest -InstallDir 'D:\Tools\Peerimeter Agent'
-# Explicitly allow writable installation ancestors when needed.
-.\install.ps1 -InstallDir 'D:\Tools\Peerimeter Agent' -AllowInsecureInstallDir
+# The legacy -AllowInsecureInstallDir switch remains accepted for compatibility.
 ```
 
 ### Package verification
@@ -109,8 +107,10 @@ not claimed. The Windows DLL also has its pinned hash and official Authenticode
 signature. For an offline Unix install, supply a local binary and notices file
 with `--binary`, `--notices`, `--sha256` and `--notices-sha256`; Windows accepts
 a local ZIP with `-Archive` and `-SHA256`. Installers replace program files
-only; they preserve configuration and keys. Automatic self-update remains
-Phase 7.
+only; they preserve configuration and keys. Installation ancestor owner and
+permission checks are disabled; symbolic links and reparse points remain
+rejected. Key files and managed inventory files retain their private-file checks.
+Automatic self-update remains Phase 7.
 
 ### Publishing a release
 

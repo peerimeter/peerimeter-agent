@@ -36,30 +36,17 @@ function Set-InstallerACL([string]$Path,[bool]$Private=$false) {
     }
     Set-Acl -LiteralPath $Path -AclObject $acl
 }
-function Assert-InstallerAncestors([string]$Path,[bool]$AllowInsecure) {
-    $trusted = @('S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+function Assert-InstallerAncestors([string]$Path) {
     $parent = [IO.Directory]::GetParent($Path)
     while ($null -ne $parent) {
         if ($parent.Exists) {
             $item = Get-Item -LiteralPath $parent.FullName -Force
             if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Installation ancestor must not be a reparse point' }
-            $acl = Get-Acl -LiteralPath $parent.FullName
-            if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $trusted) { throw 'Installation ancestors must be machine-owned trusted directories' }
-            [long]$allowed = [long][Security.AccessControl.FileSystemRights]::ReadAndExecute -bor [long][Security.AccessControl.FileSystemRights]::Synchronize
-            # Windows volume roots and ProgramData permit child creation and root
-            # metadata updates; protected children must remain irreplaceable.
-            if ($null -eq $parent.Parent -or $parent.FullName.TrimEnd('\') -eq $env:ProgramData.TrimEnd('\')) {
-                $allowed = $allowed -bor [long][Security.AccessControl.FileSystemRights]::CreateFiles -bor [long][Security.AccessControl.FileSystemRights]::CreateDirectories -bor [long][Security.AccessControl.FileSystemRights]::WriteExtendedAttributes -bor [long][Security.AccessControl.FileSystemRights]::WriteAttributes
-            }
-            foreach ($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
-                if ($rule.AccessControlType -eq 'Deny' -or $rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly -or $rule.IdentityReference.Value -in $trusted) { continue }
-                if (-not $AllowInsecure -and ([long]$rule.FileSystemRights -band (-bnot $allowed)) -ne 0) { throw 'Installation ancestor grants unsafe write access' }
-            }
         }
         $parent = $parent.Parent
     }
 }
-Assert-InstallerAncestors $InstallDir $AllowInsecureInstallDir.IsPresent
+Assert-InstallerAncestors $InstallDir
 $work = Join-Path ([IO.Path]::GetTempPath()) ('peerimeter-install-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $work | Out-Null
 Set-InstallerACL $work $true
