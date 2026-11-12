@@ -134,16 +134,18 @@ jobs:
   check:
     name: check
     if: always()
-    needs: [native, integration]
+    needs: [native, integration, package]
     runs-on: ubuntu-24.04
     steps:
-      - name: Require all native and integration jobs to pass
+      - name: Require every PR gate to pass
         env:
           NATIVE_RESULT: ${{ needs.native.result }}
           INTEGRATION_RESULT: ${{ needs.integration.result }}
+          PACKAGE_RESULT: ${{ needs.package.result }}
         run: |
           test "$NATIVE_RESULT" = success
           test "$INTEGRATION_RESULT" = success
+          test "$PACKAGE_RESULT" = success
 
   package:
     name: Package / ${{ matrix.os }} / ${{ matrix.arch }}
@@ -213,17 +215,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  build:
-    name: build
-    if: always()
-    needs: [package]
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Require all package and installer jobs to pass
-        env:
-          PACKAGE_RESULT: ${{ needs.package.result }}
-        run: test "$PACKAGE_RESULT" = success
-
   version:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
@@ -246,7 +237,7 @@ jobs:
 
   release:
     name: release
-    needs: [check, build, version]
+    needs: [check, version]
     if: github.ref == 'refs/heads/main' && needs.version.outputs.bump != 'none'
     runs-on: ubuntu-24.04
     permissions:
