@@ -107,6 +107,8 @@ mv -f "$staged_notice" "$install_dir/peerimeter-agent.NOTICES.txt"
 staged_notice=
 mv -f "$staged" "$install_dir/peerimeter-agent"
 staged=
+installed_version=$("$install_dir/peerimeter-agent" version --json | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
+[ -n "$installed_version" ] || { echo 'Cannot determine installed agent version.' >&2; exit 1; }
 # The installed binary writes the protected inventory using the same audited
 # ownership/path rules as full uninstall. Source configs and keys are not claimed.
 if [ "$allow_insecure_install_dir" -eq 1 ]; then
@@ -116,4 +118,4 @@ else
 fi
 [ -f "$install_dir/.peerimeter-agent.install.json" ] && [ ! -L "$install_dir/.peerimeter-agent.install.json" ] || { echo 'Installation inventory registration failed.' >&2; exit 1; }
 completed=1
-printf 'Installed %s/peerimeter-agent (%s/%s). Config and services are managed separately.\n' "$install_dir" "$os" "$arch"
+printf 'Installed Peerimeter Agent %s to %s/peerimeter-agent (%s/%s). Config and services are managed separately.\n' "$installed_version" "$install_dir" "$os" "$arch"
