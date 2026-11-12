@@ -66,7 +66,18 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer, backend 
 	return 1
 }
 func newRootCommand(app *application) *cobra.Command {
-	root := &cobra.Command{Use: "peerimeter-agent", Short: "Offline cross-platform WireGuard agent", SilenceUsage: true, SilenceErrors: true, DisableSuggestions: true, RunE: app.handle(func(*cobra.Command) error { return errors.New("command required; use --help") })}
+	root := &cobra.Command{
+		Use:   "peerimeter-agent",
+		Short: "Offline cross-platform WireGuard agent",
+		Long: `Environment variables:
+  PEERIMETER_LOG_FORMAT  Log format: console (default), text, or json.
+  NO_COLOR               Disable ANSI colors when set.
+  TERM=dumb              Disable ANSI colors for dumb terminals.`,
+		SilenceUsage:       true,
+		SilenceErrors:      true,
+		DisableSuggestions: true,
+		RunE:               app.handle(func(*cobra.Command) error { return errors.New("command required; use --help") }),
+	}
 	root.SetOut(app.out)
 	root.PersistentFlags().BoolVar(&app.debug, "debug", false, "include captured stack trace when an error occurs")
 	root.SetErr(io.Discard)
