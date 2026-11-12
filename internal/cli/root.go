@@ -4,11 +4,14 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
+	"os"
+
+	"github.com/peerimeter/peerimeter-agent/internal/logging"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
 	"github.com/spf13/cobra"
-	"io"
 )
 
 type application struct {
@@ -40,7 +43,12 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer, backend 
 	if !app.ran {
 		err = errors.New("invalid command or arguments; use --help")
 	}
-	_ = json.NewEncoder(errOut).Encode(map[string]string{"level": "error", "message": err.Error()})
+	handler, handlerErr := logging.NewHandler(os.Getenv(logging.FormatEnv), errOut)
+	if handlerErr != nil {
+		_, _ = io.WriteString(errOut, "ERROR: "+err.Error()+"\n")
+	} else {
+		slog.New(handler).Error(err.Error())
+	}
 	if errors.Is(err, platform.ErrUnavailable) {
 		return 3
 	}
