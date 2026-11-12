@@ -59,6 +59,8 @@ test encrypted traffic on one host without local routing shortcuts.
 Install scripts are hosted at [agent.peerimeter.app](https://agent.peerimeter.app):
 `install.sh` for Linux/macOS and `install.ps1` for Windows. A public release is
 required before the default latest-release install can succeed.
+The site is published from this repository's `docs/` directory on `main`; its
+latest-release label is loaded directly from GitHub Releases when the page opens.
 
 Linux and macOS releases provide a direct executable and a checksummed license
 notices file (for example, `peerimeter-agent-linux-x86_64`). Windows releases
