@@ -107,6 +107,10 @@ try {
             Move-Item -LiteralPath $staged[$i] -Destination $dest
             $installed += $dest
         }
+        $versionOutput = & (Join-Path $InstallDir 'peerimeter-agent.exe') version --json
+        if ($LASTEXITCODE -ne 0) { throw 'Could not determine installed agent version' }
+        $installedVersion = ($versionOutput | ConvertFrom-Json).version
+        if ([string]::IsNullOrWhiteSpace($installedVersion)) { throw 'Could not determine installed agent version' }
         $registerArgs = @('register-installation','--install-dir',$InstallDir)
         if ($AllowInsecureInstallDir) { $registerArgs += '--allow-insecure-install-dir' }
         & (Join-Path $InstallDir 'peerimeter-agent.exe') @registerArgs | Out-Null
@@ -126,5 +130,5 @@ try {
         foreach ($path in $staged) { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force } }
     }
     foreach ($pair in $moved) { Remove-Item -LiteralPath $pair[0] -Force }
-    Write-Output "Installed $InstallDir (windows/$arch). Config and services are managed separately."
+    Write-Output "Installed Peerimeter Agent $installedVersion to $InstallDir (windows/$arch). Config and services are managed separately."
 } finally { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
