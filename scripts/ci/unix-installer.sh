@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Portable Linux/macOS installer tests, requiring no published GitHub release.
 set -euo pipefail
-installer=$(cd "$(dirname "$0")/../.." && pwd)/docs/install.sh
+repo=$(cd "$(dirname "$0")/../.." && pwd)
+installer=$repo/docs/install.sh
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 sha256() {
@@ -14,7 +15,7 @@ if [[ $# -gt 0 ]]; then
  native_binary=$1
  native_notices=$2
 else
- native_binaries=("$(dirname "$installer")"/dist/peerimeter-agent-"${native_os}-${asset_arch}")
+ native_binaries=("$repo"/dist/peerimeter-agent-"${native_os}-${asset_arch}")
  [[ ${#native_binaries[@]} -eq 1 && -f "${native_binaries[0]}" ]] || { echo 'Supply one actual native release binary for installer inventory tests.' >&2; exit 1; }
  native_binary=${native_binaries[0]}
  native_notices=${native_binary}.NOTICES.txt
