@@ -124,7 +124,7 @@ func Canonical(path string) (string, error) {
 func CheckDirectory(path string) error {
 	return CheckDirectoryWithPolicy(path, false)
 }
-func CheckDirectoryWithPolicy(path string, allowInsecure bool) error {
+func CheckDirectoryWithPolicy(path string, _ bool) error {
 	canonical, err := Canonical(path)
 	if err != nil {
 		return err
@@ -134,9 +134,6 @@ func CheckDirectoryWithPolicy(path string, allowInsecure bool) error {
 		if e == nil {
 			if !info.IsDir() {
 				return errors.New("installation resource parent is not a directory")
-			}
-			if err := checkTrustWithPolicy(p, info, true, allowInsecure); err != nil {
-				return err
 			}
 		} else if !os.IsNotExist(e) {
 			return errors.New("cannot inspect installation resource parent")
