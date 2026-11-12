@@ -15,7 +15,7 @@ const FormatEnv = "PEERIMETER_LOG_FORMAT"
 
 // NewHandler selects console, plain text, or JSON logging. Console output colors
 // log levels only when writing to a terminal and honors NO_COLOR.
-func NewHandler(format string, out *os.File) (slog.Handler, error) {
+func NewHandler(format string, out io.Writer) (slog.Handler, error) {
 	switch strings.ToLower(strings.TrimSpace(format)) {
 	case "", "console":
 		var writer io.Writer = out
@@ -51,9 +51,11 @@ func (w coloredLevels) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func terminalColorEnabled(out *os.File) bool {
-	if _, set := os.LookupEnv("NO_COLOR"); set || os.Getenv("TERM") == "dumb" || !term.IsTerminal(int(out.Fd())) {
+func terminalColorEnabled(out io.Writer) bool {
+	file, ok := out.(*os.File)
+	_, noColor := os.LookupEnv("NO_COLOR")
+	if !ok || noColor || os.Getenv("TERM") == "dumb" || !term.IsTerminal(int(file.Fd())) {
 		return false
 	}
-	return enableTerminalColors(out)
+	return enableTerminalColors(file)
 }
