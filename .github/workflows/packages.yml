@@ -13,6 +13,9 @@ on:
         required: true
 permissions:
   contents: read
+concurrency:
+  group: packages-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   package:
     strategy:
