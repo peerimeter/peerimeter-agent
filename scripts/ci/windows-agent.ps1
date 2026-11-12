@@ -212,7 +212,10 @@ function Verify-HistoricalRuntimeReuse {
     Invoke-Agent -CommandArgs @('generate-example','--directory',$sources) | Out-Null
     $reuseConfig = Join-Path $sources 'peer-a.json'
     $c = Get-Content -LiteralPath $reuseConfig -Raw | ConvertFrom-Json
-    $c.network.id='runtime-reuse-network'; $c.network.name='runtime-reuse'
+    # Windows derives the WireGuard adapter name from the network ID. Keep one
+    # adapter identity within this reuse scenario, but isolate it across CI runs
+    # so a stale OS adapter from an earlier attempt cannot block driver startup.
+    $c.network.id=('runtime-reuse-' + $id); $c.network.name='runtime-reuse'
     $c.interface.address=@('10.245.245.1/32'); $c.interface.listen_port=51990
     $c.peers[0].allowed_ips=@('10.245.245.2/32'); $c.peers[0].endpoint='127.0.0.1:51991'; $c.peers[0].persistent_keepalive_seconds=0
     [IO.File]::WriteAllText($reuseConfig,($c | ConvertTo-Json -Depth 8))
