@@ -319,6 +319,16 @@ PEERIMETER_LOG_FORMAT=text peerimeter-agent run --config ./peer.json
 In PowerShell, set it for the current session with
 `$env:PEERIMETER_LOG_FORMAT = 'json'` or `'text'` before starting the agent.
 
+Static config loading errors include the file path and underlying operating system
+or JSON decoding error. Add `--debug` to include the captured source stack trace:
+
+```sh
+peerimeter-agent validate-config --config ./peer-a.json --debug
+```
+
+Stack traces are omitted by default. Config values and private key contents remain
+excluded from validation errors.
+
 ## Verification
 
 ### Local checks
