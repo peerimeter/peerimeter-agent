@@ -1,4 +1,4 @@
-name: Release packages and installers
+name: Build and upload agent packages
 on:
   push:
     branches: [main]
