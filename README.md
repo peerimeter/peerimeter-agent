@@ -297,9 +297,11 @@ human-readable build details, with terminal-aware pink/purple color. Use
 `version --json` for automation, `--color never` for plain output or `--color
 always` to force ANSI; automatic color respects `NO_COLOR` and pipes.
 
-Runtime logs use colored console formatting by default when stderr is an
+Runtime logs use concise console formatting by default: uppercase level,
+message and `key=value` attributes, without timestamps. For example,
+`ERROR unknown error param1=test`. Levels are colored when stderr is an
 interactive terminal. Set `PEERIMETER_LOG_FORMAT` to `text` for uncolored
-logfmt output or `json` for structured JSON logs. Console mode respects
+console output or `json` for structured JSON logs. Console mode respects
 `NO_COLOR` and does not emit ANSI codes when output is piped:
 
 ```sh
@@ -349,6 +351,7 @@ peerimeter-agent stun --server stun.l.google.com:19302 51820
 
 By default, the command tries `stun.l.google.com:19302`, `stun1.l.google.com:19302`,
 and `stun2.l.google.com:19302` in order, advancing when a server fails. The
-`--server` option selects one server and disables fallback. The JSON result
-includes the bound local address and the mapped public address. A STUN mapping
-alone does not establish WireGuard connectivity or promise NAT traversal.
+`--server` option selects one server and disables fallback. The command prints
+the bound local address and mapped public address in console format; pass
+`--json` for machine-readable output. A STUN mapping alone does not establish
+WireGuard connectivity or promise NAT traversal.
