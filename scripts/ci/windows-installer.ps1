@@ -1,7 +1,7 @@
 param(
     [string]$PackageDirectory,
     [string]$Archive,
-    [string]$Installer = (Join-Path $PSScriptRoot '..\..\install.ps1')
+    [string]$Installer = (Join-Path $PSScriptRoot '..\..\docs\install.ps1')
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
