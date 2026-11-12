@@ -376,7 +376,15 @@ try {
     # The helper emits an official-client config containing a private key. It is
     # not used by the agent and is deleted before diagnostics or artifact upload.
     Remove-Item -LiteralPath (Join-Path $dir 'pmprobe.conf') -Force
-    $outerIP = (Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } | Select-Object -First 1).IPv4Address.IPAddress
+    # Get-NetIPConfiguration can throw when a runner exposes multiple adapter
+    # objects for one interface. Resolve the IPv4 default route directly.
+    $outerIP = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' |
+        Sort-Object RouteMetric |
+        ForEach-Object {
+            Get-NetIPAddress -AddressFamily IPv4 -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue |
+                Where-Object { $_.IPAddress -ne '127.0.0.1' -and $_.IPAddress -notlike '169.254.*' } |
+                Select-Object -First 1 -ExpandProperty IPAddress
+        } | Select-Object -First 1
     if (-not $outerIP) { throw 'No physical IPv4 endpoint for native Windows test' }
     $config = @{
         version=1; mode='static'; network=@{id='windows-agent-ci'; name='CI'}
