@@ -69,7 +69,9 @@ func newRootCommand(app *application) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "peerimeter-agent",
 		Short: "Offline cross-platform WireGuard agent",
-		Long: `Environment variables:
+		Long: `Offline cross-platform WireGuard agent.
+
+Environment variables:
   PEERIMETER_LOG_FORMAT  Log format: console (default), text, or json.
   NO_COLOR               Disable ANSI colors when set.
   TERM=dumb              Disable ANSI colors for dumb terminals.`,
