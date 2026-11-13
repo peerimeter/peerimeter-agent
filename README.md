@@ -83,7 +83,10 @@ notices in `/usr/local/share/doc/peerimeter-agent`, inventory in
 `/var/lib/peerimeter-agent-install` and installer locks in `/run/lock/peerimeter-agent`.
 User installs use `~/.local/bin`, XDG data/state directories, and a lock in the
 persistent state directory. Windows stores program files under Program Files
-and installer metadata under ProgramData.
+and per-install metadata under `ProgramData\Peerimeter\Installations`. When a
+custom Unix `--install-dir` is selected without the other directory flags, its
+inventory, lock and documentation go into a sibling `.peerimeter` resource
+directory.
 
 ### Linux and macOS
 

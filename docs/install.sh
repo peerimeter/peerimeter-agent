@@ -20,19 +20,23 @@ else
  data_dir=${XDG_STATE_HOME:-$home/.local/state}/peerimeter-agent
  lock_dir=$data_dir
 fi
+default_install_dir=$install_dir
 binary=
 notices=
 expected=
 notices_expected=
 allow_insecure_install_dir=0
+doc_dir_set=0
+data_dir_set=0
+lock_dir_set=0
 usage() { echo 'Usage: install.sh [--version <tag|latest>] [--install-dir <path>] [--doc-dir <path>] [--data-dir <path>] [--lock-dir <path>] [--allow-insecure-install-dir] [--binary <local-file> --sha256 <digest> --notices <local-file> --notices-sha256 <digest>]' >&2; exit 1; }
 while [ "$#" -gt 0 ]; do
  case "$1" in
   --version) [ "$#" -ge 2 ] || usage; version=$2; shift 2;;
   --install-dir) [ "$#" -ge 2 ] || usage; install_dir=$2; shift 2;;
-  --doc-dir) [ "$#" -ge 2 ] || usage; doc_dir=$2; shift 2;;
-  --data-dir) [ "$#" -ge 2 ] || usage; data_dir=$2; shift 2;;
-  --lock-dir) [ "$#" -ge 2 ] || usage; lock_dir=$2; shift 2;;
+  --doc-dir) [ "$#" -ge 2 ] || usage; doc_dir=$2; doc_dir_set=1; shift 2;;
+  --data-dir) [ "$#" -ge 2 ] || usage; data_dir=$2; data_dir_set=1; shift 2;;
+  --lock-dir) [ "$#" -ge 2 ] || usage; lock_dir=$2; lock_dir_set=1; shift 2;;
   --allow-insecure-install-dir) allow_insecure_install_dir=1; shift;;
   --binary) [ "$#" -ge 2 ] || usage; binary=$2; shift 2;;
   --notices) [ "$#" -ge 2 ] || usage; notices=$2; shift 2;;
@@ -41,6 +45,12 @@ while [ "$#" -gt 0 ]; do
   *) usage;;
  esac
 done
+if [ "$install_dir" != "$default_install_dir" ]; then
+ resource_root=${install_dir}.peerimeter
+ [ "$doc_dir_set" -eq 1 ] || doc_dir=$resource_root/doc
+ [ "$data_dir_set" -eq 1 ] || data_dir=$resource_root/data
+ [ "$lock_dir_set" -eq 1 ] || lock_dir=$resource_root/locks
+fi
 for path in "$install_dir" "$doc_dir" "$data_dir" "$lock_dir"; do
  case "$path" in /*) ;; *) echo 'Installation resource directories must be absolute.' >&2; exit 1;; esac
 done

@@ -77,7 +77,7 @@ install -m 0755 "$agent_source" "$base/package/peerimeter-agent"
 printf 'Native integration archive fixture; release packages carry full dependency notices.\n' >"$base/package/peerimeter-agent.NOTICES.txt"
 if command -v sha256sum >/dev/null; then digest=$(sha256sum "$base/package/peerimeter-agent" | awk '{print $1}'); notice_digest=$(sha256sum "$base/package/peerimeter-agent.NOTICES.txt" | awk '{print $1}'); else digest=$(shasum -a 256 "$base/package/peerimeter-agent" | awk '{print $1}'); notice_digest=$(shasum -a 256 "$base/package/peerimeter-agent.NOTICES.txt" | awk '{print $1}'); fi
 install_program() {
- sh "$repo/docs/install.sh" --binary "$base/package/peerimeter-agent" --sha256 "$digest" --notices "$base/package/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notice_digest" --install-dir "$1"
+ sh "$repo/docs/install.sh" --binary "$base/package/peerimeter-agent" --sha256 "$digest" --notices "$base/package/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notice_digest" --install-dir "$1" --doc-dir "$1.docs" --data-dir "$1.data" --lock-dir "$1.locks"
  [[ -f "$1.data/.peerimeter-agent.install.json" ]]
  chmod 0755 "$(dirname "$1")" "$1"
 }
