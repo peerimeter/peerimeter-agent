@@ -29,6 +29,29 @@ func renderResponse(out io.Writer, raw []byte, color bool, width int) error {
 			return presentation.StatusOverview(out, snapshot, time.Now(), color, width)
 		}
 	}
+	if state, ok := fields["state"]; ok {
+		var status string
+		if err := json.Unmarshal(state, &status); err == nil && status == "removed" {
+			var paths []string
+			if rawPaths, ok := fields["paths"]; ok {
+				if err := json.Unmarshal(rawPaths, &paths); err != nil {
+					return err
+				}
+			}
+			if len(paths) == 0 {
+				_, err := io.WriteString(out, "Installation removed; there were no remaining files to delete.\n")
+				return err
+			}
+			if _, err := fmt.Fprintf(out, "Installation removed. Deleted %d files:\n", len(paths)); err != nil {
+				return err
+			}
+			rows := make([][]string, len(paths))
+			for i, path := range paths {
+				rows[i] = []string{path}
+			}
+			return presentation.Table(out, []string{"Deleted file"}, rows, color, width)
+		}
+	}
 	if len(fields) == 1 {
 		for key, rawValue := range fields {
 			var value any

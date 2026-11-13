@@ -156,6 +156,7 @@ trap {
 $p = Get-Content -LiteralPath $Plan -Raw | ConvertFrom-Json
 $work = Split-Path -Parent $Plan
 $handles = [Collections.Generic.List[IO.FileStream]]::new()
+$removed = [Collections.Generic.List[string]]::new()
 $state = 'failed'; $message = ''; $remaining = @()
 $watch = [Diagnostics.Stopwatch]::StartNew()
 function Exists([string]$Path) { return [IO.File]::Exists($Path) -or [IO.Directory]::Exists($Path) }
@@ -167,7 +168,7 @@ function Remove-Leaf([string]$Path) {
     while (Exists $Path) {
         No-Reparse $Path
         if (Test-Path -LiteralPath $Path -PathType Container) { throw 'An owned file became a directory' }
-        try { Remove-Item -LiteralPath $Path -Force; return } catch {
+        try { Remove-Item -LiteralPath $Path -Force; $removed.Add($Path); return } catch {
             if ($watch.Elapsed.TotalSeconds -ge 45) { throw }
             Start-Sleep -Milliseconds 200
         }
@@ -240,7 +241,8 @@ finally {
         $state = 'failed'; $remaining += $work; $message += ' Temporary helper cleanup was incomplete.'
     }
     if ($remaining.Count -ne 0) { $state = 'failed' }
-    $result = @{state=$state;remaining=@($remaining);message=$message} | ConvertTo-Json -Depth 6
+    $removed.Sort()
+    $result = @{state=$state;paths=@($removed.ToArray());remaining=@($remaining);message=$message} | ConvertTo-Json -Depth 6
     [IO.File]::WriteAllText($p.result_file,$result,[Text.UTF8Encoding]::new($false))
 }
 `
