@@ -79,7 +79,7 @@ func renderResponse(out io.Writer, raw []byte, color bool, width int) error {
 		}
 		rows = append(rows, []string{responseLabel(key), consoleValue(value)})
 	}
-	return presentation.Table(out, []string{"Field", "Value"}, rows, color, width)
+	return presentation.Table(out, nil, rows, color, width)
 }
 
 func responseLabel(key string) string {
