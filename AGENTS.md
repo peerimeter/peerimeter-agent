@@ -15,6 +15,10 @@ This is the independent `peerimeter-agent` Go repository. The sibling `../.githu
 
 ## Development
 
+- Before changing code, read the relevant implementation and nearby tests, then follow the patterns already used in that area. Keep changes narrow and prefer existing helpers over new abstractions.
+- Keep comments short and focused on non-obvious behavior or invariants. Avoid comments that merely restate the code.
+- Make sure you can explain the design and its platform effects. For changes that add a new subsystem or substantially broaden scope, describe the proposed approach before implementing it.
+- Do not commit, push, or create or submit pull requests unless the user explicitly asks for that action. Leave commit messages and review replies for the user.
 - Use Go `1.27.4` as pinned by `go.mod` and `.go-version`. The module must build independently of a future service repository.
 - Current operation is offline static JSON with direct WireGuard peers. There is no enrollment or control-plane API. STUN reports an observed UDP mapping; it does not establish connectivity or guarantee traversal through NAT/firewalls.
 - Preserve Linux, macOS, and Windows behavior. Changes to config, keys, interfaces, services, installation, or cleanup need careful platform-specific review. Never weaken secret-file permissions or ownership checks to make a test pass.
