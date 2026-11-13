@@ -21,6 +21,12 @@ func safe(s string) string {
 		return r
 	}, s)
 }
+
+// Safe removes control characters from text before it is written to a terminal.
+func Safe(s string) string {
+	return safe(s)
+}
+
 func PeerList(out io.Writer, snapshot platform.Snapshot, now time.Time, color bool) error {
 	style := func(s, code string) string {
 		s = safe(s)

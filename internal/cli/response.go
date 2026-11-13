@@ -64,7 +64,11 @@ func renderResponse(out io.Writer, raw []byte, color bool, width int) error {
 			if err := decoder.Decode(&value); err != nil {
 				return err
 			}
-			_, err := fmt.Fprintf(out, "%s: %s\n", responseLabel(key), consoleValue(value))
+			lines := strings.Split(consoleValue(value), "\n")
+			for i, line := range lines {
+				lines[i] = presentation.Safe(line)
+			}
+			_, err := fmt.Fprintf(out, "%s: %s\n", presentation.Safe(responseLabel(key)), strings.Join(lines, "\n"))
 			return err
 		}
 	}
@@ -87,6 +91,7 @@ func renderResponse(out io.Writer, raw []byte, color bool, width int) error {
 }
 
 func responseLabel(key string) string {
+	key = presentation.Safe(key)
 	label := strings.ReplaceAll(key, "_", " ")
 	if label == "" {
 		return "Result"

@@ -26,6 +26,7 @@ func newRenderer(out io.Writer, color bool) *lipgloss.Renderer {
 func Table(out io.Writer, headers []string, rows [][]string, color bool, width int) error {
 	r := newRenderer(out, color)
 	width = max(20, width)
+	width = preferredWidth(headers, rows, width)
 	padding := 1
 	if width < 40 {
 		padding = 0
@@ -37,21 +38,11 @@ func Table(out io.Writer, headers []string, rows [][]string, color bool, width i
 	if columns == 0 {
 		return nil
 	}
-	available := width - columns - 1
-	widths := make([]int, columns)
-	for col := range widths {
-		widths[col] = available / columns
-	}
-	widths[columns-1] += available % columns
-	if columns == 2 {
-		widths[0] = min(22, available/3)
-		widths[1] = available - widths[0]
-	}
 	t := table.New().Width(width).Wrap(true).
 		Border(lipgloss.RoundedBorder()).BorderRow(true).
 		BorderStyle(r.NewStyle().Foreground(lipgloss.Color("60"))).
 		StyleFunc(func(row, col int) lipgloss.Style {
-			style := r.NewStyle().Padding(0, padding).Width(widths[col])
+			style := r.NewStyle().Padding(0, padding)
 			if row == table.HeaderRow {
 				return style.Bold(true).Foreground(lipgloss.Color("205"))
 			}
@@ -61,9 +52,9 @@ func Table(out io.Writer, headers []string, rows [][]string, color bool, width i
 			return style
 		})
 	if len(headers) > 0 {
-		wrappedHeaders := make([]string, columns)
+		wrappedHeaders := make([]string, len(headers))
 		for col, header := range headers {
-			wrappedHeaders[col] = ansi.Wrap(safe(header), max(1, widths[col]-2*padding), "")
+			wrappedHeaders[col] = safe(header)
 		}
 		t.Headers(wrappedHeaders...)
 	}
@@ -80,4 +71,39 @@ func Table(out io.Writer, headers []string, rows [][]string, color bool, width i
 	}
 	_, err := io.WriteString(out, t.String()+"\n")
 	return err
+}
+
+func preferredWidth(headers []string, rows [][]string, maxWidth int) int {
+	columns := len(headers)
+	if columns == 0 && len(rows) > 0 {
+		columns = len(rows[0])
+	}
+	if columns == 0 {
+		return maxWidth
+	}
+	columnWidths := make([]int, columns)
+	measure := func(col int, value string) {
+		for _, line := range strings.Split(value, "\n") {
+			columnWidths[col] = max(columnWidths[col], ansi.StringWidth(safe(line)))
+		}
+	}
+	for col, header := range headers {
+		measure(col, header)
+	}
+	for _, row := range rows {
+		for col, value := range row {
+			if col < columns {
+				measure(col, value)
+			}
+		}
+	}
+	total := columns + 1
+	for _, columnWidth := range columnWidths {
+		total += columnWidth
+	}
+	padding := 0
+	if total+2*columns < maxWidth && total+2*columns >= 40 {
+		padding = 2
+	}
+	return max(1, min(total+padding*columns, maxWidth))
 }
