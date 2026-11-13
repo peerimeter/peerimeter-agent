@@ -88,6 +88,9 @@ custom Unix `--install-dir` is selected without the other directory flags, its
 inventory, lock and documentation go into a sibling `.peerimeter` resource
 directory.
 
+Both installers report progress as they resolve or download the release, verify
+the package, install files and register the protected inventory.
+
 ### Linux and macOS
 
 ```sh
@@ -164,7 +167,7 @@ Parent directories must be trusted.
 ```sh
 sudo peerimeter-agent run --config /absolute/path/to/peer.json
 sudo peerimeter-agent status
-sudo peerimeter-agent peers
+sudo peerimeter-agent status --watch
 sudo peerimeter-agent sync       # validate and reapply the original JSON file
 sudo peerimeter-agent stop       # graceful tunnel/route cleanup
 ```
@@ -173,24 +176,26 @@ On Windows, run the same commands from an elevated terminal.
 
 | Command | Output or action |
 | --- | --- |
-| `status` | Readable local agent and adapter state (`--json` for scripts) |
-| `peers` | Lip Gloss peer tables with endpoint, handshake and traffic details |
+| `status` | Readable local agent and adapter state; `--watch` refreshes continuously (`--json` for scripts) |
 | `wg` / `wg show` | Traditional WireGuard-style interface and peer listing |
-| `peers --json` | Peer data for automation |
 | `sync` | Validate and reapply the original configuration |
 | `stop` | Stop the tunnel and clean up routes |
 
-`status`/`peers` read actual local adapter state through a protected Unix socket
-or Windows named pipe. `running` indicates interface state, not proven peer
+`status` reads actual local adapter state through a protected Unix socket or
+Windows named pipe. `running` indicates interface state, not proven peer
 connectivity; inspect real handshake timestamps and byte counters. A stopped or
 unreachable agent returns an error.
+
+`status --watch` refreshes the live status view every two seconds until you press
+`q` or Ctrl-C. Set `--interval` to change the refresh period. With `--json`, watch
+mode emits newline-delimited status snapshots until interrupted.
 
 ### Delegate local control
 
 Control defaults to the runtime identity and, on Windows, SYSTEM/Administrators.
 To delegate control without administrator privileges, start/install with
 `--operator <username-or-UID>` on Unix or `--operator <account-or-SID>` on
-Windows. The authorized operator can use `status`, `peers`, `sync` and `stop`
+Windows. The authorized operator can use `status`, `sync` and `stop`
 without sudo or elevation; secret files stay private. On Unix the state
 directory and its parents must permit traversal; only the socket owner receives
 control access.
@@ -310,26 +315,25 @@ endpoints, AllowedIPs, handshake age, traffic and keepalive. Private and
 preshared keys never enter the renderer. Missing handshakes and clock skew are
 explicit.
 
-`peers` uses pink/purple Lip Gloss tables with header rows and bordered cells.
-Wide terminals show individual columns for public key, endpoint, AllowedIPs,
-handshake, received/sent traffic and keepalive. Smaller terminals group related
-fields or use two-column detail tables; complete keys and endpoints are preserved.
-`status`, example generation, validation, service actions, sync, stop, uninstall
-and STUN also use tables. No extra branded heading is added. Help retains Cobra's
+`status` uses responsive Lip Gloss tables for interface details and peer state.
+Watch mode refreshes the view in place and exits with `q` or Ctrl-C. `wg` keeps
+the traditional interface and peer listing. Example generation, validation,
+service actions, sync, stop, uninstall and STUN also use tables. No extra branded heading is added. Help retains Cobra's
 standard layout, and `version` retains its original unboxed, gradient-colored logo.
 Runtime diagnostics continue to use console logging; completion output remains
 valid shell code.
 
 Use `--color auto|always|never` on any command; automatic color respects `NO_COLOR`,
 `TERM=dumb` and redirected output. Plain output keeps the readable layout without
-ANSI styling. `--json` bypasses result styling, including for `peers`, `wg` and
-`wg show`; all three return the same public peer array in JSON mode.
+ANSI styling. `--json` bypasses result styling. `wg` and `wg show` return the
+public peer array; `status` returns the complete public status snapshot.
 
 ```sh
-peerimeter-agent peers
+peerimeter-agent status --watch
+peerimeter-agent status --watch --interval 5s
 peerimeter-agent wg          # defaults to wg show
 peerimeter-agent wg show --color never
-peerimeter-agent peers --json
+peerimeter-agent status --watch --json
 ```
 
 Cobra provides contextual `--help` and `completion bash|zsh|fish|powershell`.

@@ -253,7 +253,7 @@ func TestPeerHumanAndJSONUseSamePublicSnapshot(t *testing.T) {
 			}
 		}
 	}
-	code, out, stderr := invoke(t, "peers", "--runtime-dir", runtimeDir, "--color", "never")
+	code, out, stderr := invoke(t, "status", "--runtime-dir", runtimeDir, "--color", "never")
 	if code != 0 || stderr != "" || !strings.Contains(out, "Connection") || strings.Contains(out, "PEERIMETER /") || !strings.Contains(out, "public-test") || !strings.Contains(out, "Handshake") {
 		t.Fatalf("human output: %d %s %s", code, out, stderr)
 	}
@@ -276,17 +276,20 @@ func TestPeerHumanAndJSONUseSamePublicSnapshot(t *testing.T) {
 	for _, args := range [][]string{
 		{"wg", "--json", "--runtime-dir", runtimeDir},
 		{"wg", "show", "--json", "--runtime-dir", runtimeDir},
-		{"--json", "peers", "--runtime-dir", runtimeDir},
+		{"--json", "wg", "--runtime-dir", runtimeDir},
 	} {
 		code, out, stderr := invoke(t, args...)
 		if code != 0 || stderr != "" || !json.Valid([]byte(out)) || strings.Contains(out, "\x1b") {
 			t.Fatalf("%v: %d %s %s", args, code, out, stderr)
 		}
 	}
-	code, out, stderr = invoke(t, "peers", "--runtime-dir", runtimeDir, "--json")
+	code, out, stderr = invoke(t, "wg", "--runtime-dir", runtimeDir, "--json")
 	var peers []platform.PeerState
 	if code != 0 || stderr != "" || json.Unmarshal([]byte(out), &peers) != nil || len(peers) != 1 || peers[0].PublicKey != "public-test" {
 		t.Fatalf("JSON output: %d %s %s", code, out, stderr)
+	}
+	if code, _, _ := invoke(t, "peers"); code == 0 {
+		t.Fatal("removed peers command is still available")
 	}
 }
 

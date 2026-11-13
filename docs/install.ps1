@@ -10,6 +10,9 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+function Write-InstallerProgress([string]$Message) {
+    Write-Host "Peerimeter installer: $Message"
+}
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $admin) { throw 'Run the Windows installer from an elevated administrator terminal' }
 if ($InstallDir -notmatch '^[A-Za-z]:[\\/]') { throw 'InstallDir must be an absolute local drive path' }
@@ -32,6 +35,7 @@ $LockDir = [IO.Path]::GetFullPath($LockDir)
 $nativeArch = $env:PROCESSOR_ARCHITEW6432
 if ([string]::IsNullOrWhiteSpace($nativeArch)) { $nativeArch = $env:PROCESSOR_ARCHITECTURE }
 $arch = switch ($nativeArch.ToUpperInvariant()) { 'AMD64' { 'amd64' } 'X64' { 'amd64' } 'ARM64' { 'arm64' } default { throw 'Unsupported architecture' } }
+Write-InstallerProgress "Preparing windows/$arch installation in $InstallDir."
 
 function Set-InstallerACL([string]$Path,[bool]$Private=$false) {
     $isDirectory = Test-Path -LiteralPath $Path -PathType Container
@@ -74,6 +78,7 @@ New-Item -ItemType Directory -Path $work | Out-Null
 Set-InstallerACL $work $true
 try {
     if (-not $Archive) {
+        Write-InstallerProgress 'Resolving release version and downloading package files.'
         $repo = 'https://api.github.com/repos/peerimeter/peerimeter-agent'
         if ($Version -eq 'latest') { $Version = (Invoke-RestMethod "$repo/releases/latest").tag_name }
         if (-not $Version.StartsWith('v')) { $Version = 'v' + $Version }
@@ -91,6 +96,7 @@ try {
         if ($matchingLines.Count -ne 1) { throw 'Missing or ambiguous release checksum' }
         $SHA256 = ($matchingLines[0].Trim() -split '\s+')[0]
     }
+    Write-InstallerProgress 'Verifying package checksum and contents.'
     if ($SHA256 -notmatch '^[a-fA-F0-9]{64}$' -or (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash -ne $SHA256) { throw 'Package integrity check failed; local archives require -SHA256' }
     $unpacked = Join-Path $work 'unpacked'
     New-Item -ItemType Directory -Path $unpacked | Out-Null
@@ -107,6 +113,7 @@ try {
     $dll = Join-Path $unpacked 'wireguard.dll'
     $dllHash = switch ($arch) { 'amd64' { 'B1B85E072C45D81358BE29D94C599DC76652F912BE8C0F0A41E2D5D89A6461D3' } 'arm64' { '75BCDC025D6C00E8315AF5D62B869D760CA6A253FC82D70F146E789F059A3E0C' } }
     if ((Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash -ne $dllHash -or (Get-AuthenticodeSignature -LiteralPath $dll).Status -ne 'Valid') { throw 'Bundled WireGuardNT integrity/signature verification failed' }
+    Write-InstallerProgress 'Preparing protected installation directories.'
     foreach ($directory in @($InstallDir,$DocDir,$DataDir,$LockDir)) {
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
         if ((Get-Item -LiteralPath $directory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Resource directory must not be a reparse point' }
@@ -121,6 +128,7 @@ try {
     $moved = @(); $installed = @(); $staged = @()
     try {
         # Stage and protect the complete package before replacing any old file.
+        Write-InstallerProgress "Installing package files to $InstallDir."
         foreach ($member in $packageFiles) {
             $next = (Join-Path $member.Dir $member.Name) + '.new-' + [guid]::NewGuid()
             $staged += $next
@@ -142,6 +150,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Could not determine installed agent version' }
         $installedVersion = ($versionOutput | ConvertFrom-Json).version
         if ([string]::IsNullOrWhiteSpace($installedVersion)) { throw 'Could not determine installed agent version' }
+        Write-InstallerProgress 'Registering protected installation inventory.'
         $registerArgs = @('register-installation','--install-dir',$InstallDir,'--doc-dir',$DocDir,'--data-dir',$DataDir,'--lock-dir',$LockDir)
         if ($AllowInsecureInstallDir) { $registerArgs += '--allow-insecure-install-dir' }
         & (Join-Path $InstallDir 'peerimeter-agent.exe') @registerArgs | Out-Null
