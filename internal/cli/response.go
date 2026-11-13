@@ -31,6 +31,10 @@ func renderResponse(out io.Writer, raw []byte, color bool, width int) error {
 	}
 	if state, ok := fields["state"]; ok {
 		var status string
+		if err := json.Unmarshal(state, &status); err == nil && status == "example_generated" {
+			_, err := io.WriteString(out, "Example configuration generated. Credentials: protected local key files; keep private.\n")
+			return err
+		}
 		if err := json.Unmarshal(state, &status); err == nil && status == "removed" {
 			var paths []string
 			if rawPaths, ok := fields["paths"]; ok {
