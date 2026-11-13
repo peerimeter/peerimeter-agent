@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/peerimeter/peerimeter-agent/internal/presentation"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 	"io"
@@ -61,6 +62,18 @@ func renderVersion(out io.Writer, color bool) error {
 			return err
 		}
 	}
-	_, err := fmt.Fprintf(out, "\n    Agent     %s\n    Platform  %s/%s\n    Go        %s\n\n", Version, runtime.GOOS, runtime.GOARCH, runtime.Version())
-	return err
+	return presentation.Table(out, []string{"Field", "Value"}, [][]string{
+		{"Agent", Version},
+		{"Platform", runtime.GOOS + "/" + runtime.GOARCH},
+		{"Go", runtime.Version()},
+	}, color, versionOutputWidth(out))
+}
+
+func versionOutputWidth(out io.Writer) int {
+	if file, ok := out.(*os.File); ok {
+		if width, _, err := term.GetSize(int(file.Fd())); err == nil && width > 0 {
+			return width
+		}
+	}
+	return 80
 }
