@@ -148,6 +148,7 @@ func protect(path string) error {
 	}
 	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, flags, owner, nil, acl, nil)
 }
+func protectCreatedTemp(path string) error { return protect(path) }
 func lockInventory(path string) (*os.File, error) {
 	existed := false
 	if info, err := os.Lstat(path); err == nil {
