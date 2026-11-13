@@ -222,7 +222,7 @@ func TestCobraHelpAndCompletion(t *testing.T) {
 	}
 }
 
-func TestPeerHumanAndJSONUseSamePublicSnapshot(t *testing.T) {
+func TestStatusAndWGUseSamePublicSnapshot(t *testing.T) {
 	base := ""
 	if runtime.GOOS != "windows" {
 		base = "/tmp"
