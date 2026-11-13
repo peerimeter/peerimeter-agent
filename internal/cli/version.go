@@ -62,7 +62,7 @@ func renderVersion(out io.Writer, color bool) error {
 			return err
 		}
 	}
-	return presentation.Table(out, []string{"Field", "Value"}, [][]string{
+	return presentation.Table(out, nil, [][]string{
 		{"Agent", Version},
 		{"Platform", runtime.GOOS + "/" + runtime.GOARCH},
 		{"Go", runtime.Version()},

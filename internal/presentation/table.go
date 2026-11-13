@@ -20,7 +20,8 @@ func newRenderer(out io.Writer, color bool) *lipgloss.Renderer {
 	return r
 }
 
-// Table gives command results a shared header, cell borders and color policy.
+// Table gives command results shared cell borders and color policy. Headers
+// are optional for tables where row labels already provide enough context.
 // Data is sanitized before deliberate multiline cells are rendered.
 func Table(out io.Writer, headers []string, rows [][]string, color bool, width int) error {
 	r := newRenderer(out, color)
@@ -30,6 +31,12 @@ func Table(out io.Writer, headers []string, rows [][]string, color bool, width i
 		padding = 0
 	}
 	columns := len(headers)
+	if columns == 0 && len(rows) > 0 {
+		columns = len(rows[0])
+	}
+	if columns == 0 {
+		return nil
+	}
 	available := width - columns - 1
 	widths := make([]int, columns)
 	for col := range widths {
@@ -40,11 +47,7 @@ func Table(out io.Writer, headers []string, rows [][]string, color bool, width i
 		widths[0] = min(22, available/3)
 		widths[1] = available - widths[0]
 	}
-	wrappedHeaders := make([]string, columns)
-	for col, header := range headers {
-		wrappedHeaders[col] = ansi.Wrap(safe(header), max(1, widths[col]-2*padding), "")
-	}
-	t := table.New().Headers(wrappedHeaders...).Width(width).Wrap(true).
+	t := table.New().Width(width).Wrap(true).
 		Border(lipgloss.RoundedBorder()).BorderRow(true).
 		BorderStyle(r.NewStyle().Foreground(lipgloss.Color("60"))).
 		StyleFunc(func(row, col int) lipgloss.Style {
@@ -57,6 +60,13 @@ func Table(out io.Writer, headers []string, rows [][]string, color bool, width i
 			}
 			return style
 		})
+	if len(headers) > 0 {
+		wrappedHeaders := make([]string, columns)
+		for col, header := range headers {
+			wrappedHeaders[col] = ansi.Wrap(safe(header), max(1, widths[col]-2*padding), "")
+		}
+		t.Headers(wrappedHeaders...)
+	}
 	for _, row := range rows {
 		cells := make([]string, len(row))
 		for i, value := range row {
