@@ -225,7 +225,7 @@ if timeout 12s ip netns exec "$left" runuser -u daemon -- "$AGENT" status --json
 fi
 runuser -u "$operator" -- chmod 0600 "$(runtime_for_state "$work/left-state")/control.sock"
 operator_control "$left" "$work/left-state" status >"$work/operator-status-after-denial.json"
-echo 'Passed: non-root operator status/peers work without key access; unrelated user is denied even after socket chmod0666.'
+echo 'Passed: non-root operator status/wg work without key access; unrelated user is denied even after socket chmod0666.'
 ping_both
 check_handshake "$left" "$work/left-state" "$work/left-before.json"
 check_handshake "$right" "$work/right-state" "$work/right-before.json"

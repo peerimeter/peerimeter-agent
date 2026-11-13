@@ -362,7 +362,7 @@ function Verify-Traffic([string]$StateDir) {
     if ($peers.Count -ne 1 -or [DateTime]$peers[0].last_handshake -lt [DateTime]::UtcNow.AddMinutes(-3) -or [long]$peers[0].received_bytes -le 0 -or [long]$peers[0].sent_bytes -le 0) { throw 'Actual agent did not report fresh native WireGuard handshake and counters' }
     if ($status.public_key -ne [IO.File]::ReadAllText((Join-Path $dir 'native.pub')).Trim() -or $status.listen_port -ne 51820 -or @($peers[0].allowed_ips).Count -ne 1 -or $peers[0].allowed_ips[0] -ne '10.203.0.2/32' -or $peers[0].persistent_keepalive_seconds -ne 1) { throw 'Native public key/listen port/AllowedIPs/keepalive snapshot is incorrect' }
     $human = (& $agentExe wg show --state-dir $StateDir | Out-String)
-    if ($LASTEXITCODE -ne 0) { throw 'Human-readable peers command failed' }
+    if ($LASTEXITCODE -ne 0) { throw 'Human-readable wg show command failed' }
     foreach ($label in @('interface:','public key:','listening port:','peer:','allowed ips:','latest handshake:','transfer:','private key: (hidden)')) { if (-not $human.Contains($label)) { throw 'Human peers output omitted a wgshow-style field' } }
     if ($human.Contains([IO.File]::ReadAllText((Join-Path $dir 'native.key')).Trim())) { throw 'Human peers output leaked private key material' }
     $route = Get-NetRoute -DestinationPrefix '10.203.0.2/32' -InterfaceAlias $status.interface_name -ErrorAction Stop
@@ -465,7 +465,7 @@ try {
     if ($delegated.state -ne 'running') { throw 'Delegated nonadmin status did not report the native service' }
     $null = Invoke-OperatorAgent 'wg' $serviceState $true
     Assert-OperatorCannotReadKey
-    Write-Output 'PASS delegated nonadmin CLI status/peers with private key access denied'
+    Write-Output 'PASS delegated nonadmin CLI status/wg with private key access denied'
     Invoke-Agent -CommandArgs @('service','stop') | Out-Null
     Assert-Removed
     Invoke-Agent -CommandArgs @('service','start') | Out-Null
