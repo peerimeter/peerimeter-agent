@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -123,8 +124,19 @@ func provision(cfg *Config, secure func(...string) error) (copied bool, resultEr
 		}
 	}
 	directory := snapshotDirectory(*cfg)
-	if err := local.PrepareDirectory(directory); err != nil {
-		return false, err
+	if _, err := os.Lstat(directory); err == nil {
+		// Existing configuration directories may belong to another installed
+		// profile. Validate them without rewriting their ACL before ownership and
+		// contents have been verified below.
+		if err := installstate.CheckDirectory(directory); err != nil {
+			return false, fmt.Errorf("cannot validate protected service configuration directory %s: %w", directory, err)
+		}
+	} else if os.IsNotExist(err) {
+		if err := local.PrepareDirectory(directory); err != nil {
+			return false, err
+		}
+	} else {
+		return false, fmt.Errorf("cannot inspect service configuration directory %s: %w", directory, err)
 	}
 	destination := filepath.Join(directory, "service.json")
 	keyPath := filepath.Join(directory, "service.key")
