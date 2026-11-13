@@ -101,7 +101,7 @@ Environment variables:
 		SilenceUsage:       true,
 		SilenceErrors:      true,
 		DisableSuggestions: true,
-		RunE:               app.handle(func(*cobra.Command) error { return errors.New("command required; use --help") }),
+		RunE:               app.handle(func(cmd *cobra.Command) error { return cmd.Help() }),
 	}
 	root.PersistentPreRunE = func(*cobra.Command, []string) error {
 		if app.color != "auto" && app.color != "always" && app.color != "never" {

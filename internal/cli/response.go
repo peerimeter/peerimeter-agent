@@ -29,6 +29,18 @@ func renderResponse(out io.Writer, raw []byte, color bool, width int) error {
 			return presentation.StatusOverview(out, snapshot, time.Now(), color, width)
 		}
 	}
+	if len(fields) == 1 {
+		for key, rawValue := range fields {
+			var value any
+			decoder := json.NewDecoder(bytes.NewReader(rawValue))
+			decoder.UseNumber()
+			if err := decoder.Decode(&value); err != nil {
+				return err
+			}
+			_, err := fmt.Fprintf(out, "%s: %s\n", responseLabel(key), consoleValue(value))
+			return err
+		}
+	}
 	keys := make([]string, 0, len(fields))
 	for key := range fields {
 		keys = append(keys, key)
@@ -42,11 +54,17 @@ func renderResponse(out io.Writer, raw []byte, color bool, width int) error {
 		if err := decoder.Decode(&value); err != nil {
 			return err
 		}
-		label := strings.ReplaceAll(key, "_", " ")
-		label = strings.ToUpper(label[:1]) + label[1:]
-		rows = append(rows, []string{label, consoleValue(value)})
+		rows = append(rows, []string{responseLabel(key), consoleValue(value)})
 	}
 	return presentation.Table(out, []string{"Field", "Value"}, rows, color, width)
+}
+
+func responseLabel(key string) string {
+	label := strings.ReplaceAll(key, "_", " ")
+	if label == "" {
+		return "Result"
+	}
+	return strings.ToUpper(label[:1]) + label[1:]
 }
 
 func consoleValue(value any) string {
