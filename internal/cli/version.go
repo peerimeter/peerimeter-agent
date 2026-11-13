@@ -24,19 +24,15 @@ const versionLogo = `        .---o---.
         '--o---'`
 
 func newVersionCommand(app *application) *cobra.Command {
-	var jsonOutput bool
-	var color string
 	cmd := &cobra.Command{Use: "version", Short: "Show the Peerimeter logo and version (or --json)", Args: noArguments, RunE: app.handle(func(*cobra.Command) error {
-		if color != "auto" && color != "always" && color != "never" {
+		if app.color != "auto" && app.color != "always" && app.color != "never" {
 			return errors.New("color must be auto, always or never")
 		}
-		if jsonOutput {
+		if app.jsonOutput {
 			return json.NewEncoder(app.out).Encode(map[string]string{"version": Version, "go_version": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH})
 		}
-		return renderVersion(app.out, shouldColor(app.out, color))
+		return renderVersion(app.out, shouldColor(app.out, app.color))
 	})}
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print stable machine-readable JSON without logo or ANSI colors")
-	cmd.Flags().StringVar(&color, "color", "auto", "Color mode: auto, always or never (auto respects NO_COLOR)")
 	return cmd
 }
 func shouldColor(out io.Writer, mode string) bool {

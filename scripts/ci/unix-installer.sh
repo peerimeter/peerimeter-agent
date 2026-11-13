@@ -151,7 +151,7 @@ for p in sorted(root.iterdir()):
  s=p.lstat();out[p.name]=[s.st_mode,s.st_uid,s.st_gid,s.st_size,s.st_mtime_ns,hashlib.sha256(p.read_bytes()).hexdigest()]
 print(json.dumps(out,sort_keys=True))
 PY
-"$destination/peerimeter-agent" uninstall --install-dir "$destination" --dry-run >"$work/removal-dry-run.json"
+"$destination/peerimeter-agent" uninstall --json --install-dir "$destination" --dry-run >"$work/removal-dry-run.json"
 python3 - "$destination" "$work/before-dry-run.json" "$work/removal-dry-run.json" <<'PY'
 import hashlib,json,pathlib,sys
 root=pathlib.Path(sys.argv[1]);out={}
@@ -160,7 +160,7 @@ for p in sorted(root.iterdir()):
 assert out==json.load(open(sys.argv[2])),'dry-run changed installed resources'
 assert json.load(open(sys.argv[3]))['state']=='dry_run'
 PY
-"$destination/peerimeter-agent" uninstall --install-dir "$destination" >"$work/removal.json"
+"$destination/peerimeter-agent" uninstall --json --install-dir "$destination" >"$work/removal.json"
 python3 - "$work/removal.json" <<'PY'
 import json,sys
 assert json.load(open(sys.argv[1]))['state']=='removed'
@@ -168,7 +168,7 @@ PY
 for member in peerimeter-agent peerimeter-agent.NOTICES.txt .peerimeter-agent.install.json .peerimeter-agent.install.lock; do test ! -e "$destination/$member"; done
 cmp "$work/original.config" "$destination/operator.config"
 cmp "$work/original.key" "$destination/operator.key"
-"$work/uninstall-verifier" uninstall --install-dir "$destination" >"$work/repeated-removal.json"
+"$work/uninstall-verifier" uninstall --json --install-dir "$destination" >"$work/repeated-removal.json"
 python3 - "$work/repeated-removal.json" <<'PY'
 import json,sys
 assert json.load(open(sys.argv[1]))['state']=='already_absent'

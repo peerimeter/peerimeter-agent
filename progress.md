@@ -307,3 +307,37 @@ Default STUN fallback now tries Google's `stun.l.google.com`, `stun1.l.google.co
 and `stun2.l.google.com` on UDP 19302 in sequence. `--server` selects a single
 custom server. A diagnostic local build passed; native CI and live fallback
 behavior remain pending.
+
+## Console results, Lip Gloss tables and WireGuard view (2026-11-13)
+
+- Generation, validation, installation registration, service actions, local
+  status/sync/stop and uninstall default to readable console results. `--json`
+  preserves machine-readable results; config files, IPC and removal receipts
+  retain JSON. CI consumers, including embedded Python calls, explicitly opt in.
+- Added pinned Bubble Tea v1.3.10 for interactive STUN progress/cancellation and
+  Lip Gloss v1.1.0 tables for results and peer/status views. Tables have header
+  rows, bordered cells and wrapped values. JSON and redirected/dumb-terminal
+  output bypass interactive UI; JSON remains free of styling.
+- `peers` has a responsive table overview with full public identity, endpoint,
+  routes, handshake age, traffic and keepalive. Wide terminals use individual
+  columns; smaller terminals use grouped columns or two-column detail tables.
+  Sorting, explicit empty/clock-skew states and secret-free output are preserved.
+- The traditional WireGuard display moved to `wg show`; bare `wg` runs the same
+  handler. Both support directory flags and return the existing public peer
+  array with `--json`, matching `peers --json`.
+- Global `--color auto|always|never` respects NO_COLOR, TERM=dumb and pipes in
+  automatic mode. No branded headings are added. Help retains Cobra's layout;
+  version retains the original unboxed six-color logo. Completion shell code
+  and console diagnostic logs remain unchanged.
+- Included the requested local build change (inherit the caller's CGO setting)
+  and `.envrc` loading `.env` only when present; no environment secrets included.
+- Local Go 1.27.4 lint, tests and build passed. Tests cover console/JSON results,
+  wg aliases/flag placement, original logo colors, STUN model completion,
+  full values at widths 20/40/80/160, sorting, ANSI isolation and write failures.
+  Version/help/generation layouts were inspected; shell syntax and whitespace
+  checks passed. Linux/amd64 and Windows/amd64 cross-builds passed before the
+  final table refinement. Native privileged networking/service workflows and
+  Windows PowerShell execution were not rerun; native CI remains authoritative.
+- The separate `.github` planning PR schedules concurrent multi-network service
+  management in Phase 2 (additional-plan.md A12); it is not implemented here.
+  No new native connectivity or phase-completion claim is made.

@@ -13,18 +13,24 @@ import (
 )
 
 func newPeersCommand(app *application) *cobra.Command {
+	return newPeerViewCommand(app, false)
+}
+
+func newPeerViewCommand(app *application, wireguard bool) *cobra.Command {
 	var options paths.Options
-	var jsonOutput bool
-	var color string
-	cmd := &cobra.Command{Use: "peers", Short: "Show WireGuard peers in wgshow style (or --json)", Args: noArguments, RunE: app.handle(func(cmd *cobra.Command) error {
-		if color != "auto" && color != "always" && color != "never" {
+	use, short := "peers", "Show peers with a styled overview (or --json)"
+	if wireguard {
+		use, short = "wg", "Show WireGuard interface and peers (defaults to show)"
+	}
+	cmd := &cobra.Command{Use: use, Short: short, Args: noArguments, RunE: app.handle(func(cmd *cobra.Command) error {
+		if app.color != "auto" && app.color != "always" && app.color != "never" {
 			return errors.New("color must be auto, always or never")
 		}
 		layout, err := paths.Resolve(options)
 		if err != nil {
 			return err
 		}
-		if jsonOutput {
+		if app.jsonOutput {
 			return local.Request(cmd.Context(), layout.RuntimeDir, "peers", app.out)
 		}
 		var raw bytes.Buffer
@@ -35,10 +41,15 @@ func newPeersCommand(app *application) *cobra.Command {
 		if err := json.Unmarshal(raw.Bytes(), &snapshot); err != nil {
 			return errors.New("cannot decode local public peer state")
 		}
-		return presentation.PeerList(app.out, snapshot, time.Now(), shouldColor(app.out, color))
+		if wireguard {
+			return presentation.PeerList(app.out, snapshot, time.Now(), shouldColor(app.out, app.color))
+		}
+		return presentation.PeerOverview(app.out, snapshot, time.Now(), shouldColor(app.out, app.color), outputWidth(app.out))
 	})}
-	directoryFlags(cmd, &options)
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print stable machine-readable public peer state")
-	cmd.Flags().StringVar(&color, "color", "auto", "Color mode: auto, always or never")
+	if wireguard {
+		directoryFlagSet(cmd.PersistentFlags(), &options)
+	} else {
+		directoryFlags(cmd, &options)
+	}
 	return cmd
 }

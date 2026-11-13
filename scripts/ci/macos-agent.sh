@@ -50,7 +50,7 @@ refpid=$!
 wait_status() {
   local attempt
   for attempt in {1..30}; do
-    if "$agent" status --runtime-dir "$runtime" >"$dir/status.json" 2>/dev/null; then
+    if "$agent" status --json --runtime-dir "$runtime" >"$dir/status.json" 2>/dev/null; then
       if python3 - "$dir/status.json" <<'PY'
 import json, sys
 s = json.load(open(sys.argv[1]))
@@ -68,7 +68,7 @@ PY
   return 1
 }
 interface_name() {
-  "$agent" status --runtime-dir "$runtime" >"$dir/status.json"
+  "$agent" status --json --runtime-dir "$runtime" >"$dir/status.json"
   python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["interface_name"])' "$dir/status.json"
 }
 verify_traffic() {
@@ -78,8 +78,8 @@ verify_traffic() {
   after=$(grep -c '^PASS reference' "$dir/reference.log" || true)
   test "$after" -gt "$before"
   "$agent" peers --json --runtime-dir "$runtime" >"$dir/peers.json"
-  "$agent" status --runtime-dir "$runtime" >"$dir/actual-status.json"
-  "$agent" peers --runtime-dir "$runtime" >"$dir/peers-human.txt"
+  "$agent" status --json --runtime-dir "$runtime" >"$dir/actual-status.json"
+  "$agent" wg show --runtime-dir "$runtime" >"$dir/peers-human.txt"
   python3 - "$dir/peers.json" "$dir/actual-status.json" "$dir" <<'PY'
 import calendar, json, sys, time
 peers = json.load(open(sys.argv[1]))
@@ -105,7 +105,7 @@ PY
   fi
 }
 verify_unchanged() {
-  "$agent" status --runtime-dir "$runtime" >"$dir/status-after.json"
+  "$agent" status --json --runtime-dir "$runtime" >"$dir/status-after.json"
   python3 - "$dir/status-before.json" "$dir/status-after.json" <<'PY'
 import json, sys
 before, after = [json.load(open(p)) for p in sys.argv[1:]]
@@ -158,7 +158,7 @@ assert p.returncode!=0,'another runtime directory bypassed persistent-state mana
 PYLOCK
 wait_status
 verify_traffic
-"$agent" status --runtime-dir "$runtime" >"$dir/status-before.json"
+"$agent" status --json --runtime-dir "$runtime" >"$dir/status-before.json"
 "$agent" sync --runtime-dir "$runtime"
 verify_unchanged
 echo 'PASS: unchanged config reconciliation preserves actual utun and peer session'
