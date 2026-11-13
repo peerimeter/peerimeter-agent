@@ -37,6 +37,7 @@ type removalPlan struct {
 	ParentPID   int                    `json:"parent_pid"`
 	Inventory   string                 `json:"inventory"`
 	Lock        string                 `json:"lock"`
+	DataLock    string                 `json:"data_lock,omitempty"`
 	Files       []removalFile          `json:"files"`
 	Directories []string               `json:"directories"`
 	Profiles    []installstate.Profile `json:"profiles"`
@@ -86,6 +87,9 @@ func resources(p installstate.Profile) []removalFile {
 }
 func makePlan(inv installstate.Inventory) removalPlan {
 	p := removalPlan{Version: 1, InstallID: inv.ID, InstallDir: inv.InstallDir, ParentPID: os.Getpid(), Inventory: filepath.Join(inv.DataDir, installstate.Filename), Lock: filepath.Join(inv.LockDir, installstate.LockFilename), Profiles: inv.Profiles}
+	if inv.DataDir != inv.LockDir {
+		p.DataLock = filepath.Join(inv.DataDir, installstate.LockFilename)
+	}
 	seen := map[string]bool{}
 	dirs := map[string]bool{inv.InstallDir: true, inv.DocDir: true, inv.DataDir: true, inv.LockDir: true}
 	for _, profile := range inv.Profiles {
@@ -401,6 +405,9 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 			r.Paths = append(r.Paths, f.Path)
 		}
 		r.Paths = append(r.Paths, plan.Lock, plan.Inventory)
+		if plan.DataLock != "" {
+			r.Paths = append(r.Paths, plan.DataLock)
+		}
 		for _, p := range inv.Profiles {
 			if p.Service {
 				r.Services = append(r.Services, "owned agent service registration")
@@ -583,6 +590,11 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	}
 	if err := removeAbsentOK(plan.Lock); err != nil {
 		return err
+	}
+	if plan.DataLock != "" {
+		if err := removeAbsentOK(plan.DataLock); err != nil {
+			return err
+		}
 	}
 	if err := removeAbsentOK(plan.Inventory); err != nil {
 		return err
