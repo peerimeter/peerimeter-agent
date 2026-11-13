@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
 )
@@ -68,5 +69,30 @@ func TestStatusWatchConsoleRequiresInteractiveTerminal(t *testing.T) {
 	code, _, stderr := invoke(t, "status", "--watch", "--color", "never")
 	if code == 0 || !strings.Contains(stderr, "use --json for a snapshot stream") {
 		t.Fatalf("expected non-interactive watch guidance, got code=%d stderr=%q", code, stderr)
+	}
+}
+
+func TestStatusWatchViewportScrollsToLaterPeers(t *testing.T) {
+	model := statusWatchModel{
+		interval: time.Second,
+		width:    100,
+		height:   10,
+		updated:  time.Now(),
+		snapshot: platform.Snapshot{NetworkID: "watch-test", InterfaceName: "pm-test", State: "running", Peers: []platform.PeerState{
+			{PublicKey: "peer-a", AllowedIPs: []string{"10.0.0.1/32"}},
+			{PublicKey: "peer-b", AllowedIPs: []string{"10.0.0.2/32"}},
+			{PublicKey: "peer-c", AllowedIPs: []string{"10.0.0.3/32"}},
+			{PublicKey: "peer-d", AllowedIPs: []string{"10.0.0.4/32"}},
+			{PublicKey: "peer-e", AllowedIPs: []string{"10.0.0.5/32"}},
+			{PublicKey: "peer-f", AllowedIPs: []string{"10.0.0.6/32"}},
+		}},
+	}
+	if view := model.View(); !strings.Contains(view, "Network") || !strings.Contains(view, "q to quit") {
+		t.Fatalf("initial view omitted status summary or footer: %s", view)
+	}
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	view := updated.(statusWatchModel).View()
+	if !strings.Contains(view, "peer-f") || strings.Contains(view, "peer-a") {
+		t.Fatalf("end key did not scroll to the last peer: %s", view)
 	}
 }
