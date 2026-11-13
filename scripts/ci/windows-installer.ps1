@@ -15,6 +15,7 @@ $defaultTarget = Join-Path $env:ProgramFiles 'Peerimeter'
 $defaultInstalled = $false
 $programDataTarget = Join-Path $env:ProgramData ('Peerimeter Installer CI ' + [guid]::NewGuid().ToString('N') + ' custom path')
 $programDataCreated = $false
+$resourceRootOwnership = @{}
 $nativeArch = $env:PROCESSOR_ARCHITEW6432
 if ([string]::IsNullOrWhiteSpace($nativeArch)) { $nativeArch = $env:PROCESSOR_ARCHITECTURE }
 $arch = switch ($nativeArch.ToUpperInvariant()) { 'AMD64' {'amd64'} 'X64' {'amd64'} 'ARM64' {'arm64'} default {throw 'Unsupported test architecture'} }
@@ -57,6 +58,12 @@ function Get-ResourceRoot([string]$Directory) {
     try { $key = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes([IO.Path]::GetFullPath($Directory).ToLowerInvariant()))).Replace('-','').ToLowerInvariant() }
     finally { $sha.Dispose() }
     return Join-Path $env:ProgramData (Join-Path 'Peerimeter\Installations' $key)
+}
+function Track-ResourceRoot([string]$Directory) {
+    $root = Get-ResourceRoot $Directory
+    if (-not $resourceRootOwnership.ContainsKey($root)) {
+        $resourceRootOwnership[$root] = -not (Test-Path -LiteralPath $root)
+    }
 }
 function Assert-Package([string]$Directory) {
     $resourceRoot = Get-ResourceRoot $Directory
@@ -127,15 +134,18 @@ function Expect-Failure([scriptblock]$Operation) {
 try {
     New-Item -ItemType Directory -Path $base | Out-Null
     if (Test-Path -LiteralPath $defaultTarget) { throw 'Actual default installation destination is already occupied' }
+    Track-ResourceRoot $defaultTarget
     & $Installer -Archive $Archive -SHA256 $checksum
     $defaultInstalled = $true
     Assert-Package $defaultTarget
     Write-Output 'PASS actual Windows installer default destination and protected inventory'
+    Track-ResourceRoot $offline
     & $Installer -Archive $Archive -SHA256 $checksum -InstallDir $offline
     Assert-Package $offline
     Write-Output 'PASS offline local ZIP install, custom path with spaces, complete signed WireGuardNT bundle and native CLI'
     if (Test-Path -LiteralPath $programDataTarget) { throw 'Random ProgramData fixture destination is already occupied' }
     $programDataCreated = $true
+    Track-ResourceRoot $programDataTarget
     & $Installer -Archive $Archive -SHA256 $checksum -InstallDir $programDataTarget
     Assert-Package $programDataTarget
     Write-Output 'PASS actual custom ProgramData installer path with standard shared-root metadata ACL and protected package/inventory'
@@ -151,6 +161,7 @@ try {
     if (@((Get-Acl -LiteralPath $offline).GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]) | Where-Object { $_.IdentityReference.Value -eq 'S-1-1-0' -and $_.AccessControlType -eq 'Allow' }).Count) { throw 'Unsafe explicit directory ACL survived installation' }
     Write-Output 'PASS upgrade removes unrelated explicit write grants'
 
+    Track-ResourceRoot $badTarget
     Expect-Failure { & $Installer -Archive $Archive -SHA256 ('0'*64) -InstallDir $badTarget }
     if (Test-Path -LiteralPath $badTarget) { throw 'Bad checksum changed installation destination' }
     Write-Output 'PASS checksum rejection precedes installation mutation'
@@ -181,8 +192,10 @@ try {
         }
         throw 'Unexpected release asset request'
     }
+    Track-ResourceRoot $latest
     & $Installer -InstallDir $latest
     Assert-Package $latest
+    Track-ResourceRoot $pinned
     & $Installer -Version '0.0.0-ci' -InstallDir $pinned
     Assert-Package $pinned
     $calls = @($global:PeerimeterInstallerFixture.Requests)
@@ -221,9 +234,10 @@ try {
         if (-not @(Get-ChildItem -LiteralPath $defaultTarget -Force).Count) { Remove-Item -LiteralPath $defaultTarget }
     }
     if ($programDataCreated -and (Test-Path -LiteralPath $programDataTarget)) { Remove-Item -LiteralPath $programDataTarget -Recurse -Force }
-    foreach ($directory in @($defaultTarget,$offline,$latest,$pinned,$programDataTarget)) {
-        $resourceRoot = Get-ResourceRoot $directory
-        if (Test-Path -LiteralPath $resourceRoot) { Remove-Item -LiteralPath $resourceRoot -Recurse -Force }
+    foreach ($resourceRoot in @($resourceRootOwnership.Keys)) {
+        if ($resourceRootOwnership[$resourceRoot] -and (Test-Path -LiteralPath $resourceRoot)) {
+            Remove-Item -LiteralPath $resourceRoot -Recurse -Force
+        }
     }
     if (Test-Path -LiteralPath $base) { Remove-Item -LiteralPath $base -Recurse -Force }
 }

@@ -7,7 +7,7 @@ if [ "$uid" -eq 0 ]; then
  install_dir=/usr/local/bin
  doc_dir=/usr/local/share/doc/peerimeter-agent
  data_dir=/var/lib/peerimeter-agent-install
- lock_dir=/run/lock/peerimeter-agent
+ lock_dir=$data_dir
  if [ "$(uname -s)" = Darwin ]; then
   doc_dir=/usr/local/share/doc/peerimeter-agent
   data_dir='/Library/Application Support/Peerimeter Installer/State'
@@ -45,6 +45,9 @@ while [ "$#" -gt 0 ]; do
   *) usage;;
  esac
 done
+# Treat a trailing separator as the same installation path. Keep filesystem
+# root intact, where stripping '/' would produce an empty path.
+while [ "$install_dir" != / ] && [ "${install_dir%/}" != "$install_dir" ]; do install_dir=${install_dir%/}; done
 if [ "$install_dir" != "$default_install_dir" ]; then
  resource_root=${install_dir}.peerimeter
  [ "$doc_dir_set" -eq 1 ] || doc_dir=$resource_root/doc

@@ -88,7 +88,6 @@ func makePlan(inv installstate.Inventory) removalPlan {
 	p := removalPlan{Version: 1, InstallID: inv.ID, InstallDir: inv.InstallDir, ParentPID: os.Getpid(), Inventory: filepath.Join(inv.DataDir, installstate.Filename), Lock: filepath.Join(inv.LockDir, installstate.LockFilename), Profiles: inv.Profiles}
 	seen := map[string]bool{}
 	dirs := map[string]bool{inv.InstallDir: true, inv.DocDir: true, inv.DataDir: true, inv.LockDir: true}
-	p.Files = append(p.Files, removalFile{Path: filepath.Join(inv.InstallDir, installstate.ReferenceFilename)})
 	for _, profile := range inv.Profiles {
 		for _, f := range resources(profile) {
 			if !seen[f.Path] {
@@ -122,6 +121,9 @@ func makePlan(inv installstate.Inventory) removalPlan {
 			seen[path] = true
 		}
 	}
+	// Keep discovery metadata until every managed resource is gone, so a
+	// partial removal can load the same inventory and resume safely.
+	p.Files = append(p.Files, removalFile{Path: filepath.Join(inv.InstallDir, installstate.ReferenceFilename), Marker: true})
 	for d := range dirs {
 		p.Directories = append(p.Directories, d)
 	}

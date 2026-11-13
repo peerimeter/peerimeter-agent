@@ -445,11 +445,37 @@ func RegisterWithDirectories(dir, docDir, dataDir, lockDir string, allowInsecure
 	if err := CheckDirectoryWithPolicy(dir, allowInsecure); err != nil {
 		return err
 	}
-	lock, err := LockWithPolicy(lockDir, allowInsecure)
-	if err != nil {
-		return err
+	lockDirs := []string{lockDir, dataDir}
+	if loadErr == nil {
+		lockDirs = append(lockDirs, existing.LockDir)
 	}
-	defer lock.Close()
+	lockDirs = uniqueSortedPaths(lockDirs)
+	var locks []io.Closer
+	for _, lockDir := range lockDirs {
+		lock, lockErr := LockWithPolicy(lockDir, allowInsecure)
+		if lockErr != nil {
+			for i := len(locks) - 1; i >= 0; i-- {
+				_ = locks[i].Close()
+			}
+			return lockErr
+		}
+		locks = append(locks, lock)
+	}
+	defer func() {
+		for i := len(locks) - 1; i >= 0; i-- {
+			_ = locks[i].Close()
+		}
+	}()
+	// Re-read after acquiring the shared data-directory lock. Two distinct
+	// executable directories must never overwrite one another's inventory.
+	if current, readErr := readPrivate(filepath.Join(dataDir, Filename)); readErr == nil {
+		var owner Inventory
+		if err := json.Unmarshal(current, &owner); err != nil || owner.InstallDir != dir {
+			return errors.New("installation data directory is already owned by another installation")
+		}
+	} else if !os.IsNotExist(readErr) {
+		return fmt.Errorf("inspect installation data directory inventory: %w", readErr)
+	}
 	inv, err := load(dir, allowInsecure)
 	if os.IsNotExist(err) {
 		inv = Inventory{Version: 1, InstallDir: dir, DataDir: dataDir, DocDir: docDir, LockDir: lockDir, Profiles: []Profile{}, AllowInsecureInstallDir: allowInsecure}
@@ -466,10 +492,12 @@ func RegisterWithDirectories(dir, docDir, dataDir, lockDir string, allowInsecure
 	// that inventory to the selected data directory during the first upgrade.
 	legacyInventory := inv.DataDir == dir && inv.DocDir == dir && inv.LockDir == dir
 	legacyNotice := ""
+	legacyNoticeDigest := ""
 	if legacyInventory {
 		for _, oldFile := range inv.Files {
 			if oldFile.Name == "peerimeter-agent.NOTICES.txt" {
 				legacyNotice = filepath.Join(dir, oldFile.Name)
+				legacyNoticeDigest = oldFile.SHA256
 				break
 			}
 		}
@@ -495,27 +523,48 @@ func RegisterWithDirectories(dir, docDir, dataDir, lockDir string, allowInsecure
 		}
 		inv.Files = append(inv.Files, File{Name: name, Dir: resourceDir, SHA256: hash})
 	}
+	previousInventory, previousInventoryErr := readPrivate(filepath.Join(dataDir, Filename))
+	if previousInventoryErr != nil && !os.IsNotExist(previousInventoryErr) {
+		return fmt.Errorf("read previous installation inventory: %w", previousInventoryErr)
+	}
 	if err := save(inv); err != nil {
 		return err
 	}
 	ref, _ := json.Marshal(installReference{DataDir: dataDir})
 	if err := WritePrivateWithPolicy(filepath.Join(dir, ReferenceFilename), append(ref, '\n'), allowInsecure); err != nil {
-		return err
+		inventoryPath := filepath.Join(dataDir, Filename)
+		var rollbackErr error
+		if previousInventoryErr == nil {
+			rollbackErr = WritePrivateWithPolicy(inventoryPath, previousInventory, allowInsecure)
+		} else {
+			rollbackErr = os.Remove(inventoryPath)
+			if os.IsNotExist(rollbackErr) {
+				rollbackErr = nil
+			}
+		}
+		return errors.Join(fmt.Errorf("write installation reference: %w", err), rollbackErr)
 	}
 	if legacyInventory && dataDir != dir {
 		_ = os.Remove(filepath.Join(dir, Filename))
 		_ = os.Remove(filepath.Join(dir, LockFilename))
 		if legacyNotice != "" && filepath.Join(docDir, "peerimeter-agent.NOTICES.txt") != legacyNotice {
-			if oldHash, e := Hash(legacyNotice); e == nil {
-				for _, current := range inv.Files {
-					if current.Name == "peerimeter-agent.NOTICES.txt" && current.Dir == docDir && oldHash == current.SHA256 {
-						_ = os.Remove(legacyNotice)
-					}
-				}
+			if oldHash, e := Hash(legacyNotice); e == nil && oldHash == legacyNoticeDigest {
+				_ = os.Remove(legacyNotice)
 			}
 		}
 	}
 	return nil
+}
+
+func uniqueSortedPaths(paths []string) []string {
+	sort.Strings(paths)
+	unique := paths[:0]
+	for _, path := range paths {
+		if len(unique) == 0 || unique[len(unique)-1] != path {
+			unique = append(unique, path)
+		}
+	}
+	return unique
 }
 
 // RegisterProfile records only managed snapshots, durable metadata and runtime
