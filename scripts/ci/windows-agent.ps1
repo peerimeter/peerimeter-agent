@@ -126,7 +126,7 @@ function Snapshot-ManagedTrees([string[]]$Roots) {
     return (@($items | Sort-Object Path) | ConvertTo-Json -Depth 5 -Compress)
 }
 function Invoke-Agent([string[]]$CommandArgs) {
-    if ($CommandArgs.Count -gt 0 -and $CommandArgs[0] -in @('peers','status','uninstall') -and '--json' -notin $CommandArgs) { $CommandArgs += '--json' }
+    if ($CommandArgs.Count -gt 0 -and $CommandArgs[0] -in @('wg','status','uninstall') -and '--json' -notin $CommandArgs) { $CommandArgs += '--json' }
     $errorPath = Join-Path $dir 'last-cli-error.json'
     $output = & $agentExe @CommandArgs 2>$errorPath
     if ($LASTEXITCODE -ne 0) {
@@ -180,7 +180,7 @@ function Invoke-OperatorAgent([string]$Operation,[string]$StateDir,[bool]$Expect
     $out = Join-Path $operatorOutput ($Operation + '.json')
     $err = Join-Path $operatorOutput ($Operation + '-error.json')
     $arguments = @($Operation,'--state-dir',('"{0}"' -f $StateDir))
-    if ($Operation -in @('peers','status')) { $arguments += '--json' }
+    if ($Operation -in @('wg','status')) { $arguments += '--json' }
     $p = Start-Process -FilePath $agentExe -Credential $operatorCredential -WorkingDirectory $operatorOutput -ArgumentList $arguments -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
     if (-not $p.WaitForExit(30000)) { Stop-Process -Id $p.Id -Force; throw 'Nonadmin CLI did not finish within 30 seconds' }
     if ($ExpectSuccess -and $p.ExitCode -ne 0) { throw "Delegated nonadmin CLI $Operation failed" }
@@ -463,7 +463,7 @@ try {
     Verify-Traffic $serviceState | Out-Null
     $delegated = Invoke-OperatorAgent 'status' $serviceState $true
     if ($delegated.state -ne 'running') { throw 'Delegated nonadmin status did not report the native service' }
-    $null = Invoke-OperatorAgent 'peers' $serviceState $true
+    $null = Invoke-OperatorAgent 'wg' $serviceState $true
     Assert-OperatorCannotReadKey
     Write-Output 'PASS delegated nonadmin CLI status/peers with private key access denied'
     Invoke-Agent -CommandArgs @('service','stop') | Out-Null
@@ -490,7 +490,7 @@ try {
     $adapterName = $defaultStatus.interface_name
     Verify-Traffic $defaultState | Out-Null
     $null = Invoke-OperatorAgent 'status' $defaultState $true
-    $null = Invoke-OperatorAgent 'peers' $defaultState $true
+    $null = Invoke-OperatorAgent 'wg' $defaultState $true
     Assert-OperatorCannotReadKey (Join-Path $defaultState 'service.key')
     Verify-ConfigurationCollision
     Invoke-Agent -CommandArgs @('service','uninstall') | Out-Null

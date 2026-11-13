@@ -79,7 +79,7 @@ config_for_state() { printf '%s config' "$1"; }
 control() {
   local namespace=$1 state=$2 operation=$3
   local output_flags=()
-  [[ "$operation" != peers && "$operation" != status ]] || output_flags=(--json)
+  [[ "$operation" != wg && "$operation" != status ]] || output_flags=(--json)
   if [[ -n "$namespace" ]]; then
     timeout 12s ip netns exec "$namespace" "$AGENT" "$operation" "${output_flags[@]}" --runtime-dir "$(runtime_for_state "$state")"
   else
@@ -89,7 +89,7 @@ control() {
 operator_control() {
   local namespace=$1 state=$2 operation=$3
   local output_flags=()
-  [[ "$operation" != peers && "$operation" != status ]] || output_flags=(--json)
+  [[ "$operation" != wg && "$operation" != status ]] || output_flags=(--json)
   if [[ -n "$namespace" ]]; then
     timeout 12s ip netns exec "$namespace" runuser -u "$operator" -- "$AGENT" "$operation" "${output_flags[@]}" --runtime-dir "$(runtime_for_state "$state")"
   else
@@ -124,7 +124,7 @@ ping_both() {
 check_handshake() {
   local namespace=$1 state=$2 output=$3
   control "$namespace" "$state" status >"$output"
-  control "$namespace" "$state" peers >"$output.peers"
+  control "$namespace" "$state" wg >"$output.peers"
   local cfg="$work/config/peer-a.json" other="$work/config/peer-b.json"
   [[ "$namespace" == "$left" ]] || { cfg="$work/config/peer-b.json"; other="$work/config/peer-a.json"; }
   timeout 12s ip netns exec "$namespace" "$AGENT" wg show --runtime-dir "$(runtime_for_state "$state")" >"$output.human"
@@ -204,7 +204,7 @@ else
 fi
 [[ $(index_of "$left" pm-probe) == "$left_index" ]]
 operator_control "$left" "$work/left-state" status >"$work/operator-status.json"
-operator_control "$left" "$work/left-state" peers >"$work/operator-peers.json"
+operator_control "$left" "$work/left-state" wg >"$work/operator-peers.json"
 python3 - "$work/operator-status.json" "$work/operator-peers.json" <<'PYOP'
 import json, sys
 s=json.load(open(sys.argv[1])); p=json.load(open(sys.argv[2]))
@@ -339,7 +339,7 @@ systemctl is-enabled peerimeter-agent.service
 "$AGENT" service start
 wait_running '' "$work/service-state" "$work/service-status.json"
 operator_control '' "$work/service-state" status --json >"$work/service-operator-status.json"
-operator_control '' "$work/service-state" peers >"$work/service-operator-peers.json"
+operator_control '' "$work/service-state" wg >"$work/service-operator-peers.json"
 operator_control '' "$work/service-state" sync
 "$AGENT" service stop
 if ip link show dev pm-service >/dev/null 2>&1; then echo 'systemd stop left its interface behind.' >&2; exit 1; fi

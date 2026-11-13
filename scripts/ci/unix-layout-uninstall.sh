@@ -201,7 +201,7 @@ active="$agent"
 wait_status "$agent" '' "$base/default-status.json"
 check_layout "$defaults_config" "$defaults_state" "$defaults_runtime"
 as_operator "$agent" status --json >"$base/default-operator.json"
-as_operator "$agent" peers --json >"$base/default-operator-peers.json"
+as_operator "$agent" wg --json >"$base/default-operator-peers.json"
 as_operator "$agent" sync
 bash "$repo/scripts/ci/unix-config-collision.sh" "$agent" "$source_config" "$defaults_config" "$defaults_runtime" "$base"
 snapshot "$defaults_config" "$defaults_state" >"$base/default-durable.json"
@@ -300,7 +300,7 @@ if [[ -f "$base/old-network.json" ]]; then cmp "$legacy/network.json" "$base/old
 wait_status "$agent" "$new_runtime" "$base/migrated-status.json"
 check_layout "$new_config" "$legacy" "$new_runtime"
 as_operator "$agent" status --json --runtime-dir "$new_runtime" >"$base/migrated-operator.json"
-as_operator "$agent" peers --json --runtime-dir "$new_runtime" >"$base/migrated-operator-peers.json"
+as_operator "$agent" wg --json --runtime-dir "$new_runtime" >"$base/migrated-operator-peers.json"
 as_operator "$agent" sync --runtime-dir "$new_runtime"
 echo 'PASS: live old combined service migration rejects conflicts, preserves keys/interface identity and starts with spaced separate directories.'
 
