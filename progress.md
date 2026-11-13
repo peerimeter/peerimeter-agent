@@ -341,3 +341,12 @@ behavior remain pending.
 - The separate `.github` planning PR schedules concurrent multi-network service
   management in Phase 2 (additional-plan.md A12); it is not implemented here.
   No new native connectivity or phase-completion claim is made.
+
+## Windows release notice fix (2026-11-13)
+
+The Windows release job exposed that `github.com/mattn/go-localereader` v0.0.1
+has no LICENSE file in its Go module archive. Upstream identifies it as MIT;
+packaging now includes the license text in a module-specific override. Verified
+with the full Windows/amd64 `scripts/package.py --resources-only` workflow,
+including dependency notice generation and the pinned WireGuardNT archive/hash,
+and reran Go lint, tests and build.

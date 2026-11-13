@@ -76,7 +76,13 @@ with tempfile.TemporaryDirectory(prefix='peerimeter-package-') as tmp:
                 if files:
                     break
         if not files:
-            raise SystemExit('Missing third-party license notice for ' + name)
+            # go-localereader v0.0.1 states its MIT license in README.md but
+            # omits the LICENSE file from its Go module archive.
+            override = Path('third_party/licenses') / name / 'LICENSE'
+            if override.is_file():
+                files = [override]
+            else:
+                raise SystemExit('Missing third-party license notice for ' + name)
         notices.append('\n=== ' + name + ' ' + mod.get('Version', '') + ' ===\n')
         for source in sorted(files):
             notices.append(source.read_text(errors='replace') + '\n')
