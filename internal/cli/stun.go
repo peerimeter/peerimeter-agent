@@ -3,16 +3,15 @@ package cli
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
+	"github.com/peerimeter/peerimeter-agent/internal/presentation"
+	"github.com/peerimeter/peerimeter-agent/internal/stunprobe"
 	"strconv"
 
-	"github.com/peerimeter/peerimeter-agent/internal/stunprobe"
 	"github.com/spf13/cobra"
 )
 
 func newStunCommand(app *application) *cobra.Command {
 	var server string
-	var jsonOutput bool
 	port := 0
 	cmd := &cobra.Command{
 		Use:   "stun [local-udp-port]",
@@ -31,18 +30,22 @@ func newStunCommand(app *application) *cobra.Command {
 			return nil
 		},
 		RunE: app.handle(func(cmd *cobra.Command) error {
-			result, err := stunprobe.Probe(port, server)
+			var result stunprobe.Result
+			var err error
+			if app.jsonOutput {
+				result, err = probeSTUN(port, server)
+			} else {
+				result, err = runSTUN(cmd.Context(), app.out, port, server)
+			}
 			if err != nil {
 				return err
 			}
-			if jsonOutput {
+			if app.jsonOutput {
 				return json.NewEncoder(app.out).Encode(result)
 			}
-			_, err = fmt.Fprintf(app.out, "STUN server: %s\nLocal address: %s\nMapped address: %s\n", result.Server, result.LocalAddress, result.MappedAddress)
-			return err
+			return presentation.Table(app.out, []string{"STUN SERVER", "LOCAL ADDRESS", "MAPPED ADDRESS"}, [][]string{{result.Server, result.LocalAddress, result.MappedAddress}}, shouldColor(app.out, app.color), outputWidth(app.out))
 		}),
 	}
 	cmd.Flags().StringVar(&server, "server", "", "Use only this STUN server instead of the default Google fallback list")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print the result as JSON")
 	return cmd
 }

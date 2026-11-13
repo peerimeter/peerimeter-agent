@@ -29,14 +29,14 @@ if "$other" service install --config "$source_config" --config-dir "$config_dir"
 fi
 snapshot >"$work/after-rejection.json"
 cmp "$work/before.json" "$work/after-rejection.json"
-"$other" uninstall --install-dir "$program" >"$work/removed.json"
+"$other" uninstall --json --install-dir "$program" >"$work/removed.json"
 python3 - "$work/removed.json" <<'PY'
 import json,sys
 assert json.load(open(sys.argv[1]))['state']=='removed'
 PY
 snapshot >"$work/after-uninstall.json"
 cmp "$work/before.json" "$work/after-uninstall.json"
-"$agent" status --runtime-dir "$runtime_dir" >"$work/A-status.json"
+"$agent" status --json --runtime-dir "$runtime_dir" >"$work/A-status.json"
 python3 - "$work/A-status.json" <<'PY'
 import json,sys
 assert json.load(open(sys.argv[1]))['state']=='running'

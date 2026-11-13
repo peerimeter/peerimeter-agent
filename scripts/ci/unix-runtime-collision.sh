@@ -29,14 +29,14 @@ p=profiles[0]
 assert os.path.realpath(p['runtime_dir'])==os.path.realpath(sys.argv[2])
 assert not p.get('runtime_owned',False),'failed installation claimed another installation runtime'
 PY
-"$other_agent" uninstall --install-dir "$other" >"$work/removal.json"
+"$other_agent" uninstall --json --install-dir "$other" >"$work/removal.json"
 python3 - "$work/removal.json" <<'PY'
 import json,sys
 assert json.load(open(sys.argv[1]))['state']=='removed'
 PY
 [[ -S "$runtime/control.sock" ]]
 cmp "$runtime/.peerimeter-agent.runtime" "$work/runtime-marker.before"
-"$agent" status --runtime-dir "$runtime" >"$work/A-still-running.json"
+"$agent" status --json --runtime-dir "$runtime" >"$work/A-still-running.json"
 python3 - "$work/A-still-running.json" <<'PY'
 import json,sys
 assert json.load(open(sys.argv[1]))['state']=='running'
@@ -68,7 +68,7 @@ def start(index):
  for attempt in range(40):
   if process.poll() is not None:raise AssertionError('native historical-reuse agent exited before control readiness')
   try:
-   status=json.loads(cli(['status','--runtime-dir',str(runtime)]).stdout)
+   status=json.loads(cli(['status','--json','--runtime-dir',str(runtime)]).stdout)
    if status['state']=='running':return process,status
   except (subprocess.SubprocessError,json.JSONDecodeError):pass
   time.sleep(.2)
@@ -88,13 +88,13 @@ try:
  second,before_second=start(1)
  marker_second=(runtime/'.peerimeter-agent.runtime').read_bytes()
  assert marker_second!=marker_before,'runtime profile identity did not change when reused'
- result=subprocess.run([str(programs[0]/'peerimeter-agent'),'uninstall','--install-dir',str(programs[0])],capture_output=True,text=True,timeout=30,check=True)
+ result=subprocess.run([str(programs[0]/'peerimeter-agent'),'uninstall','--json','--install-dir',str(programs[0])],capture_output=True,text=True,timeout=30,check=True)
  assert json.loads(result.stdout)['state']=='removed'
  assert (runtime/'.peerimeter-agent.runtime').read_bytes()==marker_second,'historical owner removed or replaced the new runtime identity'
- after=json.loads(cli(['status','--runtime-dir',str(runtime)]).stdout)
+ after=json.loads(cli(['status','--json','--runtime-dir',str(runtime)]).stdout)
  assert after['state']=='running' and after['interface_name']==before_second['interface_name'],'historical owner stopped or recreated the new manager/tunnel'
  cli(['stop','--runtime-dir',str(runtime)]);assert second.wait(timeout=15)==0
- result=subprocess.run([str(programs[1]/'peerimeter-agent'),'uninstall','--install-dir',str(programs[1])],capture_output=True,text=True,timeout=30,check=True)
+ result=subprocess.run([str(programs[1]/'peerimeter-agent'),'uninstall','--json','--install-dir',str(programs[1])],capture_output=True,text=True,timeout=30,check=True)
  assert json.loads(result.stdout)['state']=='removed'
 finally:
  for process in processes:

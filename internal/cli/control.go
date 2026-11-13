@@ -8,7 +8,7 @@ import (
 
 func newControlCommand(app *application, name, short, operation string) *cobra.Command {
 	var options paths.Options
-	cmd := &cobra.Command{Use: name, Short: short, Args: noArguments, RunE: app.handle(func(cmd *cobra.Command) error {
+	cmd := &cobra.Command{Use: name, Short: short, Args: noArguments, RunE: app.handleResponse(func(cmd *cobra.Command) error {
 		layout, err := paths.Resolve(options)
 		if err != nil {
 			return err

@@ -3,8 +3,10 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"golang.org/x/term"
 	"io"
 	"log/slog"
 	"os"
@@ -16,14 +18,35 @@ import (
 )
 
 type application struct {
-	out     io.Writer
-	backend platform.Backend
-	ran     bool
-	debug   bool
+	out        io.Writer
+	backend    platform.Backend
+	ran        bool
+	debug      bool
+	jsonOutput bool
+	color      string
 }
 
 func (app *application) handle(f func(*cobra.Command) error) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, _ []string) error { app.ran = true; return f(cmd) }
+}
+
+func (app *application) handleResponse(f func(*cobra.Command) error) func(*cobra.Command, []string) error {
+	return app.handle(func(cmd *cobra.Command) error {
+		if app.jsonOutput {
+			return f(cmd)
+		}
+		original := app.out
+		var raw bytes.Buffer
+		app.out = &raw
+		defer func() { app.out = original }()
+		err := f(cmd)
+		if raw.Len() > 0 {
+			if renderErr := renderResponse(original, raw.Bytes(), shouldColor(original, app.color), outputWidth(original)); err == nil {
+				err = renderErr
+			}
+		}
+		return err
+	})
 }
 func noArguments(_ *cobra.Command, args []string) error {
 	if len(args) != 0 {
@@ -80,7 +103,15 @@ Environment variables:
 		DisableSuggestions: true,
 		RunE:               app.handle(func(*cobra.Command) error { return errors.New("command required; use --help") }),
 	}
+	root.PersistentPreRunE = func(*cobra.Command, []string) error {
+		if app.color != "auto" && app.color != "always" && app.color != "never" {
+			return errors.New("color must be auto, always or never")
+		}
+		return nil
+	}
 	root.SetOut(app.out)
+	root.PersistentFlags().StringVar(&app.color, "color", "auto", "Color mode: auto, always or never (auto respects NO_COLOR)")
+	root.PersistentFlags().BoolVar(&app.jsonOutput, "json", false, "Print machine-readable JSON for command results")
 	root.PersistentFlags().BoolVar(&app.debug, "debug", false, "include captured stack trace when an error occurs")
 	root.SetErr(io.Discard)
 	root.SetFlagErrorFunc(func(*cobra.Command, error) error { return errors.New("invalid command flags; use --help") })
@@ -92,6 +123,15 @@ Environment variables:
 		}
 		return target.Help()
 	}})
-	root.AddCommand(newVersionCommand(app), newGenerateExampleCommand(app), newRunCommand(app), newValidateConfigCommand(app), newStatusCommand(app), newPeersCommand(app), newSyncCommand(app), newStopCommand(app), newServiceCommand(app), newUninstallCommand(app), newRegisterInstallationCommand(app), newStunCommand(app))
+	root.AddCommand(newVersionCommand(app), newGenerateExampleCommand(app), newRunCommand(app), newValidateConfigCommand(app), newStatusCommand(app), newPeersCommand(app), newWGCommand(app), newSyncCommand(app), newStopCommand(app), newServiceCommand(app), newUninstallCommand(app), newRegisterInstallationCommand(app), newStunCommand(app))
 	return root
+}
+
+func outputWidth(out io.Writer) int {
+	if file, ok := out.(*os.File); ok {
+		if width, _, err := term.GetSize(int(file.Fd())); err == nil {
+			return width
+		}
+	}
+	return 80
 }

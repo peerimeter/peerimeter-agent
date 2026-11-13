@@ -9,7 +9,7 @@ import (
 func newValidateConfigCommand(app *application) *cobra.Command {
 	var path, override string
 	var options paths.Options
-	cmd := &cobra.Command{Use: "validate-config", Short: "Validate static JSON and protected key without OS changes", Args: noArguments, RunE: app.handle(func(cmd *cobra.Command) error {
+	cmd := &cobra.Command{Use: "validate-config", Short: "Validate static JSON and protected key without OS changes", Args: noArguments, RunE: app.handleResponse(func(cmd *cobra.Command) error {
 		layout, err := paths.Resolve(options)
 		if err != nil {
 			return err

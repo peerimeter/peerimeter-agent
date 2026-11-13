@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -15,6 +16,14 @@ func TestVersionLogoAndMachineOutput(t *testing.T) {
 	code, out, err = invoke(t, "version", "--color", "always")
 	if code != 0 || err != "" || !strings.Contains(out, "\x1b[38;5;") {
 		t.Fatal("forced ANSI logo missing")
+	}
+	for _, color := range []int{198, 199, 165, 129, 93, 63} {
+		if !strings.Contains(out, fmt.Sprintf("\x1b[38;5;%dm", color)) {
+			t.Fatalf("missing original logo color %d", color)
+		}
+	}
+	if strings.Contains(out, "PEERIMETER /") || strings.Contains(out, "╭") {
+		t.Fatal("version should retain original unboxed logo")
 	}
 	code, out, err = invoke(t, "version", "--json", "--color", "always")
 	var data map[string]string

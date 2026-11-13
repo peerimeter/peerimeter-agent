@@ -78,13 +78,13 @@ function Assert-Package([string]$Directory) {
 function Remove-InstalledPackage([string]$Directory,[string]$ExternalCLI) {
     $binary = Join-Path $Directory 'peerimeter-agent.exe'
     $before = @(Get-ChildItem -LiteralPath $Directory -Force -File | Sort-Object Name | ForEach-Object { $_.Name + ':' + (Get-FileHash -LiteralPath $_.FullName).Hash + ':' + (Get-Acl -LiteralPath $_.FullName).Sddl }) -join "`n"
-    $dry = & $binary uninstall --install-dir $Directory --dry-run | ConvertFrom-Json
+    $dry = & $binary uninstall --json --install-dir $Directory --dry-run | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0 -or $dry.state -ne 'dry_run') { throw 'Installed package dry-run failed' }
     $after = @(Get-ChildItem -LiteralPath $Directory -Force -File | Sort-Object Name | ForEach-Object { $_.Name + ':' + (Get-FileHash -LiteralPath $_.FullName).Hash + ':' + (Get-Acl -LiteralPath $_.FullName).Sddl }) -join "`n"
     if ($before -ne $after) { throw 'Installed package dry-run changed inventory, files or ACLs' }
     $sentinel = Join-Path $Directory 'unrelated.txt'
     [IO.File]::WriteAllText($sentinel,'operator data stays')
-    $result = & $binary uninstall --install-dir $Directory | ConvertFrom-Json
+    $result = & $binary uninstall --json --install-dir $Directory | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { Show-RecentRemovalDiagnostics $Directory; throw 'Installed package full uninstall failed' }
     if ($result.state -eq 'pending') {
         if (-not $result.result_file) { throw 'Pending Windows removal omitted its completion report' }
@@ -106,7 +106,7 @@ function Remove-InstalledPackage([string]$Directory,[string]$ExternalCLI) {
         if (Test-Path -LiteralPath (Join-Path $Directory $name)) { throw "Installed program member survived uninstall: $name" }
     }
     if ([IO.File]::ReadAllText($sentinel) -ne 'operator data stays') { throw 'Full uninstall removed unrelated installation-parent data' }
-    $again = & $ExternalCLI uninstall --install-dir $Directory | ConvertFrom-Json
+    $again = & $ExternalCLI uninstall --json --install-dir $Directory | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0 -or $again.state -ne 'already_absent') { throw 'Second package uninstall was not idempotent' }
 }
 function Expect-Failure([scriptblock]$Operation) {

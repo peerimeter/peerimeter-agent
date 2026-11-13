@@ -30,7 +30,7 @@ func TestExampleValidatesAndRefusesOverwrite(t *testing.T) {
 		t.Fatal(e)
 	}
 	for _, name := range []string{"a", "b"} {
-		if c, o, e := invoke(t, "validate-config", "--config", filepath.Join(dir, "peer-"+name+".json")); c != 0 || !strings.Contains(o, `"state":"valid"`) {
+		if c, o, e := invoke(t, "validate-config", "--config", filepath.Join(dir, "peer-"+name+".json")); c != 0 || !strings.Contains(o, "valid") || !strings.Contains(o, "State") {
 			t.Fatalf("%d %s %s", c, o, e)
 		}
 	}
@@ -237,13 +237,111 @@ func TestPeerHumanAndJSONUseSamePublicSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeServer()
+
+	for _, operation := range []string{"status", "sync"} {
+		for _, machine := range []bool{false, true} {
+			args := []string{operation, "--runtime-dir", runtimeDir}
+			if machine {
+				args = append(args, "--json")
+			}
+			code, out, stderr := invoke(t, args...)
+			if code != 0 || stderr != "" || out == "" || (machine && !json.Valid([]byte(out))) || (!machine && json.Valid([]byte(out))) {
+				t.Fatalf("%s JSON=%t: %d %s %s", operation, machine, code, out, stderr)
+			}
+		}
+	}
 	code, out, stderr := invoke(t, "peers", "--runtime-dir", runtimeDir, "--color", "never")
-	if code != 0 || stderr != "" || !strings.Contains(out, "peer: public-test") || !strings.Contains(out, "private key: (hidden)") {
+	if code != 0 || stderr != "" || !strings.Contains(out, "Connection") || strings.Contains(out, "PEERIMETER /") || !strings.Contains(out, "public-test") || !strings.Contains(out, "Handshake") {
 		t.Fatalf("human output: %d %s %s", code, out, stderr)
+	}
+
+	var wgOutput string
+	for _, args := range [][]string{
+		{"wg", "--runtime-dir", runtimeDir, "--color", "never"},
+		{"wg", "show", "--runtime-dir", runtimeDir, "--color", "never"},
+		{"wg", "--runtime-dir", runtimeDir, "--color", "never", "show"},
+	} {
+		code, out, stderr := invoke(t, args...)
+		if code != 0 || stderr != "" || !strings.Contains(out, "peer: public-test") || !strings.Contains(out, "private key: (hidden)") {
+			t.Fatalf("%v: %d %s %s", args, code, out, stderr)
+		}
+		if wgOutput != "" && out != wgOutput {
+			t.Fatal("wg and wg show differ")
+		}
+		wgOutput = out
+	}
+	for _, args := range [][]string{
+		{"wg", "--json", "--runtime-dir", runtimeDir},
+		{"wg", "show", "--json", "--runtime-dir", runtimeDir},
+		{"--json", "peers", "--runtime-dir", runtimeDir},
+	} {
+		code, out, stderr := invoke(t, args...)
+		if code != 0 || stderr != "" || !json.Valid([]byte(out)) || strings.Contains(out, "\x1b") {
+			t.Fatalf("%v: %d %s %s", args, code, out, stderr)
+		}
 	}
 	code, out, stderr = invoke(t, "peers", "--runtime-dir", runtimeDir, "--json")
 	var peers []platform.PeerState
 	if code != 0 || stderr != "" || json.Unmarshal([]byte(out), &peers) != nil || len(peers) != 1 || peers[0].PublicKey != "public-test" {
 		t.Fatalf("JSON output: %d %s %s", code, out, stderr)
+	}
+}
+
+func TestCommandResultsDefaultToConsoleWithJSONOptIn(t *testing.T) {
+	for _, machine := range []bool{false, true} {
+		dir := filepath.Join(t.TempDir(), "examples")
+		args := []string{"generate-example", "--directory", dir, "--peers", "3"}
+		if machine {
+			args = append(args, "--json")
+		}
+		code, out, stderr := invoke(t, args...)
+		if code != 0 || stderr != "" {
+			t.Fatalf("%d %s", code, stderr)
+		}
+		if machine {
+			var result map[string]string
+			if err := json.Unmarshal([]byte(out), &result); err != nil || result["state"] != "example_generated" {
+				t.Fatalf("invalid JSON: %s", out)
+			}
+		} else if !strings.Contains(out, "example_generated") || !strings.Contains(out, "Field") || !strings.Contains(out, "Value") || !strings.Contains(out, "keep private") || strings.Contains(out, "{") {
+			t.Fatalf("invalid console output: %s", out)
+		}
+		args = []string{"validate-config", "--config", filepath.Join(dir, "peer-a.json")}
+		if machine {
+			args = append(args, "--json")
+		}
+		code, out, stderr = invoke(t, args...)
+		if code != 0 || stderr != "" || (machine && !json.Valid([]byte(out))) || (!machine && (!strings.Contains(out, "Peer count") || !strings.Contains(out, "2"))) {
+			t.Fatalf("validation: %d %s %s", code, out, stderr)
+		}
+	}
+}
+
+func TestSTUNConsoleAndJSON(t *testing.T) {
+	previous := probeSTUN
+	defer func() { probeSTUN = previous }()
+	probeSTUN = func(port int, server string) (stunprobe.Result, error) {
+		return stunprobe.Result{Server: server, LocalAddress: "0.0.0.0:51820", MappedAddress: "203.0.113.1:62000"}, nil
+	}
+	for _, machine := range []bool{false, true} {
+		args := []string{"stun", "51820", "--server", "stun.example:3478"}
+		if machine {
+			args = append(args, "--json")
+		}
+		code, out, stderr := invoke(t, args...)
+		if code != 0 || stderr != "" || !strings.Contains(out, "203.0.113.1:62000") || strings.Contains(out, "\x1b") {
+			t.Fatalf("%d %s %s", code, out, stderr)
+		}
+		if machine && !json.Valid([]byte(out)) {
+			t.Fatal(out)
+		}
+		if !machine && !strings.Contains(out, "STUN SERVER") {
+			t.Fatal(out)
+		}
+	}
+	m := stunModel{}
+	next, cmd := m.Update(stunResultMsg{result: stunprobe.Result{MappedAddress: "203.0.113.1:62000"}})
+	if !next.(stunModel).done || cmd == nil {
+		t.Fatal("STUN completion did not exit UI")
 	}
 }

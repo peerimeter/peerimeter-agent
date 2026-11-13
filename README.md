@@ -161,8 +161,9 @@ On Windows, run the same commands from an elevated terminal.
 
 | Command | Output or action |
 | --- | --- |
-| `status` | JSON describing the local agent and adapter |
-| `peers` | Human-readable WireGuard peer list |
+| `status` | Readable local agent and adapter state (`--json` for scripts) |
+| `peers` | Lip Gloss peer tables with endpoint, handshake and traffic details |
+| `wg` / `wg show` | Traditional WireGuard-style interface and peer listing |
 | `peers --json` | Peer data for automation |
 | `sync` | Validate and reapply the original configuration |
 | `stop` | Stop the tunnel and clean up routes |
@@ -290,12 +291,34 @@ commits and remaining limits.
 
 ## CLI output
 
-Peer listing is refactored from the [wgshow
+The traditional `wg show` listing (also the default for `wg`) is refactored from the [wgshow
 example](https://github.com/zer0go/wgctrl-go/blob/47ad6fc7d7a95296fe893b49c1d4584b4eb6ac40/cmd/wgshow/main.go),
 with [MIT attribution](third_party/wgshow/README.md). It shows public keys,
 endpoints, AllowedIPs, handshake age, traffic and keepalive. Private and
 preshared keys never enter the renderer. Missing handshakes and clock skew are
 explicit.
+
+`peers` uses pink/purple Lip Gloss tables with header rows and bordered cells.
+Wide terminals show individual columns for public key, endpoint, AllowedIPs,
+handshake, received/sent traffic and keepalive. Smaller terminals group related
+fields or use two-column detail tables; complete keys and endpoints are preserved.
+`status`, example generation, validation, service actions, sync, stop, uninstall
+and STUN also use tables. No extra branded heading is added. Help retains Cobra's
+standard layout, and `version` retains its original unboxed, gradient-colored logo.
+Runtime diagnostics continue to use console logging; completion output remains
+valid shell code.
+
+Use `--color auto|always|never` on any command; automatic color respects `NO_COLOR`,
+`TERM=dumb` and redirected output. Plain output keeps the readable layout without
+ANSI styling. `--json` bypasses result styling, including for `peers`, `wg` and
+`wg show`; all three return the same public peer array in JSON mode.
+
+```sh
+peerimeter-agent peers
+peerimeter-agent wg          # defaults to wg show
+peerimeter-agent wg show --color never
+peerimeter-agent peers --json
+```
 
 Cobra provides contextual `--help` and `completion bash|zsh|fish|powershell`.
 Commands live in separate files under `internal/cli` (`root.go`, `run.go`,
@@ -372,3 +395,13 @@ and `stun2.l.google.com:19302` in order, advancing when a server fails. The
 the bound local address and mapped public address in console format; pass
 `--json` for machine-readable output. A STUN mapping alone does not establish
 WireGuard connectivity or promise NAT traversal.
+
+Command results default to readable console text, including example generation,
+configuration validation, service actions, sync, stop and uninstall. Use `--json`
+when a script needs the machine-readable result. `PEERIMETER_LOG_FORMAT` controls
+diagnostic logs separately. Config files and the local control protocol remain JSON.
+
+STUN uses a Bubble Tea progress indicator in an interactive terminal and prints
+a table containing the STUN server, local address and mapped address on completion.
+Press `q`, Escape or Ctrl+C to cancel. Redirected output and `TERM=dumb` use a
+plain table without terminal control sequences; `stun --json` skips the UI.

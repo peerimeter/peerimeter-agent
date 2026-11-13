@@ -21,7 +21,7 @@ var probeExampleEndpoint = stunprobe.Probe
 func newGenerateExampleCommand(app *application) *cobra.Command {
 	var directory, stunServer string
 	var count, stunPeer int
-	cmd := &cobra.Command{Use: "generate-example", Short: "Create static mesh configs and fresh protected local keys", Args: noArguments, RunE: app.handle(func(*cobra.Command) error {
+	cmd := &cobra.Command{Use: "generate-example", Short: "Create static mesh configs and fresh protected local keys", Args: noArguments, RunE: app.handleResponse(func(*cobra.Command) error {
 		if err := generateMesh(directory, count, stunPeer, stunServer); err != nil {
 			return err
 		}

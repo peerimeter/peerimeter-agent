@@ -6,7 +6,7 @@ lint:
 	go vet ./...
 	@test -z "$$(gofmt -l cmd internal)"
 build:
-	CGO_ENABLED=0 go build -o bin/peerimeter-agent ./cmd/peerimeter-agent
+	go build -o bin/peerimeter-agent ./cmd/peerimeter-agent
 test-integration:
 	bash scripts/ci/run-agent-integration.sh
 test-network:

@@ -79,7 +79,7 @@ config_for_state() { printf '%s config' "$1"; }
 control() {
   local namespace=$1 state=$2 operation=$3
   local output_flags=()
-  [[ "$operation" != peers ]] || output_flags=(--json)
+  [[ "$operation" != peers && "$operation" != status ]] || output_flags=(--json)
   if [[ -n "$namespace" ]]; then
     timeout 12s ip netns exec "$namespace" "$AGENT" "$operation" "${output_flags[@]}" --runtime-dir "$(runtime_for_state "$state")"
   else
@@ -89,7 +89,7 @@ control() {
 operator_control() {
   local namespace=$1 state=$2 operation=$3
   local output_flags=()
-  [[ "$operation" != peers ]] || output_flags=(--json)
+  [[ "$operation" != peers && "$operation" != status ]] || output_flags=(--json)
   if [[ -n "$namespace" ]]; then
     timeout 12s ip netns exec "$namespace" runuser -u "$operator" -- "$AGENT" "$operation" "${output_flags[@]}" --runtime-dir "$(runtime_for_state "$state")"
   else
@@ -127,7 +127,7 @@ check_handshake() {
   control "$namespace" "$state" peers >"$output.peers"
   local cfg="$work/config/peer-a.json" other="$work/config/peer-b.json"
   [[ "$namespace" == "$left" ]] || { cfg="$work/config/peer-b.json"; other="$work/config/peer-a.json"; }
-  timeout 12s ip netns exec "$namespace" "$AGENT" peers --runtime-dir "$(runtime_for_state "$state")" >"$output.human"
+  timeout 12s ip netns exec "$namespace" "$AGENT" wg show --runtime-dir "$(runtime_for_state "$state")" >"$output.human"
   python3 - "$output" "$output.peers" "$cfg" "$other" "$output.human" <<'PY'
 import datetime, json, sys
 s=json.load(open(sys.argv[1])); peers=json.load(open(sys.argv[2]))
@@ -215,12 +215,12 @@ if runuser -u "$operator" -- test -r "$work/config/peer-a.key" || runuser -u "$o
 fi
 # Prove the unrelated account can execute the CLI but cannot reach control IPC.
 runuser -u daemon -- "$AGENT" version >/dev/null
-if timeout 12s ip netns exec "$left" runuser -u daemon -- "$AGENT" status --runtime-dir "$(runtime_for_state "$work/left-state")" >"$work/unauthorized.log" 2>&1; then
+if timeout 12s ip netns exec "$left" runuser -u daemon -- "$AGENT" status --json --runtime-dir "$(runtime_for_state "$work/left-state")" >"$work/unauthorized.log" 2>&1; then
   echo 'An unrelated Unix user reached delegated agent control.' >&2; exit 1
 fi
 # Authorization must remain strict even if the socket owner broadens DAC mode.
 runuser -u "$operator" -- chmod 0666 "$(runtime_for_state "$work/left-state")/control.sock"
-if timeout 12s ip netns exec "$left" runuser -u daemon -- "$AGENT" status --runtime-dir "$(runtime_for_state "$work/left-state")" >"$work/unauthorized-broad-mode.log" 2>&1; then
+if timeout 12s ip netns exec "$left" runuser -u daemon -- "$AGENT" status --json --runtime-dir "$(runtime_for_state "$work/left-state")" >"$work/unauthorized-broad-mode.log" 2>&1; then
   echo 'An unrelated Unix user bypassed peer-UID authorization through socket chmod.' >&2; exit 1
 fi
 runuser -u "$operator" -- chmod 0600 "$(runtime_for_state "$work/left-state")/control.sock"
@@ -338,14 +338,14 @@ service_installed=true
 systemctl is-enabled peerimeter-agent.service
 "$AGENT" service start
 wait_running '' "$work/service-state" "$work/service-status.json"
-operator_control '' "$work/service-state" status >"$work/service-operator-status.json"
+operator_control '' "$work/service-state" status --json >"$work/service-operator-status.json"
 operator_control '' "$work/service-state" peers >"$work/service-operator-peers.json"
 operator_control '' "$work/service-state" sync
 "$AGENT" service stop
 if ip link show dev pm-service >/dev/null 2>&1; then echo 'systemd stop left its interface behind.' >&2; exit 1; fi
 "$AGENT" service start
 wait_running '' "$work/service-state" "$work/service-restarted.json"
-operator_control '' "$work/service-state" status >"$work/service-operator-restarted.json"
+operator_control '' "$work/service-state" status --json >"$work/service-operator-restarted.json"
 "$AGENT" service stop
 "$AGENT" service uninstall
 service_installed=false

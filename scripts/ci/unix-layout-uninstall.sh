@@ -82,9 +82,9 @@ wait_status() {
  local executable=$1 runtime=${2:-} output=$3 attempt
  for attempt in {1..40}; do
   if [[ -n "$runtime" ]]; then
-   if "$executable" status --runtime-dir "$runtime" >"$output" 2>/dev/null; then return 0; fi
+   if "$executable" status --json --runtime-dir "$runtime" >"$output" 2>/dev/null; then return 0; fi
   else
-   if "$executable" status >"$output" 2>/dev/null; then return 0; fi
+   if "$executable" status --json >"$output" 2>/dev/null; then return 0; fi
   fi
   sleep 0.3
  done
@@ -194,7 +194,7 @@ active="$agent"
 "$agent" service start
 wait_status "$agent" '' "$base/default-status.json"
 check_layout "$defaults_config" "$defaults_state" "$defaults_runtime"
-as_operator "$agent" status >"$base/default-operator.json"
+as_operator "$agent" status --json >"$base/default-operator.json"
 as_operator "$agent" peers --json >"$base/default-operator-peers.json"
 as_operator "$agent" sync
 bash "$repo/scripts/ci/unix-config-collision.sh" "$agent" "$source_config" "$defaults_config" "$defaults_runtime" "$base"
@@ -238,7 +238,7 @@ with (root/'queued-process.log').open('w') as log:
     time.sleep(.05)
   # A FIFO reader proves the native image has executed, rather than merely
   # being forked but not yet loaded when the installed path is deleted.
-  removed=subprocess.run([agent,'uninstall','--install-dir',program],capture_output=True,text=True,timeout=30,check=True)
+  removed=subprocess.run([agent,'uninstall','--json','--install-dir',program],capture_output=True,text=True,timeout=30,check=True)
   assert json.loads(removed.stdout)['state']=='removed'
   os.write(fd,json.dumps(config).encode());os.close(fd);fd=None
   assert process.wait(timeout=10)!=0,'deleted installed image restarted as an untracked manager'
@@ -265,7 +265,7 @@ active="$agent"
 "$agent" service install --config "$source_config" --state-dir "$legacy" --operator "$operator"
 "$agent" service start
 for attempt in {1..40}; do
- if "$agent" status --state-dir "$legacy" >"$base/legacy-status.json" 2>/dev/null; then break; fi
+ if "$agent" status --json --state-dir "$legacy" >"$base/legacy-status.json" 2>/dev/null; then break; fi
  sleep 0.3
 done
 [[ -S "$legacy/control.sock" ]]
@@ -283,7 +283,7 @@ fi
 cmp "$new_config/service.key" "$base/conflict.original"
 cmp "$legacy/service.key" "$base/old-service.key"
 cmp "$legacy/ownership" "$base/old-ownership"
-"$agent" status --runtime-dir "$legacy" >"$base/legacy-after-conflict.json"
+"$agent" status --json --runtime-dir "$legacy" >"$base/legacy-after-conflict.json"
 rm "$new_config/service.key"
 "$agent" service migrate --state-dir "$legacy" --config-dir "$new_config" --runtime-dir "$new_runtime" --operator "$operator"
 [[ ! -e "$legacy/service.json" && ! -e "$legacy/service.key" && ! -e "$legacy/control.sock" ]]
@@ -293,38 +293,38 @@ if [[ -f "$base/old-network.json" ]]; then cmp "$legacy/network.json" "$base/old
 "$agent" service start
 wait_status "$agent" "$new_runtime" "$base/migrated-status.json"
 check_layout "$new_config" "$legacy" "$new_runtime"
-as_operator "$agent" status --runtime-dir "$new_runtime" >"$base/migrated-operator.json"
+as_operator "$agent" status --json --runtime-dir "$new_runtime" >"$base/migrated-operator.json"
 as_operator "$agent" peers --json --runtime-dir "$new_runtime" >"$base/migrated-operator-peers.json"
 as_operator "$agent" sync --runtime-dir "$new_runtime"
 echo 'PASS: live old combined service migration rejects conflicts, preserves keys/interface identity and starts with spaced separate directories.'
 
 for directory in "$program" "$new_config" "$legacy" "$new_runtime"; do printf 'unrelated operator file\n' >"$directory/unrelated.txt"; done
 snapshot "$program" "$new_config" "$legacy" "$new_runtime" "$service_file" >"$base/before-dry-run.json"
-"$agent" uninstall --install-dir "$program" --dry-run >"$base/dry-run.json"
+"$agent" uninstall --json --install-dir "$program" --dry-run >"$base/dry-run.json"
 check_state "$base/dry-run.json" dry_run
 snapshot "$program" "$new_config" "$legacy" "$new_runtime" "$service_file" >"$base/after-dry-run.json"
 cmp "$base/before-dry-run.json" "$base/after-dry-run.json"
-"$agent" status --runtime-dir "$new_runtime" >"$base/still-running-after-dry-run.json"
+"$agent" status --json --runtime-dir "$new_runtime" >"$base/still-running-after-dry-run.json"
 # Refuse hash-changed owned program resources without stopping the working
 # service. Restoring and then omitting a previously removed member exercises retry
 # from a partial inventory cleanup, without adding production-only fault hooks.
 cp "$program/peerimeter-agent.NOTICES.txt" "$base/notices.original"
 printf 'operator changed tracked notice\n' >>"$program/peerimeter-agent.NOTICES.txt"
-if "$agent" uninstall --install-dir "$program" >"$base/changed-file.log" 2>&1; then echo 'Uninstall ignored changed owned-file hash.' >&2; exit 1; fi
+if "$agent" uninstall --json --install-dir "$program" >"$base/changed-file.log" 2>&1; then echo 'Uninstall ignored changed owned-file hash.' >&2; exit 1; fi
 [[ -f "$new_config/service.key" && -f "$program/.peerimeter-agent.install.json" ]]
-"$agent" status --runtime-dir "$new_runtime" >"$base/still-running-after-rejection.json"
+"$agent" status --json --runtime-dir "$new_runtime" >"$base/still-running-after-rejection.json"
 cp "$base/notices.original" "$program/peerimeter-agent.NOTICES.txt"
 rm "$program/peerimeter-agent.NOTICES.txt"
-"$agent" uninstall --install-dir "$program" >"$base/removed.json"
+"$agent" uninstall --json --install-dir "$program" >"$base/removed.json"
 check_state "$base/removed.json" removed
 wait_interface_gone "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["interface_name"])' "$base/migrated-status.json")"
 active=''
 [[ ! -e "$service_file" && ! -e "$new_runtime/control.sock" ]]
 for path in "$program/peerimeter-agent" "$program/.peerimeter-agent.install.json" "$program/.peerimeter-agent.install.lock" "$new_config/service.json" "$new_config/service.key" "$legacy/ownership" "$legacy/network.json" "$legacy/agent.lock" "$legacy/.peerimeter-agent.profile"; do [[ ! -e "$path" ]] || { echo "Managed resource survived uninstall: $path" >&2; exit 1; }; done
 for directory in "$program" "$new_config" "$legacy" "$new_runtime"; do [[ $(cat "$directory/unrelated.txt") == 'unrelated operator file' ]]; done
-"$source_cli" uninstall --install-dir "$program" >"$base/already-absent.json"
+"$source_cli" uninstall --json --install-dir "$program" >"$base/already-absent.json"
 check_state "$base/already-absent.json" already_absent
-"$program_default/peerimeter-agent" uninstall --install-dir "$program_default" >"$base/default-removed.json"
+"$program_default/peerimeter-agent" uninstall --json --install-dir "$program_default" >"$base/default-removed.json"
 check_state "$base/default-removed.json" removed
 [[ $(cat "$default_sentinel") == 'unrelated shared-bin resource' ]]
 for member in peerimeter-agent peerimeter-agent.NOTICES.txt .peerimeter-agent.install.json .peerimeter-agent.install.lock; do [[ ! -e "$program_default/$member" ]]; done

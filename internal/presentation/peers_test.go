@@ -3,6 +3,7 @@ package presentation
 import (
 	"bytes"
 	"errors"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
 	"math"
 	"strings"
@@ -83,5 +84,69 @@ func (failWriter) Write([]byte) (int, error) { return 0, errors.New("write failu
 func TestWriterFailure(t *testing.T) {
 	if PeerList(failWriter{}, platform.Snapshot{}, time.Now(), false) == nil {
 		t.Fatal("lost writer failure")
+	}
+}
+
+func TestOverviewLayoutAndPublicValues(t *testing.T) {
+	now := time.Unix(1730000000, 0)
+	snapshot := platform.Snapshot{NetworkID: "mesh", InterfaceName: "pm-test", Peers: []platform.PeerState{
+		{PublicKey: "zz-public", Endpoint: "[2001:db8::1]:51820", AllowedIPs: []string{"10.1.0.2/32"}, LastHandshake: now.Add(time.Hour)},
+		{PublicKey: "aa-public", PersistentKeepaliveSeconds: 25, ReceivedBytes: 1024},
+	}}
+	for _, width := range []int{20, 40, 80, 160} {
+		var out bytes.Buffer
+		if err := PeerOverview(&out, snapshot, now, false, width); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out.String(), "\x1b") {
+			t.Fatal("ANSI in plain overview")
+		}
+		for _, line := range strings.Split(out.String(), "\n") {
+			if lipgloss.Width(line) > width {
+				t.Fatalf("width %d: %q", width, line)
+			}
+		}
+		// Wrapping may split values on very narrow terminals; all text is preserved.
+		// Read each rendered table column vertically to reconstruct wrapped values.
+		columns := make([]strings.Builder, 7)
+		for _, line := range strings.Split(out.String(), "\n") {
+			cells := strings.Split(line, "│")
+			if len(cells) < 3 {
+				continue
+			}
+			for i, cell := range cells[1 : len(cells)-1] {
+				if i < len(columns) {
+					columns[i].WriteString(strings.Join(strings.Fields(cell), ""))
+				}
+			}
+		}
+		compact := ""
+		for i := range columns {
+			compact += columns[i].String() + "\n"
+		}
+
+		for _, value := range []string{"aa-public", "zz-public", "[2001:db8::1]:51820", "10.1.0.2/32", "clockskew", "1.0KiB", "every25seconds"} {
+			if !strings.Contains(compact, value) {
+				t.Fatalf("missing %s at width %d: %s", value, width, out.String())
+			}
+		}
+		if strings.Index(compact, "aa-public") > strings.Index(compact, "zz-public") {
+			t.Fatal("peers not sorted")
+		}
+	}
+	var out bytes.Buffer
+	if err := PeerOverview(&out, snapshot, now, true, 80); err != nil || !strings.Contains(out.String(), "\x1b[") {
+		t.Fatal("missing color", err)
+	}
+	if PeerOverview(failWriter{}, snapshot, now, false, 80) == nil {
+		t.Fatal("lost write failure")
+	}
+	out.Reset()
+	if err := PeerOverview(&out, platform.Snapshot{NetworkID: "mesh\x1b[31m\ncontrol"}, now, false, 80); err != nil || strings.Contains(out.String(), "\x1b") {
+		t.Fatal("unsafe output", err)
+	}
+	out.Reset()
+	if err := PeerOverview(&out, platform.Snapshot{}, now, false, 80); err != nil || !strings.Contains(out.String(), "No peers configured.") {
+		t.Fatal("missing empty state", err)
 	}
 }
