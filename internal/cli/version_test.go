@@ -10,7 +10,7 @@ import (
 func TestVersionLogoAndMachineOutput(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	code, out, err := invoke(t, "version")
-	if code != 0 || err != "" || !strings.Contains(out, "P E E R I M E T E R") || !strings.Contains(out, Version) || strings.Contains(out, "\x1b[") {
+	if code != 0 || err != "" || !strings.Contains(out, versionLogo) || !strings.Contains(out, Version) || strings.Contains(out, "\x1b[") {
 		t.Fatalf("invalid plain logo: %d %q %s", code, out, err)
 	}
 	code, out, err = invoke(t, "version", "--color", "always")
@@ -22,8 +22,8 @@ func TestVersionLogoAndMachineOutput(t *testing.T) {
 			t.Fatalf("missing original logo color %d", color)
 		}
 	}
-	if strings.Contains(out, "PEERIMETER /") || strings.Contains(out, "╭") {
-		t.Fatal("version should retain original unboxed logo")
+	if !strings.Contains(out, "Field") || !strings.Contains(out, "Agent") || !strings.Contains(out, "Platform") || !strings.Contains(out, "Go") {
+		t.Fatal("version details should use the shared headed table below the logo")
 	}
 	code, out, err = invoke(t, "version", "--json", "--color", "always")
 	var data map[string]string
