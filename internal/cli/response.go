@@ -49,7 +49,7 @@ func renderResponse(out io.Writer, raw []byte, color bool, width int) error {
 			for i, path := range paths {
 				rows[i] = []string{path}
 			}
-			return presentation.Table(out, []string{"Deleted file"}, rows, color, width)
+			return presentation.Table(out, []string{"Deleted files"}, rows, color, width)
 		}
 	}
 	if len(fields) == 1 {
