@@ -3,6 +3,7 @@ package installstate
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"golang.org/x/sys/unix"
 	"syscall"
 	"unsafe"
@@ -16,7 +17,7 @@ func checkExtendedTrust(path string, private, directory bool) error {
 	flags := unix.O_RDONLY | unix.O_CLOEXEC | unix.O_NOFOLLOW | unix.O_NONBLOCK
 	fd, err := unix.Open(path, flags, 0)
 	if err != nil {
-		return errors.New("cannot verify macOS installation extended permissions")
+		return fmt.Errorf("cannot verify macOS installation extended permissions for %s: %w", path, err)
 	}
 	defer unix.Close(fd)
 	var st unix.Stat_t
@@ -24,7 +25,7 @@ func checkExtendedTrust(path string, private, directory bool) error {
 	size := uint64(len(buf))
 	_, _, e := syscall.Syscall6(syscall.SYS_FSTAT64_EXTENDED, uintptr(fd), uintptr(unsafe.Pointer(&st)), uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size)), 0, 0)
 	if e != 0 {
-		return errors.New("cannot verify macOS installation extended permissions")
+		return fmt.Errorf("cannot verify macOS installation extended permissions for %s: %w", path, e)
 	}
 	if size == 0 {
 		return nil
