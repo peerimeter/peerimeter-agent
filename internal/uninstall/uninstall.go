@@ -33,6 +33,7 @@ type removalFile struct {
 type removalPlan struct {
 	Version     int                    `json:"version"`
 	InstallID   string                 `json:"installation_id"`
+	InstallDir  string                 `json:"install_dir"`
 	ParentPID   int                    `json:"parent_pid"`
 	Inventory   string                 `json:"inventory"`
 	Lock        string                 `json:"lock"`
@@ -84,7 +85,7 @@ func resources(p installstate.Profile) []removalFile {
 	return files
 }
 func makePlan(inv installstate.Inventory) removalPlan {
-	p := removalPlan{Version: 1, InstallID: inv.ID, ParentPID: os.Getpid(), Inventory: filepath.Join(inv.DataDir, installstate.Filename), Lock: filepath.Join(inv.LockDir, installstate.LockFilename), Profiles: inv.Profiles}
+	p := removalPlan{Version: 1, InstallID: inv.ID, InstallDir: inv.InstallDir, ParentPID: os.Getpid(), Inventory: filepath.Join(inv.DataDir, installstate.Filename), Lock: filepath.Join(inv.LockDir, installstate.LockFilename), Profiles: inv.Profiles}
 	seen := map[string]bool{}
 	dirs := map[string]bool{inv.InstallDir: true, inv.DocDir: true, inv.DataDir: true, inv.LockDir: true}
 	p.Files = append(p.Files, removalFile{Path: filepath.Join(inv.InstallDir, installstate.ReferenceFilename)})

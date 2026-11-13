@@ -82,7 +82,11 @@ function Remove-TestDirectory([string]$Path) {
     }
 }
 function Show-RecentRemovalDiagnostics {
-    $logs = @(Get-ChildItem -LiteralPath $env:TEMP -Filter 'peerimeter-uninstall-*.helper.log' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 2)
+    $logs = @()
+    foreach ($root in @($env:TEMP,(Join-Path $env:ProgramData 'Peerimeter\Installations'),$env:ProgramFiles)) {
+        if (Test-Path -LiteralPath $root) { $logs += @(Get-ChildItem -LiteralPath $root -Filter '.peerimeter-uninstall-*.helper.log' -File -ErrorAction SilentlyContinue) }
+    }
+    $logs = @($logs | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 3)
     foreach ($log in $logs) {
         Write-Host 'Recent bounded removal helper diagnostics:'
         Get-Content -LiteralPath $log.FullName -Tail 40 | ForEach-Object { Write-Host $_ }
