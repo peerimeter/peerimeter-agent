@@ -205,12 +205,17 @@ function Confirm-RemovalReceipt($Removal) {
 function Verify-ConfigurationCollision {
     & (Join-Path $PSScriptRoot '..\..\docs\install.ps1') -Archive $archive -SHA256 (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -InstallDir $collisionInstall
     $otherAgent = Join-Path $collisionInstall 'peerimeter-agent.exe'
-    $before = Snapshot-ManagedTrees @($defaultState)
+    # Compare A's own resources only. The shared ProgramData namespace also
+    # contains B's independently installed inventory, which this operation may
+    # legitimately create while rejecting A's private service configuration.
+    $defaultProfileFiles = @('service.json','service.key','network.json','ownership','agent.lock','.peerimeter-agent.profile','.peerimeter-agent.runtime','.peerimeter-agent.config') | ForEach-Object { Join-Path $defaultState $_ }
+    $defaultProfileSnapshotRoots = @($installResourceRoot) + $defaultProfileFiles
+    $before = Snapshot-ManagedTrees $defaultProfileSnapshotRoots
     $beforeService = Get-CimInstance Win32_Service -Filter "Name='PeerimeterAgent'"
     $installOutput = & $otherAgent service install --config $configPath --config-dir $defaultState --state-dir (Join-Path $dir 'configuration collision state B') --runtime-dir (Join-Path $dir 'configuration collision runtime B') 2>&1
     $installExitCode = $LASTEXITCODE
     if ($installExitCode -eq 0) { throw 'Installation B adopted installation A protected configuration' }
-    $after = Snapshot-ManagedTrees @($defaultState)
+    $after = Snapshot-ManagedTrees $defaultProfileSnapshotRoots
     if ($after -ne $before) {
         Write-Output 'Rejected service install output:'
         $installOutput | ForEach-Object { Write-Output $_ }
@@ -223,7 +228,7 @@ function Verify-ConfigurationCollision {
     if ($LASTEXITCODE -ne 0) { Show-RecentRemovalDiagnostics; throw 'Rejected configuration installation could not be removed safely' }
     Confirm-RemovalReceipt $removed
     $afterService = Get-CimInstance Win32_Service -Filter "Name='PeerimeterAgent'"
-    if ((Snapshot-ManagedTrees @($defaultState)) -ne $before -or $beforeService.PathName -ne $afterService.PathName -or $beforeService.ProcessId -ne $afterService.ProcessId -or $afterService.State -ne 'Running') { throw 'Installation B cleanup altered installation A config/keys or supervisor' }
+    if ((Snapshot-ManagedTrees $defaultProfileSnapshotRoots) -ne $before -or $beforeService.PathName -ne $afterService.PathName -or $beforeService.ProcessId -ne $afterService.ProcessId -or $afterService.State -ne 'Running') { throw 'Installation B cleanup altered installation A config/keys or supervisor' }
     Verify-Traffic $defaultState | Out-Null
     Write-Output 'PASS rejected configuration-directory adoption/full uninstall preserves A private snapshots, marker, SCM registration and real encrypted traffic'
 }
