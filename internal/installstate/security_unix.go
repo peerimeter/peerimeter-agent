@@ -20,9 +20,9 @@ func TrustSudoUserForRun() {
 	if os.Geteuid() != 0 {
 		return
 	}
-	uid, err := strconv.ParseInt(os.Getenv("SUDO_UID"), 10, 32)
+	uid, err := strconv.ParseUint(os.Getenv("SUDO_UID"), 10, 32)
 	if err == nil && uid > 0 {
-		runTrustedUID.Store(uid + 1)
+		runTrustedUID.Store(int64(uid) + 1)
 	}
 }
 
@@ -87,6 +87,10 @@ func protect(path string) error {
 	if err := os.Chmod(path, 0600); err != nil {
 		return err
 	}
+	return checkExtendedTrust(path, true, false)
+}
+
+func protectCreatedTemp(path string) error {
 	return checkExtendedTrust(path, true, false)
 }
 func lockInventory(path string) (*os.File, error) {

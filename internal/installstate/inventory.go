@@ -227,7 +227,7 @@ func WritePrivateWithPolicy(path string, data []byte, allowInsecure bool) error 
 		f.Close()
 		return err
 	}
-	if err := protect(name); err != nil {
+	if err := protectCreatedTemp(name); err != nil {
 		f.Close()
 		return err
 	}
