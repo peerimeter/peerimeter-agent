@@ -37,7 +37,7 @@ $global:PeerimeterInstallerFixture = @{
 function Show-RecentRemovalDiagnostics([string]$Directory) {
     # The helper writes beside the installation directory, not under TEMP.
     $parent = Split-Path -Parent $Directory
-    $logs = @(Get-ChildItem -LiteralPath $parent -Filter '.peerimeter-uninstall-*.helper.log' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 2)
+    $logs = @(Get-ChildItem -LiteralPath $parent -Force -Filter '.peerimeter-uninstall-*.helper.log' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 2)
     foreach ($log in $logs) {
         Write-Host 'Recent bounded removal helper diagnostics:'
         Get-Content -LiteralPath $log.FullName -Tail 40 | ForEach-Object { Write-Host $_ }
