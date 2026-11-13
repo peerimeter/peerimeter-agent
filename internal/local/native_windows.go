@@ -64,6 +64,42 @@ func prepareDirectory(dir string) error {
 	}
 	return nil
 }
+
+func prepareServiceDirectory(dir string) error {
+	if _, err := os.Lstat(dir); os.IsNotExist(err) {
+		return prepareDirectory(dir)
+	} else if err != nil {
+		return fmt.Errorf("cannot inspect Windows service state directory %s: %w", dir, err)
+	}
+	if err := inspectExistingStateDirectory(dir); err != nil {
+		return err
+	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return err
+	}
+	name, err := windows.UTF16PtrFromString(dir)
+	if err != nil {
+		return errors.New("invalid Windows service state directory path")
+	}
+	h, err := windows.CreateFile(name, windows.READ_CONTROL, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	if err != nil {
+		return fmt.Errorf("cannot inspect Windows service state directory %s: %w", dir, err)
+	}
+	defer windows.CloseHandle(h)
+	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return errors.New("cannot verify Windows service state directory owner")
+	}
+	owner, _, err := sd.Owner()
+	if err != nil {
+		return errors.New("cannot verify Windows service state directory owner")
+	}
+	if !owner.Equals(user.User.Sid) && (owner.IsWellKnown(windows.WinLocalSystemSid) || owner.IsWellKnown(windows.WinBuiltinAdministratorsSid)) {
+		return nil
+	}
+	return prepareDirectory(dir)
+}
 func inspectExistingStateDirectory(dir string) error {
 	name, err := windows.UTF16PtrFromString(dir)
 	if err != nil {

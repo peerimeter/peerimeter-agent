@@ -30,6 +30,8 @@ func prepareDirectory(dir string) error {
 	}
 	return nil
 }
+
+func prepareServiceDirectory(dir string) error { return prepareDirectory(dir) }
 func openStateLock(dir string, existing bool) (*os.File, error) {
 	// Lock the durable directory inode itself: alternate runtime directories must
 	// not permit competing managers, and no disposable lock file becomes identity.
