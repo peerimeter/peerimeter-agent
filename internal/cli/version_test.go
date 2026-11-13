@@ -22,8 +22,8 @@ func TestVersionLogoAndMachineOutput(t *testing.T) {
 			t.Fatalf("missing original logo color %d", color)
 		}
 	}
-	if !strings.Contains(out, "Field") || !strings.Contains(out, "Agent") || !strings.Contains(out, "Platform") || !strings.Contains(out, "Go") {
-		t.Fatal("version details should use the shared headed table below the logo")
+	if strings.Contains(out, "Field") || strings.Contains(out, "Value") || !strings.Contains(out, "Agent") || !strings.Contains(out, "Platform") || !strings.Contains(out, "Go") {
+		t.Fatal("version details should use the shared table without generic headers below the logo")
 	}
 	code, out, err = invoke(t, "version", "--json", "--color", "always")
 	var data map[string]string
