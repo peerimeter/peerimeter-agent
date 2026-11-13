@@ -79,8 +79,8 @@ Release asset names follow the Nix system naming convention (`x86_64` and
 `aarch64`) and do not include the version; the installer selects the version
 from the release tag. Explicit versions and absolute installation directories
 are supported. By default, root installs put the executable in `/usr/local/bin`,
-notices in `/usr/local/share/doc/peerimeter-agent`, inventory in
-`/var/lib/peerimeter-agent-install` and installer locks in `/run/lock/peerimeter-agent`.
+notices in `/usr/local/share/doc/peerimeter-agent`, and inventory and installer
+locks in `/var/lib/peerimeter-agent-install` so the lock remains available after reboot.
 User installs use `~/.local/bin`, XDG data/state directories, and a lock in the
 persistent state directory. Windows stores program files under Program Files
 and per-install metadata under `ProgramData\Peerimeter\Installations`. When a
