@@ -171,6 +171,19 @@ func CheckFile(path string) error {
 	}
 	return checkTrust(path, info, false)
 }
+
+// CheckPrivateFile verifies that a managed credential or configuration file
+// is a regular installation-owned file with private permissions.
+func CheckPrivateFile(path string) error {
+	if err := CheckFile(path); err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	return checkPrivate(path, info)
+}
 func readPrivate(path string) ([]byte, error) {
 	for attempt := 0; attempt < 4; attempt++ {
 		data, changed, err := readPrivateOnce(path)
