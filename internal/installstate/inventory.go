@@ -412,10 +412,32 @@ func Lock(dir string) (io.Closer, error) {
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
-	if err == nil {
-		dir = inv.LockDir
+	if err != nil {
+		return LockWithPolicy(dir, false)
 	}
-	return LockWithPolicy(dir, err == nil && inv.AllowInsecureInstallDir)
+	lockDirs := uniqueSortedPaths([]string{inv.LockDir, inv.DataDir})
+	locks := make([]io.Closer, 0, len(lockDirs))
+	for _, lockDir := range lockDirs {
+		lock, lockErr := LockWithPolicy(lockDir, inv.AllowInsecureInstallDir)
+		if lockErr != nil {
+			for i := len(locks) - 1; i >= 0; i-- {
+				_ = locks[i].Close()
+			}
+			return nil, lockErr
+		}
+		locks = append(locks, lock)
+	}
+	return lockGroup(locks), nil
+}
+
+type lockGroup []io.Closer
+
+func (locks lockGroup) Close() error {
+	var errs []error
+	for i := len(locks) - 1; i >= 0; i-- {
+		errs = append(errs, locks[i].Close())
+	}
+	return errors.Join(errs...)
 }
 func LockWithPolicy(dir string, allowInsecure bool) (io.Closer, error) {
 	if err := CheckDirectoryWithPolicy(dir, allowInsecure); err != nil {

@@ -188,6 +188,7 @@ try {
     $parent = Get-Process -Id $p.parent_pid -ErrorAction SilentlyContinue
     if ($parent -and -not $parent.WaitForExit(30000)) { throw 'Initiating agent did not exit within 30 seconds; files preserved' }
     Lock-Existing $p.lock
+    if ($p.data_lock) { Lock-Existing $p.data_lock }
     foreach ($profile in $p.profiles) {
         if (Test-Path -LiteralPath $profile.state_dir) {
             No-Reparse $profile.state_dir
@@ -217,6 +218,7 @@ try {
     foreach ($f in $p.files) { if ([IO.Path]::GetFileName($f.path) -eq 'agent.lock') { Remove-Leaf $f.path } }
     foreach ($f in $p.files) { if ($f.marker) { Remove-Leaf $f.path } }
     Remove-Leaf $p.lock
+    if ($p.data_lock) { Remove-Leaf $p.data_lock }
     Remove-Leaf $p.inventory
     foreach ($h in $handles) { $h.Dispose() }; $handles.Clear()
     foreach ($dir in $p.directories) {
