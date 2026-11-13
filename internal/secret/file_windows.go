@@ -9,6 +9,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// TrustSudoUserForRun is a no-op on Windows.
+func TrustSudoUserForRun() {}
+
 func trustedSIDs() ([]*windows.SID, error) {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {

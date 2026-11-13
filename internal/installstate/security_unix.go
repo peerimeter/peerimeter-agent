@@ -7,8 +7,43 @@ import (
 	"golang.org/x/sys/unix"
 	"os"
 	"runtime"
+	"strconv"
+	"sync/atomic"
 	"syscall"
 )
+
+var runTrustedUID atomic.Int64
+
+// TrustSudoUserForRun allows only a root run process to use resources owned by
+// the invoking sudo user. Other commands never enable this exception.
+func TrustSudoUserForRun() {
+	if os.Geteuid() != 0 {
+		return
+	}
+	uid, err := strconv.ParseInt(os.Getenv("SUDO_UID"), 10, 32)
+	if err == nil && uid > 0 {
+		runTrustedUID.Store(uid + 1)
+	}
+}
+
+func trustedRunOwner(uid uint32) bool {
+	allowed := runTrustedUID.Load()
+	return allowed > 0 && uint32(allowed-1) == uid
+}
+
+func preserveRunOwner(file *os.File, existing os.FileInfo) error {
+	if existing == nil || os.Geteuid() != 0 {
+		return nil
+	}
+	st, ok := existing.Sys().(*syscall.Stat_t)
+	if !ok || !trustedRunOwner(st.Uid) {
+		return nil
+	}
+	if err := file.Chown(int(st.Uid), int(st.Gid)); err != nil {
+		return err
+	}
+	return file.Chmod(0600)
+}
 
 func isReparse(os.FileInfo) bool { return false }
 func trustedSystemAlias(path string, info os.FileInfo) bool {
@@ -24,10 +59,10 @@ func checkTrustWithPolicy(path string, info os.FileInfo, directory, allowInsecur
 		return errors.New("cannot verify installation resource ownership")
 	}
 	uid := uint32(os.Geteuid())
-	if st.Uid != uid && st.Uid != 0 {
+	if st.Uid != uid && st.Uid != 0 && !(uid == 0 && trustedRunOwner(st.Uid)) {
 		return errors.New("installation resource is owned by another user")
 	}
-	if uid == 0 && st.Uid != 0 {
+	if uid == 0 && st.Uid != 0 && !trustedRunOwner(st.Uid) {
 		return errors.New("privileged removal requires root-owned installation resources")
 	}
 	if !directory && st.Nlink != 1 {

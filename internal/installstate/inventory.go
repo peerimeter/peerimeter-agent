@@ -204,10 +204,12 @@ func WritePrivateWithPolicy(path string, data []byte, allowInsecure bool) error 
 	if err := CheckDirectoryWithPolicy(filepath.Dir(path), allowInsecure); err != nil {
 		return err
 	}
-	if _, err := os.Lstat(path); err == nil {
+	var existing os.FileInfo
+	if info, err := os.Lstat(path); err == nil {
 		if err := CheckFile(path); err != nil {
 			return err
 		}
+		existing = info
 	} else if !os.IsNotExist(err) {
 		return err
 	}
@@ -218,6 +220,10 @@ func WritePrivateWithPolicy(path string, data []byte, allowInsecure bool) error 
 	name := f.Name()
 	defer os.Remove(name)
 	if err := f.Chmod(0600); err != nil {
+		f.Close()
+		return err
+	}
+	if err := preserveRunOwner(f, existing); err != nil {
 		f.Close()
 		return err
 	}
