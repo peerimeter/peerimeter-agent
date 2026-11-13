@@ -88,7 +88,9 @@ func serviceAllowedUntrustedAccess(mask uint32, path string, directory, private 
 		windows.FILE_READ_DATA | windows.FILE_READ_ATTRIBUTES | windows.FILE_READ_EA | windows.FILE_EXECUTE
 	allowed := uint32(readOnly)
 	clean := filepath.Clean(path)
-	if directory && !private && (filepath.Dir(clean) == clean || strings.EqualFold(clean, filepath.Clean(os.Getenv("ProgramData")))) {
+	programData := filepath.Clean(os.Getenv("ProgramData"))
+	applicationRoot := filepath.Join(programData, "Peerimeter")
+	if directory && !private && (filepath.Dir(clean) == clean || strings.EqualFold(clean, programData) || strings.EqualFold(clean, applicationRoot)) {
 		allowed |= windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA | windows.FILE_WRITE_EA | windows.FILE_WRITE_ATTRIBUTES
 	}
 	return mask == 0 || !private && mask & ^allowed == 0
@@ -167,7 +169,7 @@ func nativeManage(action string, cfg Config) error {
 			{cfg.StateDirectory, true, true},
 		} {
 			if err := serviceSecureObject(object.path, object.directory, object.private); err != nil {
-				return err
+				return fmt.Errorf("validate Windows service resource %s: %w", object.path, err)
 			}
 		}
 		s, err := manager.CreateService(windowsServiceName, exe, mgr.Config{
@@ -351,7 +353,7 @@ func serviceSecureAncestors(path string) error {
 	for parent := filepath.Dir(path); ; parent = filepath.Dir(parent) {
 		if _, err := os.Lstat(parent); err == nil {
 			if err := serviceSecureObject(parent, true, false); err != nil {
-				return errors.Join(errors.New("Windows service ancestor directory is not trusted"), err)
+				return fmt.Errorf("Windows service ancestor directory %s is not trusted: %w", parent, err)
 			}
 		} else if !os.IsNotExist(err) {
 			return errors.New("cannot inspect Windows service ancestor directory")

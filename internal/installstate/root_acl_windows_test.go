@@ -34,8 +34,11 @@ func TestStandardProgramDataRootAccess(t *testing.T) {
 	if !allowedUntrustedAccess(uint32(users.Mask), root, true, false) {
 		t.Fatal("standard ProgramData root self-access was refused")
 	}
-	if allowedUntrustedAccess(uint32(users.Mask), root+`\Peerimeter`, true, false) {
-		t.Fatal("root exception applied to ordinary child")
+	if !allowedUntrustedAccess(uint32(users.Mask), root+`\Peerimeter`, true, false) {
+		t.Fatal("protected application data root was refused")
+	}
+	if allowedUntrustedAccess(uint32(users.Mask), root+`\Peerimeter\Installations`, true, false) {
+		t.Fatal("application root exception applied to ordinary child")
 	}
 	if allowedUntrustedAccess(uint32(users.Mask), root, true, true) {
 		t.Fatal("root exception applied to private data")
