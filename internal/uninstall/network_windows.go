@@ -42,7 +42,7 @@ func scheduleRemoval(plan removalPlan) (string, error) {
 	// Keep deferred code and diagnostics beneath the already-validated
 	// installation parent, outside the tree being removed. A private child ACL
 	// alone cannot protect a helper beneath a hostile TEMP ancestor.
-	helperParent := filepath.Dir(filepath.Dir(plan.Inventory))
+	helperParent := filepath.Dir(plan.InstallDir)
 	if err := installstate.CheckDirectory(helperParent); err != nil {
 		return "", err
 	}
