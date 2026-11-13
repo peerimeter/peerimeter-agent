@@ -141,6 +141,9 @@ func provision(cfg *Config, secure func(...string) error) (copied bool, resultEr
 	destination := filepath.Join(directory, "service.json")
 	keyPath := filepath.Join(directory, "service.key")
 	if _, err := os.Lstat(destination); err == nil {
+		if err := installstate.CheckPrivateFile(destination); err != nil {
+			return false, fmt.Errorf("existing protected service configuration %s is not secure: %w", destination, err)
+		}
 		installed, err := config.Load(destination)
 		if err != nil {
 			return false, err
@@ -151,15 +154,15 @@ func provision(cfg *Config, secure func(...string) error) (copied bool, resultEr
 		if !reflect.DeepEqual(installed, expected) {
 			return false, errors.New("existing protected service configuration differs; use the installed configuration or make an explicit migration")
 		}
+		if err := installstate.CheckPrivateFile(keyPath); err != nil {
+			return false, fmt.Errorf("existing protected service key %s is not secure: %w", keyPath, err)
+		}
 		oldKey, err := secret.Load(keyPath)
 		if err != nil {
 			return false, err
 		}
 		if oldKey != key {
 			return false, errors.New("existing protected service key differs; refusing to overwrite it")
-		}
-		if err := secureSnapshot(*cfg, destination, keyPath, secure); err != nil {
-			return false, err
 		}
 		cfg.ConfigPath = destination
 		return false, nil
