@@ -203,10 +203,13 @@ func (rejectBackend) Inspect(context.Context) (platform.Snapshot, error) {
 }
 
 func TestCobraHelpAndCompletion(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"run", "--help"}, {"service", "install", "--help"}, {"completion", "bash"}} {
+	for _, args := range [][]string{{}, {"--help"}, {"run", "--help"}, {"service", "install", "--help"}, {"completion", "bash"}} {
 		code, out, err := invoke(t, args...)
 		if code != 0 || out == "" || err != "" {
 			t.Fatalf("%v: %d %s %s", args, code, out, err)
+		}
+		if len(args) == 0 && (!strings.Contains(out, "Usage:") || !strings.Contains(out, "Available Commands")) {
+			t.Fatalf("bare invocation did not print root help: %s", out)
 		}
 	}
 	code, out, err := invoke(t, "run", "--config")
@@ -314,6 +317,16 @@ func TestCommandResultsDefaultToConsoleWithJSONOptIn(t *testing.T) {
 		if code != 0 || stderr != "" || (machine && !json.Valid([]byte(out))) || (!machine && (!strings.Contains(out, "Peer count") || !strings.Contains(out, "2"))) {
 			t.Fatalf("validation: %d %s %s", code, out, stderr)
 		}
+	}
+}
+
+func TestSingleFieldConsoleOutputSanitizesControlCharacters(t *testing.T) {
+	var out strings.Builder
+	if err := renderResponse(&out, []byte(`{"\u001bresult":"first\nsecond\u001b[2J"}`), false, 80); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "Result: first\nsecond[2J\n"; got != want {
+		t.Fatalf("renderResponse() = %q, want %q", got, want)
 	}
 }
 
