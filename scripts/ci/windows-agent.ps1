@@ -207,9 +207,18 @@ function Verify-ConfigurationCollision {
     $otherAgent = Join-Path $collisionInstall 'peerimeter-agent.exe'
     $before = Snapshot-ManagedTrees @($defaultState)
     $beforeService = Get-CimInstance Win32_Service -Filter "Name='PeerimeterAgent'"
-    & $otherAgent service install --config $configPath --config-dir $defaultState --state-dir (Join-Path $dir 'configuration collision state B') --runtime-dir (Join-Path $dir 'configuration collision runtime B') *> $null
-    if ($LASTEXITCODE -eq 0) { throw 'Installation B adopted installation A protected configuration' }
-    if ((Snapshot-ManagedTrees @($defaultState)) -ne $before) { throw 'Rejected install changed installation A snapshots or identity' }
+    $installOutput = & $otherAgent service install --config $configPath --config-dir $defaultState --state-dir (Join-Path $dir 'configuration collision state B') --runtime-dir (Join-Path $dir 'configuration collision runtime B') 2>&1
+    $installExitCode = $LASTEXITCODE
+    if ($installExitCode -eq 0) { throw 'Installation B adopted installation A protected configuration' }
+    $after = Snapshot-ManagedTrees @($defaultState)
+    if ($after -ne $before) {
+        Write-Output 'Rejected service install output:'
+        $installOutput | ForEach-Object { Write-Output $_ }
+        $beforeItems = @($before | ConvertFrom-Json)
+        $afterItems = @($after | ConvertFrom-Json)
+        Compare-Object $beforeItems $afterItems -Property Path,Attributes,ACL,Size,Modified,Hash | Format-Table -AutoSize | Out-String | Write-Output
+        throw 'Rejected install changed installation A snapshots or identity'
+    }
     $removed = & $otherAgent uninstall --json --install-dir $collisionInstall | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { Show-RecentRemovalDiagnostics; throw 'Rejected configuration installation could not be removed safely' }
     Confirm-RemovalReceipt $removed
