@@ -34,6 +34,7 @@ $collisionInstall = Join-Path $env:ProgramFiles "Peerimeter Collision $id"
 $reuseInstallX = Join-Path $env:ProgramFiles "Peerimeter Reuse X $id"
 $reuseInstallY = Join-Path $env:ProgramFiles "Peerimeter Reuse Y $id"
 $defaultState = Join-Path $env:ProgramData 'Peerimeter'
+$defaultStateRootPreexisting = Test-Path -LiteralPath $defaultState
 
 function Get-InstallResourceRoot([string]$Directory) {
     $sha = [Security.Cryptography.SHA256]::Create()
@@ -459,7 +460,10 @@ try {
     if (Get-Service -Name 'PeerimeterAgent' -ErrorAction SilentlyContinue) { throw 'SCM registration leaked after uninstall' }
     Write-Output 'PASS Windows SCM install/start/status/stop/restart/uninstall, config/key preservation'
 
-    if (Test-Path -LiteralPath $defaultState) { throw 'Default Windows data destination is already occupied; refusing to alter it' }
+    if (Test-Path -LiteralPath $defaultState) {
+        $children = @(Get-ChildItem -LiteralPath $defaultState -Force)
+        if ($defaultStateRootPreexisting -or $children.Count -ne 1 -or $children[0].Name -ne 'Installations') { throw 'Default Windows data destination is already occupied; refusing to alter it' }
+    }
     Invoke-Agent -CommandArgs @('service','install','--config',$configPath,'--operator',$operatorSID) | Out-Null
     $defaultStateCreated = $true
     $serviceInstalled = $true
@@ -554,7 +558,15 @@ try {
     Remove-TestDirectory $collisionInstall
     Remove-TestDirectory $reuseInstallX
     Remove-TestDirectory $reuseInstallY
+    foreach ($resourceOwner in @($installation,$collisionInstall,$reuseInstallX,$reuseInstallY)) {
+        Remove-TestDirectory (Get-InstallResourceRoot $resourceOwner)
+    }
     if ($defaultStateCreated) { Remove-TestDirectory $defaultState }
+    elseif (-not $defaultStateRootPreexisting) {
+        $installationsRoot = Join-Path $defaultState 'Installations'
+        if ((Test-Path -LiteralPath $installationsRoot) -and -not @(Get-ChildItem -LiteralPath $installationsRoot -Force).Count) { Remove-Item -LiteralPath $installationsRoot -Force }
+        if ((Test-Path -LiteralPath $defaultState) -and -not @(Get-ChildItem -LiteralPath $defaultState -Force).Count) { Remove-Item -LiteralPath $defaultState -Force }
+    }
     if ($removalResult -and (Test-Path -LiteralPath $removalResult)) { Remove-Item -LiteralPath $removalResult -Force }
 }
 if ($operatorCreated -and (Get-LocalUser -Name $operatorName -ErrorAction SilentlyContinue)) { throw 'Ephemeral nonadmin test account leaked' }

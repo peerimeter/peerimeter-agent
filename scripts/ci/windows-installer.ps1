@@ -221,6 +221,10 @@ try {
         if (-not @(Get-ChildItem -LiteralPath $defaultTarget -Force).Count) { Remove-Item -LiteralPath $defaultTarget }
     }
     if ($programDataCreated -and (Test-Path -LiteralPath $programDataTarget)) { Remove-Item -LiteralPath $programDataTarget -Recurse -Force }
+    foreach ($directory in @($defaultTarget,$offline,$latest,$pinned,$programDataTarget)) {
+        $resourceRoot = Get-ResourceRoot $directory
+        if (Test-Path -LiteralPath $resourceRoot) { Remove-Item -LiteralPath $resourceRoot -Recurse -Force }
+    }
     if (Test-Path -LiteralPath $base) { Remove-Item -LiteralPath $base -Recurse -Force }
 }
 Write-Output 'PASS Windows installer test cleanup'
