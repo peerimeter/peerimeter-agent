@@ -567,75 +567,94 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		}
 		return json.NewEncoder(out).Encode(report{State: "pending", ResultFile: result, Message: "The bounded removal helper runs after this process exits. Read the result file to confirm completion; remaining paths indicate a retry is required."})
 	}
+	removedFiles := make([]string, 0, len(plan.Files)+3)
 	// Retain profile markers and inventory until all other removals succeed, so
 	// partial failure remains verifiable and a later invocation can safely retry.
 	for _, f := range plan.Files {
 		if f.Marker {
 			continue
 		}
-		if err := removeLeaf(f); err != nil {
+		removed, err := removeLeaf(f)
+		if err != nil {
 			return fmt.Errorf("partial uninstall; remaining resource %s: %w", f.Path, err)
+		}
+		if removed {
+			removedFiles = append(removedFiles, f.Path)
 		}
 	}
 	for _, f := range plan.Files {
 		if !f.Marker {
 			continue
 		}
-		if err := removeLeaf(f); err != nil {
+		removed, err := removeLeaf(f)
+		if err != nil {
 			return fmt.Errorf("partial uninstall; profile marker remains %s: %w", f.Path, err)
+		}
+		if removed {
+			removedFiles = append(removedFiles, f.Path)
 		}
 	}
 	if err := lock.Close(); err != nil {
 		return err
 	}
-	if err := removeAbsentOK(plan.Lock); err != nil {
+	if removed, err := removeTracked(plan.Lock); err != nil {
 		return err
+	} else if removed {
+		removedFiles = append(removedFiles, plan.Lock)
 	}
 	if plan.DataLock != "" {
-		if err := removeAbsentOK(plan.DataLock); err != nil {
+		if removed, err := removeTracked(plan.DataLock); err != nil {
 			return err
+		} else if removed {
+			removedFiles = append(removedFiles, plan.DataLock)
 		}
 	}
-	if err := removeAbsentOK(plan.Inventory); err != nil {
+	if removed, err := removeTracked(plan.Inventory); err != nil {
 		return err
+	} else if removed {
+		removedFiles = append(removedFiles, plan.Inventory)
 	}
 	for _, d := range plan.Directories {
 		if err := removeEmptyDirectory(d); err != nil {
 			return err
 		}
 	}
-	return json.NewEncoder(out).Encode(report{State: "removed"})
+	sort.Strings(removedFiles)
+	return json.NewEncoder(out).Encode(report{State: "removed", Paths: removedFiles})
 }
-func removeAbsentOK(path string) error {
+func removeTracked(path string) (bool, error) {
 	err := os.Remove(path)
 	if os.IsNotExist(err) {
-		return nil
+		return false, nil
 	}
-	return err
+	return err == nil, err
 }
-func removeLeaf(f removalFile) error {
+func removeLeaf(f removalFile) (bool, error) {
 	info, err := os.Lstat(f.Path)
 	if os.IsNotExist(err) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	if info.Mode()&os.ModeSocket == 0 {
 		if err := installstate.CheckFile(f.Path); err != nil {
-			return err
+			return false, err
 		}
 	}
 	if f.SHA256 != "" {
 		hash, e := installstate.Hash(f.Path)
 		if e != nil {
-			return e
+			return false, e
 		}
 		if hash != f.SHA256 {
-			return errors.New("program file changed during removal")
+			return false, errors.New("program file changed during removal")
 		}
 	}
-	return os.Remove(f.Path)
+	if err := os.Remove(f.Path); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 func removeEmptyDirectory(path string) error {
 	info, err := os.Lstat(path)
