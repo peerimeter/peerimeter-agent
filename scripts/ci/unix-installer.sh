@@ -26,22 +26,26 @@ cp "$native_notices" "$work/peerimeter-agent.NOTICES.txt"
 hash=$(sha256 "$work/peerimeter-agent")
 notices_hash=$(sha256 "$work/peerimeter-agent.NOTICES.txt")
 destination=$work/custom\ install/bin
+doc_destination="$work/custom install/doc"
+data_destination="$work/custom install/data"
+lock_destination="$work/custom install/locks"
+install_dirs=(--doc-dir "$doc_destination" --data-dir "$data_destination" --lock-dir "$lock_destination")
 printf 'operator config stays\n' >"$destination/operator.config"
 printf 'operator key stays\n' >"$destination/operator.key"
 cp "$destination/operator.config" "$work/original.config"
 cp "$destination/operator.key" "$work/original.key"
-sh "$installer" --binary "$work/peerimeter-agent" --sha256 "$hash" --notices "$work/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notices_hash" --install-dir "$destination"
+sh "$installer" --binary "$work/peerimeter-agent" --sha256 "$hash" --notices "$work/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notices_hash" --install-dir "$destination" "${install_dirs[@]}"
 cmp "$work/peerimeter-agent" "$destination/peerimeter-agent"
-cmp "$work/peerimeter-agent.NOTICES.txt" "$destination/peerimeter-agent.NOTICES.txt"
+cmp "$work/peerimeter-agent.NOTICES.txt" "$doc_destination/peerimeter-agent.NOTICES.txt"
 "$destination/peerimeter-agent" version --json >"$work/version.json"
 python3 - "$work/version.json" "$native_os" <<'PYVERSION'
 import json,sys
 v=json.load(open(sys.argv[1]));assert v['os']==sys.argv[2] and v['go_version']=='go1.27.4'
 PYVERSION
-[[ -f "$destination/.peerimeter-agent.install.json" ]]
+[[ -f "$data_destination/.peerimeter-agent.install.json" ]]
 cp "$destination/peerimeter-agent" "$work/original.agent"
-cp "$destination/peerimeter-agent.NOTICES.txt" "$work/original.notices"
-cp "$destination/.peerimeter-agent.install.json" "$work/original.inventory"
+cp "$doc_destination/peerimeter-agent.NOTICES.txt" "$work/original.notices"
+cp "$data_destination/.peerimeter-agent.install.json" "$work/original.inventory"
 expect_failure() {
   local pattern=$1
   shift
@@ -51,28 +55,28 @@ expect_failure() {
   fi
   if ! grep -Fq "$pattern" "$work/failure.log"; then cat "$work/failure.log" >&2; exit 1; fi
   cmp "$work/original.agent" "$destination/peerimeter-agent"
-  cmp "$work/original.notices" "$destination/peerimeter-agent.NOTICES.txt"
-  cmp "$work/original.inventory" "$destination/.peerimeter-agent.install.json"
+  cmp "$work/original.notices" "$doc_destination/peerimeter-agent.NOTICES.txt"
+  cmp "$work/original.inventory" "$data_destination/.peerimeter-agent.install.json"
 }
-expect_failure 'Binary checksum verification failed' sh "$installer" --binary "$work/peerimeter-agent" --sha256 "$(printf '%064d' 0)" --notices "$work/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notices_hash" --install-dir "$destination"
+expect_failure 'Binary checksum verification failed' sh "$installer" --binary "$work/peerimeter-agent" --sha256 "$(printf '%064d' 0)" --notices "$work/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notices_hash" --install-dir "$destination" "${install_dirs[@]}"
 expect_failure 'SHA-256 digest' sh "$installer" --binary "$work/peerimeter-agent" --sha256 "$hash
-$hash" --notices "$work/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notices_hash" --install-dir "$destination"
+$hash" --notices "$work/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notices_hash" --install-dir "$destination" "${install_dirs[@]}"
 echo 'PASS: offline checksum verification, spaced destination and existing binary preservation'
 
 # Existing destination links are rejected before package members are replaced.
 printf 'outside installer test directory\n' >"$work/victim"
-rm -f "$destination/peerimeter-agent.NOTICES.txt"
-ln -s "$work/victim" "$destination/peerimeter-agent.NOTICES.txt"
-if sh "$installer" --binary "$work/peerimeter-agent" --sha256 "$hash" --notices "$work/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notices_hash" --install-dir "$destination" >"$work/failure.log" 2>&1; then
+rm -f "$doc_destination/peerimeter-agent.NOTICES.txt"
+ln -s "$work/victim" "$doc_destination/peerimeter-agent.NOTICES.txt"
+if sh "$installer" --binary "$work/peerimeter-agent" --sha256 "$hash" --notices "$work/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notices_hash" --install-dir "$destination" "${install_dirs[@]}" >"$work/failure.log" 2>&1; then
   echo 'FAIL: existing destination symlink was accepted' >&2
   exit 1
 fi
 grep -Fq 'must not be symbolic links' "$work/failure.log"
-test -L "$destination/peerimeter-agent.NOTICES.txt"
+test -L "$doc_destination/peerimeter-agent.NOTICES.txt"
 cmp "$work/original.agent" "$destination/peerimeter-agent"
-cmp "$work/original.inventory" "$destination/.peerimeter-agent.install.json"
-rm "$destination/peerimeter-agent.NOTICES.txt"
-cp "$work/original.notices" "$destination/peerimeter-agent.NOTICES.txt"
+cmp "$work/original.inventory" "$data_destination/.peerimeter-agent.install.json"
+rm "$doc_destination/peerimeter-agent.NOTICES.txt"
+cp "$work/original.notices" "$doc_destination/peerimeter-agent.NOTICES.txt"
 echo 'PASS: existing destination symlink rejected without changing its target or installed binary'
 
 # This fake curl is a deterministic fixture transport. The installer still uses
@@ -116,7 +120,7 @@ export FIXTURE_OS FIXTURE_ARCH FIXTURE_ASSET_ARCH
 export FIXTURE_BINARY=$work/peerimeter-agent FIXTURE_NOTICES=$work/peerimeter-agent.NOTICES.txt FIXTURE_HASH=$hash FIXTURE_NOTICES_HASH=$notices_hash FIXTURE_CURL_LOG=$work/curl.log
 export PATH=$work/mock-bin:$PATH
 : >"$FIXTURE_CURL_LOG"
-sh "$installer" --install-dir "$destination"
+sh "$installer" --install-dir "$destination" "${install_dirs[@]}"
 python3 - "$FIXTURE_CURL_LOG" "$FIXTURE_OS" "$FIXTURE_ASSET_ARCH" <<'PY'
 import pathlib, sys
 log, os, arch = sys.argv[1:]
@@ -125,7 +129,7 @@ asset=f'peerimeter-agent-{os}-{arch}'
 assert pathlib.Path(log).read_text().splitlines() == [base + '/latest', base + f'/download/v0.4.2/{asset}', base + f'/download/v0.4.2/{asset}.NOTICES.txt', base + '/download/v0.4.2/SHA256SUMS']
 PY
 : >"$FIXTURE_CURL_LOG"
-sh "$installer" --version 0.3.1 --install-dir "$destination"
+sh "$installer" --version 0.3.1 --install-dir "$destination" "${install_dirs[@]}"
 python3 - "$FIXTURE_CURL_LOG" "$FIXTURE_OS" "$FIXTURE_ASSET_ARCH" <<'PY'
 import pathlib, sys
 log, os, arch = sys.argv[1:]
@@ -134,9 +138,9 @@ asset=f'peerimeter-agent-{os}-{arch}'
 assert pathlib.Path(log).read_text().splitlines() == [base + f'/{asset}', base + f'/{asset}.NOTICES.txt', base + '/SHA256SUMS']
 PY
 : >"$FIXTURE_CURL_LOG"
-expect_failure 'Invalid release version' sh "$installer" --version '../unsafe' --install-dir "$destination"
+expect_failure 'Invalid release version' sh "$installer" --version '../unsafe' --install-dir "$destination" "${install_dirs[@]}"
 test ! -s "$FIXTURE_CURL_LOG"
-expect_failure 'Cannot download release v99.0.0' sh "$installer" --version v99.0.0 --install-dir "$destination"
+expect_failure 'Cannot download release v99.0.0' sh "$installer" --version v99.0.0 --install-dir "$destination" "${install_dirs[@]}"
 cmp "$work/original.config" "$destination/operator.config"
 cmp "$work/original.key" "$destination/operator.key"
 echo 'PASS: latest resolves once, pinned tag and native OS/architecture match, unsupported releases fail clearly'
@@ -165,7 +169,8 @@ python3 - "$work/removal.json" <<'PY'
 import json,sys
 assert json.load(open(sys.argv[1]))['state']=='removed'
 PY
-for member in peerimeter-agent peerimeter-agent.NOTICES.txt .peerimeter-agent.install.json .peerimeter-agent.install.lock; do test ! -e "$destination/$member"; done
+for member in peerimeter-agent .peerimeter-agent.install.ref; do test ! -e "$destination/$member"; done
+for path in "$doc_destination/peerimeter-agent.NOTICES.txt" "$data_destination/.peerimeter-agent.install.json" "$lock_destination/.peerimeter-agent.install.lock"; do test ! -e "$path"; done
 cmp "$work/original.config" "$destination/operator.config"
 cmp "$work/original.key" "$destination/operator.key"
 "$work/uninstall-verifier" uninstall --json --install-dir "$destination" >"$work/repeated-removal.json"

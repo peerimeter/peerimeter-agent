@@ -2,17 +2,37 @@
 # Operator-invoked installer. Does not enroll, start services or change config.
 set -eu
 version=latest
-install_dir=/usr/local/bin
+uid=$(id -u)
+if [ "$uid" -eq 0 ]; then
+ install_dir=/usr/local/bin
+ doc_dir=/usr/local/share/doc/peerimeter-agent
+ data_dir=/var/lib/peerimeter-agent-install
+ lock_dir=/run/lock/peerimeter-agent
+ if [ "$(uname -s)" = Darwin ]; then
+  doc_dir=/usr/local/share/doc/peerimeter-agent
+  data_dir='/Library/Application Support/Peerimeter Installer/State'
+  lock_dir='/Library/Application Support/Peerimeter Installer/Locks'
+ fi
+else
+ home=${HOME:?HOME must be set for a non-root installation}
+ install_dir=$home/.local/bin
+ doc_dir=${XDG_DATA_HOME:-$home/.local/share}/doc/peerimeter-agent
+ data_dir=${XDG_STATE_HOME:-$home/.local/state}/peerimeter-agent
+ lock_dir=$data_dir
+fi
 binary=
 notices=
 expected=
 notices_expected=
 allow_insecure_install_dir=0
-usage() { echo 'Usage: install.sh [--version <tag|latest>] [--install-dir <path>] [--allow-insecure-install-dir] [--binary <local-file> --sha256 <digest> --notices <local-file> --notices-sha256 <digest>]' >&2; exit 1; }
+usage() { echo 'Usage: install.sh [--version <tag|latest>] [--install-dir <path>] [--doc-dir <path>] [--data-dir <path>] [--lock-dir <path>] [--allow-insecure-install-dir] [--binary <local-file> --sha256 <digest> --notices <local-file> --notices-sha256 <digest>]' >&2; exit 1; }
 while [ "$#" -gt 0 ]; do
  case "$1" in
   --version) [ "$#" -ge 2 ] || usage; version=$2; shift 2;;
   --install-dir) [ "$#" -ge 2 ] || usage; install_dir=$2; shift 2;;
+  --doc-dir) [ "$#" -ge 2 ] || usage; doc_dir=$2; shift 2;;
+  --data-dir) [ "$#" -ge 2 ] || usage; data_dir=$2; shift 2;;
+  --lock-dir) [ "$#" -ge 2 ] || usage; lock_dir=$2; shift 2;;
   --allow-insecure-install-dir) allow_insecure_install_dir=1; shift;;
   --binary) [ "$#" -ge 2 ] || usage; binary=$2; shift 2;;
   --notices) [ "$#" -ge 2 ] || usage; notices=$2; shift 2;;
@@ -21,7 +41,9 @@ while [ "$#" -gt 0 ]; do
   *) usage;;
  esac
 done
-case "$install_dir" in /*) ;; *) echo 'Installation directory must be absolute.' >&2; exit 1;; esac
+for path in "$install_dir" "$doc_dir" "$data_dir" "$lock_dir"; do
+ case "$path" in /*) ;; *) echo 'Installation resource directories must be absolute.' >&2; exit 1;; esac
+done
 case "$(uname -s)" in Linux) os=linux;; Darwin) os=darwin;; *) echo 'Unsupported OS; use install.ps1 on Windows.' >&2; exit 1;; esac
 case "$(uname -m)" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch=arm64;; *) echo 'Unsupported CPU architecture.' >&2; exit 1;; esac
 work=$(mktemp -d)
@@ -47,7 +69,7 @@ cleanup() {
  status=$?
  if [ "$changed" -eq 1 ] && [ "$completed" -eq 0 ]; then
   rollback_file "$install_dir/peerimeter-agent" "$work/original-agent" "$old_binary" || { echo 'Installer rollback could not restore the previous executable.' >&2; status=1; rollback_failed=1; }
-  rollback_file "$install_dir/peerimeter-agent.NOTICES.txt" "$work/original-notices" "$old_notice" || { echo 'Installer rollback could not restore the previous notice file.' >&2; status=1; rollback_failed=1; }
+  rollback_file "$doc_dir/peerimeter-agent.NOTICES.txt" "$work/original-notices" "$old_notice" || { echo 'Installer rollback could not restore the previous notice file.' >&2; status=1; rollback_failed=1; }
  fi
  if [ "$rollback_failed" -eq 0 ]; then rm -rf "$work"; else printf 'Previous package backups retained for recovery: %s\n' "$work" >&2; fi
  if [ -n "$staged" ]; then rm -f "$staged"; fi
@@ -86,24 +108,24 @@ done
 [ -f "$binary" ] && [ ! -L "$binary" ] && [ -f "$notices" ] && [ ! -L "$notices" ] || { echo 'Binary and notices must be regular files.' >&2; exit 1; }
 [ "$(printf '%s' "$expected" | tr 'A-F' 'a-f')" = "$(sha256 "$binary")" ] || { echo 'Binary checksum verification failed.' >&2; exit 1; }
 [ "$(printf '%s' "$notices_expected" | tr 'A-F' 'a-f')" = "$(sha256 "$notices")" ] || { echo 'Notice checksum verification failed.' >&2; exit 1; }
-mkdir -p "$install_dir" || { echo 'Cannot create destination; choose a writable directory or run with sudo.' >&2; exit 1; }
+mkdir -p "$install_dir" "$doc_dir" "$data_dir" "$lock_dir" || { echo 'Cannot create destination; choose a writable directory or run with sudo.' >&2; exit 1; }
 [ ! -d "$install_dir/peerimeter-agent" ] || { echo 'Binary destination is a directory.' >&2; exit 1; }
-[ ! -d "$install_dir/peerimeter-agent.NOTICES.txt" ] || { echo 'Notice destination is a directory.' >&2; exit 1; }
+[ ! -d "$doc_dir/peerimeter-agent.NOTICES.txt" ] || { echo 'Notice destination is a directory.' >&2; exit 1; }
 # Preserve existing ordinary package members before any replacement. Never
 # dereference a pre-existing link into another application's files.
-for destination in "$install_dir/peerimeter-agent" "$install_dir/peerimeter-agent.NOTICES.txt"; do
+for destination in "$install_dir/peerimeter-agent" "$doc_dir/peerimeter-agent.NOTICES.txt"; do
  [ ! -L "$destination" ] || { echo 'Installed package members must not be symbolic links.' >&2; exit 1; }
  [ ! -e "$destination" ] || [ -f "$destination" ] || { echo 'Installed package member is not a regular file.' >&2; exit 1; }
 done
 if [ -f "$install_dir/peerimeter-agent" ]; then cp -p "$install_dir/peerimeter-agent" "$work/original-agent"; old_binary=1; fi
-if [ -f "$install_dir/peerimeter-agent.NOTICES.txt" ]; then cp -p "$install_dir/peerimeter-agent.NOTICES.txt" "$work/original-notices"; old_notice=1; fi
+if [ -f "$doc_dir/peerimeter-agent.NOTICES.txt" ]; then cp -p "$doc_dir/peerimeter-agent.NOTICES.txt" "$work/original-notices"; old_notice=1; fi
 staged=$(mktemp "$install_dir/.peerimeter-agent.XXXXXX")
-staged_notice=$(mktemp "$install_dir/.peerimeter-notices.XXXXXX")
+staged_notice=$(mktemp "$doc_dir/.peerimeter-notices.XXXXXX")
 install -m 0755 "$binary" "$staged"
 # Notices precede the atomic executable replacement; no config or keys are touched.
 install -m 0644 "$notices" "$staged_notice"
 changed=1
-mv -f "$staged_notice" "$install_dir/peerimeter-agent.NOTICES.txt"
+mv -f "$staged_notice" "$doc_dir/peerimeter-agent.NOTICES.txt"
 staged_notice=
 mv -f "$staged" "$install_dir/peerimeter-agent"
 staged=
@@ -112,10 +134,10 @@ installed_version=$("$install_dir/peerimeter-agent" version --json | sed -n 's/.
 # The installed binary writes the protected inventory using the same audited
 # ownership/path rules as full uninstall. Source configs and keys are not claimed.
 if [ "$allow_insecure_install_dir" -eq 1 ]; then
- "$install_dir/peerimeter-agent" register-installation --install-dir "$install_dir" --allow-insecure-install-dir >/dev/null
+ "$install_dir/peerimeter-agent" register-installation --install-dir "$install_dir" --doc-dir "$doc_dir" --data-dir "$data_dir" --lock-dir "$lock_dir" --allow-insecure-install-dir >/dev/null
 else
- "$install_dir/peerimeter-agent" register-installation --install-dir "$install_dir" >/dev/null
+ "$install_dir/peerimeter-agent" register-installation --install-dir "$install_dir" --doc-dir "$doc_dir" --data-dir "$data_dir" --lock-dir "$lock_dir" >/dev/null
 fi
-[ -f "$install_dir/.peerimeter-agent.install.json" ] && [ ! -L "$install_dir/.peerimeter-agent.install.json" ] || { echo 'Installation inventory registration failed.' >&2; exit 1; }
+[ -f "$data_dir/.peerimeter-agent.install.json" ] && [ ! -L "$data_dir/.peerimeter-agent.install.json" ] && [ -f "$install_dir/.peerimeter-agent.install.ref" ] || { echo 'Installation inventory registration failed.' >&2; exit 1; }
 completed=1
 printf 'Installed Peerimeter Agent %s to %s/peerimeter-agent (%s/%s). Config and services are managed separately.\n' "$installed_version" "$install_dir" "$os" "$arch"

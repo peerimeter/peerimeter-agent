@@ -52,9 +52,17 @@ function Show-RemovalDiagnostics([string]$ReceiptPath) {
         if (Test-Path -LiteralPath $log) { Write-Host 'Bounded removal helper diagnostics:'; Get-Content -LiteralPath $log -Tail 40 | ForEach-Object { Write-Host $_ } }
     }
 }
+function Get-ResourceRoot([string]$Directory) {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $key = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes([IO.Path]::GetFullPath($Directory).ToLowerInvariant()))).Replace('-','').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    return Join-Path $env:ProgramData (Join-Path 'Peerimeter\Installations' $key)
+}
 function Assert-Package([string]$Directory) {
-    foreach ($name in @('peerimeter-agent.exe','wireguard.dll','peerimeter-agent.NOTICES.txt')) {
-        $path = Join-Path $Directory $name
+    $resourceRoot = Get-ResourceRoot $Directory
+    foreach ($item in @(@{Name='peerimeter-agent.exe';Dir=$Directory},@{Name='wireguard.dll';Dir=$Directory},@{Name='peerimeter-agent.NOTICES.txt';Dir=(Join-Path $resourceRoot 'Documentation')})) {
+        $name = $item.Name
+        $path = Join-Path $item.Dir $name
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Installed package member missing: $name" }
         $acl = Get-Acl -LiteralPath $path
         if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne 'S-1-5-32-544') { throw 'Installed package file is not owned by Administrators' }
@@ -64,7 +72,7 @@ function Assert-Package([string]$Directory) {
             if (([long]$rule.FileSystemRights -band (-bnot $allowed)) -ne 0) { throw 'Installed file grants untrusted write access' }
         }
     }
-    $inventory = Join-Path $Directory '.peerimeter-agent.install.json'
+    $inventory = Join-Path (Join-Path $resourceRoot 'State') '.peerimeter-agent.install.json'
     if (-not (Test-Path -LiteralPath $inventory -PathType Leaf)) { throw 'Installed package has no protected ownership inventory' }
     $inventoryACL = Get-Acl -LiteralPath $inventory
     foreach ($rule in $inventoryACL.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
@@ -73,10 +81,11 @@ function Assert-Package([string]$Directory) {
     $binary = Join-Path $Directory 'peerimeter-agent.exe'
     $version = & $binary version --json | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0 -or $version.os -ne 'windows' -or $version.go_version -ne 'go1.27.4') { throw 'Installed native agent executable failed version smoke test' }
-    if (@(Get-ChildItem -LiteralPath $Directory -Force | Where-Object { $_.Name -match '\.(new|old)-' }).Count) { throw 'Installer leaked staged or backup files' }
+    if (@(Get-ChildItem -LiteralPath $Directory -Force | Where-Object { $_.Name -match '\.(new|old)-' }).Count -or @(Get-ChildItem -LiteralPath (Join-Path $resourceRoot 'Documentation') -Force | Where-Object { $_.Name -match '\.(new|old)-' }).Count) { throw 'Installer leaked staged or backup files' }
 }
 function Remove-InstalledPackage([string]$Directory,[string]$ExternalCLI) {
     $binary = Join-Path $Directory 'peerimeter-agent.exe'
+    $resourceRoot = Get-ResourceRoot $Directory
     $before = @(Get-ChildItem -LiteralPath $Directory -Force -File | Sort-Object Name | ForEach-Object { $_.Name + ':' + (Get-FileHash -LiteralPath $_.FullName).Hash + ':' + (Get-Acl -LiteralPath $_.FullName).Sddl }) -join "`n"
     $dry = & $binary uninstall --json --install-dir $Directory --dry-run | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0 -or $dry.state -ne 'dry_run') { throw 'Installed package dry-run failed' }
@@ -102,8 +111,8 @@ function Remove-InstalledPackage([string]$Directory,[string]$ExternalCLI) {
         if (-not $done) { Show-RemovalDiagnostics $result.result_file; throw 'Windows package removal did not complete within 60 seconds' }
         Remove-Item -LiteralPath $result.result_file -Force
     } elseif ($result.state -ne 'removed') { throw 'Unrecognized package uninstall result' }
-    foreach ($name in @('peerimeter-agent.exe','wireguard.dll','peerimeter-agent.NOTICES.txt','.peerimeter-agent.install.json','.peerimeter-agent.install.lock')) {
-        if (Test-Path -LiteralPath (Join-Path $Directory $name)) { throw "Installed program member survived uninstall: $name" }
+    foreach ($path in @((Join-Path $Directory 'peerimeter-agent.exe'),(Join-Path $Directory 'wireguard.dll'),(Join-Path $Directory '.peerimeter-agent.install.ref'),(Join-Path (Join-Path $resourceRoot 'Documentation') 'peerimeter-agent.NOTICES.txt'),(Join-Path (Join-Path $resourceRoot 'State') '.peerimeter-agent.install.json'),(Join-Path (Join-Path $resourceRoot 'Locks') '.peerimeter-agent.install.lock'))) {
+        if (Test-Path -LiteralPath $path) { throw "Installed program member survived uninstall: $path" }
     }
     if ([IO.File]::ReadAllText($sentinel) -ne 'operator data stays') { throw 'Full uninstall removed unrelated installation-parent data' }
     $again = & $ExternalCLI uninstall --json --install-dir $Directory | ConvertFrom-Json
@@ -183,7 +192,7 @@ try {
     Write-Output 'PASS default latest and pinned version resolve exact release assets and checksums using local fixtures'
 
     $before = @{}
-    foreach ($name in @('peerimeter-agent.exe','wireguard.dll','peerimeter-agent.NOTICES.txt')) { $before[$name] = (Get-FileHash -LiteralPath (Join-Path $offline $name)).Hash }
+    foreach ($item in @(@{Name='peerimeter-agent.exe';Dir=$offline},@{Name='wireguard.dll';Dir=$offline},@{Name='peerimeter-agent.NOTICES.txt';Dir=(Join-Path ((Get-ResourceRoot $offline)) 'Documentation')})) { $before[$item.Name] = (Get-FileHash -LiteralPath (Join-Path $item.Dir $item.Name)).Hash }
     function global:Move-Item {
         param([string]$LiteralPath,[string]$Destination)
         if ($LiteralPath -match '\.new-' -and [IO.Path]::GetFileName($Destination) -eq 'wireguard.dll') { throw 'Injected second-member replacement failure' }
@@ -192,7 +201,7 @@ try {
     Expect-Failure { & $Installer -Archive $Archive -SHA256 $checksum -InstallDir $offline }
     Remove-Item Function:\global:Move-Item
     Assert-Package $offline
-    foreach ($name in $before.Keys) { if ((Get-FileHash -LiteralPath (Join-Path $offline $name)).Hash -ne $before[$name]) { throw 'Failed replacement did not restore the old package' } }
+    foreach ($item in @(@{Name='peerimeter-agent.exe';Dir=$offline},@{Name='wireguard.dll';Dir=$offline},@{Name='peerimeter-agent.NOTICES.txt';Dir=(Join-Path ((Get-ResourceRoot $offline)) 'Documentation')})) { if ((Get-FileHash -LiteralPath (Join-Path $item.Dir $item.Name)).Hash -ne $before[$item.Name]) { throw 'Failed replacement did not restore the old package' } }
     Write-Output 'PASS injected replacement failure rolls back all files and removes every staged file'
 
     $externalCLI = Join-Path $base 'uninstall verifier.exe'

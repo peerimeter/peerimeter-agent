@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -114,7 +115,7 @@ func (g *Guard) InterfaceChoice(id, display, override string) (string, error) {
 		return old.InterfaceName, nil
 	}
 	if !os.IsNotExist(err) {
-		return "", errors.New("cannot read persisted local interface selection")
+		return "", fmt.Errorf("cannot read persisted local interface selection %s: %w", path, err)
 	}
 	name, err := ifname.Resolve(id, display, override)
 	if err != nil {
@@ -125,12 +126,12 @@ func (g *Guard) InterfaceChoice(id, display, override string) (string, error) {
 	data, _ = json.Marshal(old)
 	tmp, err := os.OpenFile(path+".new", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
-		return "", errors.New("cannot create local interface selection")
+		return "", fmt.Errorf("cannot create local interface selection %s: %w", path, err)
 	}
 	defer os.Remove(path + ".new")
 	if _, err = tmp.Write(data); err != nil {
 		tmp.Close()
-		return "", errors.New("cannot write local interface selection")
+		return "", fmt.Errorf("cannot write local interface selection %s: %w", path, err)
 	}
 	if err = tmp.Sync(); err != nil {
 		tmp.Close()
@@ -140,7 +141,7 @@ func (g *Guard) InterfaceChoice(id, display, override string) (string, error) {
 		return "", err
 	}
 	if err = os.Rename(path+".new", path); err != nil {
-		return "", errors.New("cannot persist local interface selection")
+		return "", fmt.Errorf("cannot persist local interface selection %s: %w", path, err)
 	}
 	return name, nil
 }
@@ -264,7 +265,7 @@ func (g *Guard) OwnershipToken() (string, error) {
 		return token, nil
 	}
 	if !os.IsNotExist(err) {
-		return "", errors.New("cannot read interface ownership")
+		return "", fmt.Errorf("cannot read interface ownership %s: %w", path, err)
 	}
 	var value [32]byte
 	if _, err := rand.Read(value[:]); err != nil {
@@ -273,13 +274,13 @@ func (g *Guard) OwnershipToken() (string, error) {
 	token := hex.EncodeToString(value[:])
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
-		return "", errors.New("cannot create interface ownership")
+		return "", fmt.Errorf("cannot create interface ownership %s: %w", path, err)
 	}
 	_, writeErr := f.WriteString(token + "\n")
 	syncErr := f.Sync()
 	closeErr := f.Close()
 	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
-		return "", errors.New("cannot persist interface ownership")
+		return "", fmt.Errorf("cannot persist interface ownership %s: %w", path, err)
 	}
 	return token, nil
 }

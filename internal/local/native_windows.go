@@ -20,7 +20,7 @@ func trustedStateOwner(owner, current *windows.SID) bool {
 }
 func prepareDirectory(dir string) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return errors.New("cannot create agent state directory")
+		return fmt.Errorf("cannot create agent state directory %s: %w", dir, err)
 	}
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
@@ -34,7 +34,7 @@ func prepareDirectory(dir string) error {
 	// prevents a rename/replacement race while validating ownership and the DACL.
 	h, err := windows.CreateFile(name, windows.READ_CONTROL|windows.WRITE_DAC|windows.FILE_READ_ATTRIBUTES, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
 	if err != nil {
-		return errors.New("cannot securely open Windows state directory")
+		return fmt.Errorf("cannot securely open Windows state directory %s: %w", dir, err)
 	}
 	defer windows.CloseHandle(h)
 	var info windows.ByHandleFileInformation
