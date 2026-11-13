@@ -48,7 +48,18 @@ type Guard struct {
 }
 
 func Acquire(dir string) (*Guard, error) {
-	if err := prepareDirectory(dir); err != nil {
+	return acquire(dir, prepareDirectory)
+}
+
+// AcquireForService preserves an existing machine-owned Windows directory.
+// Service installation validates its ACL before this lease is acquired; the
+// foreground path continues to prepare user-owned state directories normally.
+func AcquireForService(dir string) (*Guard, error) {
+	return acquire(dir, prepareServiceDirectory)
+}
+
+func acquire(dir string, prepare func(string) error) (*Guard, error) {
+	if err := prepare(dir); err != nil {
 		return nil, err
 	}
 	f, err := openStateLock(dir, false)

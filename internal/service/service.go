@@ -218,7 +218,7 @@ func install(cfg Config, register func(Config) error, secure func(...string) err
 		return err
 	}
 	defer startup.Close()
-	guard, err := local.Acquire(cfg.StateDirectory)
+	guard, err := local.AcquireForService(cfg.StateDirectory)
 	if err != nil {
 		return err
 	}
