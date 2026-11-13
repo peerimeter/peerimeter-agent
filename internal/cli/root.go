@@ -123,7 +123,7 @@ Environment variables:
 		}
 		return target.Help()
 	}})
-	root.AddCommand(newVersionCommand(app), newGenerateExampleCommand(app), newRunCommand(app), newValidateConfigCommand(app), newStatusCommand(app), newPeersCommand(app), newWGCommand(app), newSyncCommand(app), newStopCommand(app), newServiceCommand(app), newUninstallCommand(app), newRegisterInstallationCommand(app), newStunCommand(app))
+	root.AddCommand(newVersionCommand(app), newGenerateExampleCommand(app), newRunCommand(app), newValidateConfigCommand(app), newStatusCommand(app), newWGCommand(app), newSyncCommand(app), newStopCommand(app), newServiceCommand(app), newUninstallCommand(app), newRegisterInstallationCommand(app), newStunCommand(app))
 	return root
 }
 

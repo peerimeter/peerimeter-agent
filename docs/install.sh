@@ -59,6 +59,8 @@ for path in "$install_dir" "$doc_dir" "$data_dir" "$lock_dir"; do
 done
 case "$(uname -s)" in Linux) os=linux;; Darwin) os=darwin;; *) echo 'Unsupported OS; use install.ps1 on Windows.' >&2; exit 1;; esac
 case "$(uname -m)" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch=arm64;; *) echo 'Unsupported CPU architecture.' >&2; exit 1;; esac
+progress() { printf 'Peerimeter installer: %s\n' "$1" >&2; }
+progress "Preparing installation for $os/$arch."
 work=$(mktemp -d)
 staged=
 staged_notice=
@@ -94,6 +96,7 @@ trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'; else shasum -a 256 "$1" | awk '{print $1}'; fi; }
 if [ -z "$binary" ]; then
+ progress 'Resolving release version and downloading package files.'
  command -v curl >/dev/null 2>&1 || { echo 'curl is required for release downloads.' >&2; exit 1; }
  repo=https://github.com/peerimeter/peerimeter-agent
  if [ "$version" = latest ]; then
@@ -114,6 +117,7 @@ if [ -z "$binary" ]; then
  expected=$(awk -v name="$asset" '$2==name {print $1}' "$work/SHA256SUMS")
  notices_expected=$(awk -v name="$notices_asset" '$2==name {print $1}' "$work/SHA256SUMS")
 fi
+progress 'Verifying binary and notices checksums.'
 for digest in "$expected" "$notices_expected"; do
  case "$digest" in ''|*[!0-9a-fA-F]*) echo 'A SHA-256 digest is required for both binary and notices.' >&2; exit 1;; esac
  [ "${#digest}" -eq 64 ] || { echo 'A SHA-256 digest is required for both binary and notices.' >&2; exit 1; }
@@ -121,6 +125,7 @@ done
 [ -f "$binary" ] && [ ! -L "$binary" ] && [ -f "$notices" ] && [ ! -L "$notices" ] || { echo 'Binary and notices must be regular files.' >&2; exit 1; }
 [ "$(printf '%s' "$expected" | tr 'A-F' 'a-f')" = "$(sha256 "$binary")" ] || { echo 'Binary checksum verification failed.' >&2; exit 1; }
 [ "$(printf '%s' "$notices_expected" | tr 'A-F' 'a-f')" = "$(sha256 "$notices")" ] || { echo 'Notice checksum verification failed.' >&2; exit 1; }
+progress "Preparing installation directories under $install_dir."
 mkdir -p "$install_dir" "$doc_dir" "$data_dir" "$lock_dir" || { echo 'Cannot create destination; choose a writable directory or run with sudo.' >&2; exit 1; }
 [ ! -d "$install_dir/peerimeter-agent" ] || { echo 'Binary destination is a directory.' >&2; exit 1; }
 [ ! -d "$doc_dir/peerimeter-agent.NOTICES.txt" ] || { echo 'Notice destination is a directory.' >&2; exit 1; }
@@ -134,6 +139,7 @@ if [ -f "$install_dir/peerimeter-agent" ]; then cp -p "$install_dir/peerimeter-a
 if [ -f "$doc_dir/peerimeter-agent.NOTICES.txt" ]; then cp -p "$doc_dir/peerimeter-agent.NOTICES.txt" "$work/original-notices"; old_notice=1; fi
 staged=$(mktemp "$install_dir/.peerimeter-agent.XXXXXX")
 staged_notice=$(mktemp "$doc_dir/.peerimeter-notices.XXXXXX")
+progress "Installing binary and notices to $install_dir."
 install -m 0755 "$binary" "$staged"
 # Notices precede the atomic executable replacement; no config or keys are touched.
 install -m 0644 "$notices" "$staged_notice"
@@ -144,6 +150,7 @@ mv -f "$staged" "$install_dir/peerimeter-agent"
 staged=
 installed_version=$("$install_dir/peerimeter-agent" version --json | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
 [ -n "$installed_version" ] || { echo 'Cannot determine installed agent version.' >&2; exit 1; }
+progress 'Registering protected installation inventory.'
 # The installed binary writes the protected inventory using the same audited
 # ownership/path rules as full uninstall. Source configs and keys are not claimed.
 if [ "$allow_insecure_install_dir" -eq 1 ]; then
