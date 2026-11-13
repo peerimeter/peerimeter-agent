@@ -20,6 +20,10 @@ import (
 )
 
 func staticCommand(ctx context.Context, commandName, path, override string, layout paths.Layout, operator string, out io.Writer, backend platform.Backend) error {
+	if commandName == "run" {
+		installstate.TrustSudoUserForRun()
+		secret.TrustSudoUserForRun()
+	}
 	cfg, err := config.Load(path)
 	if err != nil {
 		return err

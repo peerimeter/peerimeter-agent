@@ -5,9 +5,25 @@ package secret
 import (
 	"errors"
 	"os"
+	"strconv"
+	"sync/atomic"
 
 	"golang.org/x/sys/unix"
 )
+
+var runTrustedUID atomic.Int64
+
+// TrustSudoUserForRun allows root's run command to read the invoking user's
+// private key while preserving the key's private mode and ACL checks.
+func TrustSudoUserForRun() {
+	if os.Geteuid() != 0 {
+		return
+	}
+	uid, err := strconv.ParseInt(os.Getenv("SUDO_UID"), 10, 32)
+	if err == nil && uid > 0 {
+		runTrustedUID.Store(uid + 1)
+	}
+}
 
 func openProtected(path string) (*os.File, error) {
 	// O_NONBLOCK avoids hanging on a FIFO before its type can be checked.
@@ -25,7 +41,8 @@ func openProtected(path string) (*os.File, error) {
 		f.Close()
 		return nil, errors.New("private key: require a regular file without hard links")
 	}
-	if st.Uid != uint32(os.Geteuid()) || st.Mode&0077 != 0 {
+	ownerOK := st.Uid == uint32(os.Geteuid()) || os.Geteuid() == 0 && runTrustedUID.Load() > 0 && st.Uid == uint32(runTrustedUID.Load()-1)
+	if !ownerOK || st.Mode&0077 != 0 {
 		f.Close()
 		return nil, errors.New("private key: require current-user ownership and no group or other permissions (chmod 600)")
 	}

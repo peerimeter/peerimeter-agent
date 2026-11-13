@@ -10,6 +10,11 @@ import (
 	"unsafe"
 )
 
+// TrustSudoUserForRun is a no-op on Windows; run-specific owner trust applies
+// only to Unix sudo installations.
+func TrustSudoUserForRun()                         {}
+func preserveRunOwner(*os.File, os.FileInfo) error { return nil }
+
 func isReparse(info os.FileInfo) bool {
 	st, ok := info.Sys().(*syscall.Win32FileAttributeData)
 	return ok && st.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0
