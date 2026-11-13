@@ -77,7 +77,7 @@ verify_traffic() {
   "$helper" host "$dir"
   after=$(grep -c '^PASS reference' "$dir/reference.log" || true)
   test "$after" -gt "$before"
-  "$agent" peers --json --runtime-dir "$runtime" >"$dir/peers.json"
+  "$agent" wg --json --runtime-dir "$runtime" >"$dir/peers.json"
   "$agent" status --json --runtime-dir "$runtime" >"$dir/actual-status.json"
   "$agent" wg show --runtime-dir "$runtime" >"$dir/peers-human.txt"
   python3 - "$dir/peers.json" "$dir/actual-status.json" "$dir" <<'PY'
