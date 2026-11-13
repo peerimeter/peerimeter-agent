@@ -129,7 +129,10 @@ func scheduleRemoval(plan removalPlan) (string, error) {
 				remaining = append(remaining, f.Path)
 			}
 		}
-		for _, path := range []string{plan.Inventory, plan.Lock} {
+		for _, path := range []string{plan.Inventory, plan.Lock, plan.DataLock} {
+			if path == "" {
+				continue
+			}
 			if _, e := os.Lstat(path); e == nil {
 				remaining = append(remaining, path)
 			}
@@ -232,7 +235,7 @@ try {
 finally {
     foreach ($h in $handles) { $h.Dispose() }
     foreach ($f in $p.files) { if (Exists $f.path) { $remaining += $f.path } }
-    foreach ($f in @($p.inventory,$p.lock)) { if (Exists $f) { $remaining += $f } }
+    foreach ($f in @($p.inventory,$p.lock,$p.data_lock)) { if ($f -and (Exists $f)) { $remaining += $f } }
     try { Remove-Item -LiteralPath $Plan -Force; Remove-Item -LiteralPath $PSCommandPath -Force; Remove-Item -LiteralPath $work -Force } catch {
         $state = 'failed'; $remaining += $work; $message += ' Temporary helper cleanup was incomplete.'
     }
