@@ -303,7 +303,7 @@ func TestCommandResultsDefaultToConsoleWithJSONOptIn(t *testing.T) {
 			if err := json.Unmarshal([]byte(out), &result); err != nil || result["state"] != "example_generated" {
 				t.Fatalf("invalid JSON: %s", out)
 			}
-		} else if !strings.Contains(out, "example_generated") || !strings.Contains(out, "Field") || !strings.Contains(out, "Value") || !strings.Contains(out, "keep private") || strings.Contains(out, "{") {
+		} else if !strings.Contains(out, "Example configuration generated") || !strings.Contains(out, "keep private") || strings.Contains(out, "{") || strings.Contains(out, "\n\n") {
 			t.Fatalf("invalid console output: %s", out)
 		}
 		args = []string{"validate-config", "--config", filepath.Join(dir, "peer-a.json")}
