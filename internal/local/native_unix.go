@@ -18,15 +18,15 @@ import (
 
 func prepareDirectory(dir string) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return errors.New("cannot create protected agent state directory")
+		return fmt.Errorf("cannot create protected agent state directory %s: %w", dir, err)
 	}
 	st, err := os.Lstat(dir)
 	if err != nil || !st.IsDir() || st.Mode()&os.ModeSymlink != 0 || st.Mode().Perm()&0066 != 0 {
-		return errors.New("state directory must be owner-controlled (chmod 700 or 711), without group/other read or write access, and not a symbolic link")
+		return fmt.Errorf("state directory %s must be owner-controlled (chmod 700 or 711), without group/other read or write access, and not a symbolic link", dir)
 	}
 	var stat unix.Stat_t
 	if unix.Stat(dir, &stat) != nil || stat.Uid != uint32(os.Geteuid()) {
-		return errors.New("state directory must belong to the current effective user")
+		return fmt.Errorf("state directory %s must belong to the current effective user", dir)
 	}
 	return nil
 }
@@ -35,19 +35,19 @@ func openStateLock(dir string, existing bool) (*os.File, error) {
 	// not permit competing managers, and no disposable lock file becomes identity.
 	fd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
-		return nil, errors.New("cannot open protected state directory lock")
+		return nil, fmt.Errorf("cannot open protected state directory lock %s: %w", dir, err)
 	}
 	var st unix.Stat_t
 	if unix.Fstat(fd, &st) != nil || st.Uid != uint32(os.Geteuid()) || st.Mode&0066 != 0 {
 		unix.Close(fd)
-		return nil, errors.New("state lock requires an owned directory without group/other read or write permissions")
+		return nil, fmt.Errorf("state lock directory %s requires an owned directory without group/other read or write permissions", dir)
 	}
 	if err := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		unix.Close(fd)
 		if err == unix.EWOULDBLOCK || err == unix.EAGAIN {
 			return nil, fmt.Errorf("%w: another agent already owns this state directory", ErrBusy)
 		}
-		return nil, errors.New("cannot lock protected state directory")
+		return nil, fmt.Errorf("cannot lock protected state directory %s: %w", dir, err)
 	}
 	return os.NewFile(uintptr(fd), "agent-state-directory-lock"), nil
 }
@@ -118,7 +118,7 @@ func listenWithHooks(dir, operator string, beforeListen, onClose func() error) (
 	// delegated 0711 directory. An unusually permissive process umask must not
 	// expose a briefly writable socket to an unauthorized account.
 	if err := os.Chmod(dir, 0700); err != nil {
-		return nil, errors.New("cannot protect state directory during local socket creation")
+		return nil, fmt.Errorf("cannot protect state directory %s during local socket creation: %w", dir, err)
 	}
 	path := filepath.Join(dir, "control.sock")
 	st, err := os.Lstat(path)
@@ -134,7 +134,7 @@ func listenWithHooks(dir, operator string, beforeListen, onClose func() error) (
 	}
 	listener, err := net.Listen("unix", path)
 	if err != nil {
-		return nil, errors.New("cannot create local control socket (check permissions/path length)")
+		return nil, fmt.Errorf("cannot create local control socket at %s (check permissions/path length): %w", path, err)
 	}
 	if err := os.Chmod(path, 0600); err != nil {
 		listener.Close()

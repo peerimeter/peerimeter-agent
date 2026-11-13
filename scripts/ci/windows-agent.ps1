@@ -13,6 +13,7 @@ $id = [Guid]::NewGuid().ToString('N')
 $dir = Join-Path $env:ProgramFiles "Peerimeter Agent CI Data $id"
 $installation = Join-Path $env:ProgramFiles "Peerimeter-CI-$id"
 $agentExe = Join-Path $installation 'peerimeter-agent.exe'
+$installResourceRoot = $null
 $helperExe = Join-Path $installation 'pmprobe.exe'
 $configPath = Join-Path $dir 'native.json'
 $state = Join-Path $dir 'foreground-state'
@@ -33,6 +34,13 @@ $collisionInstall = Join-Path $env:ProgramFiles "Peerimeter Collision $id"
 $reuseInstallX = Join-Path $env:ProgramFiles "Peerimeter Reuse X $id"
 $reuseInstallY = Join-Path $env:ProgramFiles "Peerimeter Reuse Y $id"
 $defaultState = Join-Path $env:ProgramData 'Peerimeter'
+
+function Get-InstallResourceRoot([string]$Directory) {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $key = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes([IO.Path]::GetFullPath($Directory).ToLowerInvariant()))).Replace('-','').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    return Join-Path $env:ProgramData (Join-Path 'Peerimeter\Installations' $key)
+}
 $defaultStateCreated = $false
 
 function Protect-Resource([string]$Path,[bool]$Public=$false) {
@@ -291,7 +299,7 @@ function Verify-RuntimeCollision {
     $process = Start-Process -FilePath $otherAgent -ArgumentList $arguments -RedirectStandardOutput (Join-Path $dir 'collision.log') -RedirectStandardError (Join-Path $dir 'collision-error.log') -PassThru
     if (-not $process.WaitForExit(8000)) { Stop-Process -Id $process.Id -Force; throw 'Installation B failed to reject the occupied runtime promptly' }
     if ($process.ExitCode -eq 0) { throw 'Installation B accepted installation A runtime' }
-    $inventory = Get-Content -LiteralPath (Join-Path $collisionInstall '.peerimeter-agent.install.json') -Raw | ConvertFrom-Json
+    $inventory = Get-Content -LiteralPath (Join-Path (Join-Path (Get-InstallResourceRoot $collisionInstall) 'State') '.peerimeter-agent.install.json') -Raw | ConvertFrom-Json
     $profiles = @($inventory.profiles)
     if ($profiles.Count -ne 1 -or $profiles[0].runtime_owned -or $profiles[0].runtime_dir -ne $state) { throw 'Failed installation did not retain a non-owned planned runtime profile' }
     $removal = & $otherAgent uninstall --json --install-dir $collisionInstall | ConvertFrom-Json
@@ -347,6 +355,7 @@ function Verify-Traffic([string]$StateDir) {
 try {
     if (Get-Service -Name 'PeerimeterAgent' -ErrorAction SilentlyContinue) { throw 'Existing PeerimeterAgent service found; refusing to alter it' }
     New-Item -ItemType Directory -Path $dir,$installation | Out-Null
+    $installResourceRoot = Get-InstallResourceRoot $installation
     Protect-Resource $dir
     Protect-Resource $installation $true
     # Use the real verified operator installer so inventory ownership is tested,
@@ -359,7 +368,7 @@ try {
     $archive = Join-Path $dir 'native package.zip'
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive
     & (Join-Path $PSScriptRoot '..\..\docs\install.ps1') -Archive $archive -SHA256 (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -InstallDir $installation
-    if (-not (Test-Path -LiteralPath (Join-Path $installation '.peerimeter-agent.install.json'))) { throw 'Verified installer did not register its protected inventory' }
+    if (-not (Test-Path -LiteralPath (Join-Path (Join-Path $installResourceRoot 'State') '.peerimeter-agent.install.json'))) { throw 'Verified installer did not register its protected inventory' }
     Copy-Item -LiteralPath $Helper -Destination $helperExe
     Protect-Resource $helperExe $true
     $securePassword = ConvertTo-SecureString ('Pm!' + [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')) -AsPlainText -Force
@@ -478,12 +487,12 @@ try {
     Verify-Traffic $serviceState | Out-Null
     $originalKeyHash = (Get-FileHash -LiteralPath (Join-Path $dir 'native.key')).Hash
     foreach ($folder in @($installation,$state,$serviceState)) { [IO.File]::WriteAllText((Join-Path $folder 'unrelated.txt'),'unrelated operator file') }
-    $beforeDry = Snapshot-ManagedTrees @($installation,$state,$defaultState,$configPath,(Join-Path $dir 'native.key'))
+    $beforeDry = Snapshot-ManagedTrees @($installation,$installResourceRoot,$state,$defaultState,$configPath,(Join-Path $dir 'native.key'))
     $dry = Invoke-Agent -CommandArgs @('uninstall','--install-dir',$installation,'--dry-run') | ConvertFrom-Json
     if ($dry.state -ne 'dry_run' -or @($dry.paths).Count -lt 5) { throw 'Full uninstall dry-run omitted tracked resources' }
-    if ((Snapshot-ManagedTrees @($installation,$state,$defaultState,$configPath,(Join-Path $dir 'native.key'))) -ne $beforeDry) { throw 'Full uninstall dry-run mutated files, ACLs or inventory' }
+    if ((Snapshot-ManagedTrees @($installation,$installResourceRoot,$state,$defaultState,$configPath,(Join-Path $dir 'native.key'))) -ne $beforeDry) { throw 'Full uninstall dry-run mutated files, ACLs or inventory' }
     if ((Agent-Status $serviceState).state -ne 'running') { throw 'Dry-run stopped the live service' }
-    $noticePath = Join-Path $installation 'peerimeter-agent.NOTICES.txt'
+    $noticePath = Join-Path (Join-Path $installResourceRoot 'Documentation') 'peerimeter-agent.NOTICES.txt'
     $noticeBytes = [IO.File]::ReadAllBytes($noticePath)
     [IO.File]::AppendAllText($noticePath,'modified tracked notice')
     & $agentExe uninstall --json --install-dir $installation *> $null
@@ -512,7 +521,7 @@ try {
     $serviceInstalled = $false
     Assert-Removed
     if (Get-Service -Name 'PeerimeterAgent' -ErrorAction SilentlyContinue) { throw 'Full uninstall left an SCM registration' }
-    foreach ($path in @($agentExe,(Join-Path $installation 'wireguard.dll'),(Join-Path $installation 'peerimeter-agent.NOTICES.txt'),(Join-Path $installation '.peerimeter-agent.install.json'),(Join-Path $installation '.peerimeter-agent.install.lock'),(Join-Path $serviceState 'service.key'),(Join-Path $serviceState 'service.json'),(Join-Path $serviceState 'ownership'),(Join-Path $serviceState 'agent.lock'),(Join-Path $state 'ownership'),(Join-Path $state 'agent.lock'),(Join-Path $serviceState '.peerimeter-agent.profile'),(Join-Path $state '.peerimeter-agent.profile'),(Join-Path $defaultState 'service.json'),(Join-Path $defaultState 'service.key'),(Join-Path $defaultState 'ownership'),(Join-Path $defaultState 'agent.lock'),(Join-Path $defaultState '.peerimeter-agent.profile'),(Join-Path $defaultState '.peerimeter-agent.runtime'))) {
+    foreach ($path in @($agentExe,(Join-Path $installation 'wireguard.dll'),(Join-Path $installation '.peerimeter-agent.install.ref'),(Join-Path (Join-Path $installResourceRoot 'Documentation') 'peerimeter-agent.NOTICES.txt'),(Join-Path (Join-Path $installResourceRoot 'State') '.peerimeter-agent.install.json'),(Join-Path (Join-Path $installResourceRoot 'Locks') '.peerimeter-agent.install.lock'),(Join-Path $serviceState 'service.key'),(Join-Path $serviceState 'service.json'),(Join-Path $serviceState 'ownership'),(Join-Path $serviceState 'agent.lock'),(Join-Path $state 'ownership'),(Join-Path $state 'agent.lock'),(Join-Path $serviceState '.peerimeter-agent.profile'),(Join-Path $state '.peerimeter-agent.profile'),(Join-Path $defaultState 'service.json'),(Join-Path $defaultState 'service.key'),(Join-Path $defaultState 'ownership'),(Join-Path $defaultState 'agent.lock'),(Join-Path $defaultState '.peerimeter-agent.profile'),(Join-Path $defaultState '.peerimeter-agent.runtime'))) {
         if (Test-Path -LiteralPath $path) { throw "Tracked resource survived full uninstall: $path" }
     }
     foreach ($folder in @($installation,$state,$serviceState,$defaultState)) {

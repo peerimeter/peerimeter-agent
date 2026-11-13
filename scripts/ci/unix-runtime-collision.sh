@@ -21,7 +21,7 @@ if ns:command=['ip','netns','exec',ns]+command
 with open(log,'w') as output:p=subprocess.run(command,stdout=output,stderr=subprocess.STDOUT,timeout=8)
 assert p.returncode!=0,'installation B accepted installation A runtime'
 PY
-python3 - "$other/.peerimeter-agent.install.json" "$runtime" <<'PY'
+python3 - "$other.data/.peerimeter-agent.install.json" "$runtime" <<'PY'
 import json,os,sys
 inv=json.load(open(sys.argv[1])); profiles=inv['profiles']
 assert len(profiles)==1,'failed startup must retain its planned profile for safe cleanup'

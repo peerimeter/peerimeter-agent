@@ -7,9 +7,23 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
+
+func TestPrepareDirectoryErrorIncludesPath(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "file")
+	if err := os.WriteFile(parent, []byte("occupied"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stateDir := filepath.Join(parent, "agent-state")
+	err := PrepareDirectory(stateDir)
+	if err == nil || !strings.Contains(err.Error(), stateDir) {
+		t.Fatalf("expected state directory error to include %q, got %v", stateDir, err)
+	}
+}
 
 func TestExclusiveAndPersistedChoice(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")

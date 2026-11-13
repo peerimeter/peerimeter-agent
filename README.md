@@ -78,22 +78,30 @@ The installers default to the latest stable release and detect OS/architecture.
 Release asset names follow the Nix system naming convention (`x86_64` and
 `aarch64`) and do not include the version; the installer selects the version
 from the release tag. Explicit versions and absolute installation directories
-are supported:
+are supported. By default, root installs put the executable in `/usr/local/bin`,
+notices in `/usr/local/share/doc/peerimeter-agent`, inventory in
+`/var/lib/peerimeter-agent-install` and installer locks in `/run/lock/peerimeter-agent`.
+User installs use `~/.local/bin`, XDG data/state directories, and a lock in the
+persistent state directory. Windows stores program files under Program Files
+and installer metadata under ProgramData.
 
 ### Linux and macOS
 
 ```sh
-# Install the latest release to a user-owned directory without sudo.
-curl -fsSL https://agent.peerimeter.app/install.sh | sh -s -- --install-dir "$HOME/.local/bin"
+# Install the latest release using root or per-user directory defaults.
+curl -fsSL https://agent.peerimeter.app/install.sh | sh
+
+# Override resource directories when needed.
+curl -fsSL https://agent.peerimeter.app/install.sh | sh -s -- --install-dir "$HOME/.local/bin" --doc-dir "$HOME/.local/share/doc/peerimeter-agent" --data-dir "$HOME/.local/state/peerimeter-agent" --lock-dir "$HOME/.local/state/peerimeter-agent"
 
 # Select a version and install it system-wide.
-curl -fsSL https://agent.peerimeter.app/install.sh | sudo sh -s -- --version v0.1.0 --install-dir /usr/local/bin
+curl -fsSL https://agent.peerimeter.app/install.sh | sudo sh -s -- --version v0.1.0
 
 # Termux can use its standard writable prefix without a directory permission override.
 curl -fsSL https://agent.peerimeter.app/install.sh | sh -s -- --install-dir "$PREFIX/bin"
 
 # Running the checked-out script also works:
-sh docs/install.sh --version latest --install-dir "$HOME/.local/bin"
+sh docs/install.sh --version latest --install-dir "$HOME/.local/bin" --doc-dir "$HOME/.local/share/doc/peerimeter-agent" --data-dir "$HOME/.local/state/peerimeter-agent" --lock-dir "$HOME/.local/state/peerimeter-agent"
 ```
 
 ### Windows
@@ -103,6 +111,7 @@ sh docs/install.sh --version latest --install-dir "$HOME/.local/bin"
 .\docs\install.ps1
 .\docs\install.ps1 -Version v0.1.0 -InstallDir 'C:\Program Files\Peerimeter'
 .\docs\install.ps1 -Version latest -InstallDir 'D:\Tools\Peerimeter Agent'
+.\docs\install.ps1 -DocDir 'D:\Peerimeter\Docs' -DataDir 'D:\Peerimeter\State' -LockDir 'D:\Peerimeter\Locks'
 # The legacy -AllowInsecureInstallDir switch remains accepted for compatibility.
 ```
 

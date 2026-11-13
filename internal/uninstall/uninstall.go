@@ -22,6 +22,7 @@ import (
 
 type Options struct {
 	InstallDir, ConfigDir, StateDir, RuntimeDir string
+	DataDir, DocDir, LockDir                    string
 	DryRun                                      bool
 }
 type removalFile struct {
@@ -83,9 +84,10 @@ func resources(p installstate.Profile) []removalFile {
 	return files
 }
 func makePlan(inv installstate.Inventory) removalPlan {
-	p := removalPlan{Version: 1, InstallID: inv.ID, ParentPID: os.Getpid(), Inventory: filepath.Join(inv.InstallDir, installstate.Filename), Lock: filepath.Join(inv.InstallDir, installstate.LockFilename), Profiles: inv.Profiles}
+	p := removalPlan{Version: 1, InstallID: inv.ID, ParentPID: os.Getpid(), Inventory: filepath.Join(inv.DataDir, installstate.Filename), Lock: filepath.Join(inv.LockDir, installstate.LockFilename), Profiles: inv.Profiles}
 	seen := map[string]bool{}
-	dirs := map[string]bool{inv.InstallDir: true}
+	dirs := map[string]bool{inv.InstallDir: true, inv.DocDir: true, inv.DataDir: true, inv.LockDir: true}
+	p.Files = append(p.Files, removalFile{Path: filepath.Join(inv.InstallDir, installstate.ReferenceFilename)})
 	for _, profile := range inv.Profiles {
 		for _, f := range resources(profile) {
 			if !seen[f.Path] {
@@ -113,7 +115,7 @@ func makePlan(inv installstate.Inventory) removalPlan {
 		}
 	}
 	for _, f := range inv.Files {
-		path := filepath.Join(inv.InstallDir, f.Name)
+		path := installstate.ResourcePath(inv, f)
 		if !seen[path] {
 			p.Files = append(p.Files, removalFile{Path: path, SHA256: f.SHA256})
 			seen[path] = true
@@ -148,6 +150,15 @@ func validateOverrides(opts Options, inv installstate.Inventory) error {
 			return errors.New("directory override is not recorded by this installation; refusing to remove untracked resources")
 		}
 	}
+	for _, item := range []struct{ value, recorded string }{{opts.DataDir, inv.DataDir}, {opts.DocDir, inv.DocDir}, {opts.LockDir, inv.LockDir}} {
+		if item.value == "" {
+			continue
+		}
+		canonical, err := installstate.Canonical(item.value)
+		if err != nil || canonical != item.recorded {
+			return errors.New("installation resource directory does not match the recorded installation")
+		}
+	}
 	return nil
 }
 func verifyProfile(inv installstate.Inventory, p installstate.Profile) error {
@@ -171,6 +182,11 @@ func verifyProfile(inv installstate.Inventory, p installstate.Profile) error {
 	return nil
 }
 func preflight(inv installstate.Inventory, p removalPlan) error {
+	for _, dir := range []string{inv.InstallDir, inv.DocDir, inv.DataDir, inv.LockDir} {
+		if err := installstate.CheckDirectoryWithPolicy(dir, inv.AllowInsecureInstallDir); err != nil {
+			return err
+		}
+	}
 	for _, profile := range inv.Profiles {
 		if _, err := installstate.VerifyRuntime(inv, profile); err != nil {
 			return err
@@ -330,7 +346,7 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	}
 	inv, err := installstate.Load(dir)
 	if os.IsNotExist(err) {
-		for _, name := range append(installstate.ProgramNames(), installstate.Filename) {
+		for _, name := range append(append(installstate.ProgramNames(), installstate.Filename), installstate.ReferenceFilename) {
 			if _, e := os.Lstat(filepath.Join(dir, name)); !os.IsNotExist(e) {
 				return errors.New("installation inventory is absent; existing files are untracked and were preserved")
 			}

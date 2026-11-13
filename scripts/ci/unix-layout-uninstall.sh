@@ -16,6 +16,9 @@ case $(uname -s) in
   defaults_config=/etc/peerimeter
   defaults_state=/var/lib/peerimeter-agent
   defaults_runtime=/run/peerimeter-agent
+  installer_data=/var/lib/peerimeter-agent-install
+ installer_lock=/run/lock/peerimeter-agent
+ installer_doc=/usr/local/share/doc/peerimeter-agent
   service_file=/etc/systemd/system/peerimeter-agent.service
   operator=nobody
   ;;
@@ -23,6 +26,9 @@ case $(uname -s) in
   defaults_config=/etc/peerimeter
   defaults_state='/Library/Application Support/Peerimeter'
   defaults_runtime=/var/run/peerimeter-agent
+  installer_data='/Library/Application Support/Peerimeter Installer/State'
+  installer_lock='/Library/Application Support/Peerimeter Installer/Locks'
+  installer_doc=/usr/local/share/doc/peerimeter-agent
   service_file=/Library/LaunchDaemons/com.peerimeter.agent.plist
   operator=${SUDO_USER:-runner}
   ;;
@@ -61,7 +67,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 [[ ! -e "$service_file" ]]
-for path in "$defaults_config" "$defaults_state" "$defaults_runtime"; do
+for path in "$defaults_config" "$defaults_state" "$defaults_runtime" "$installer_data" "$installer_lock" "$installer_doc"; do
  [[ ! -e "$path" ]] || { echo "Default test destination is already occupied: $path" >&2; exit 1; }
 done
 install -m 0755 "$agent_source" "$base/source-agent"
@@ -72,7 +78,7 @@ printf 'Native integration archive fixture; release packages carry full dependen
 if command -v sha256sum >/dev/null; then digest=$(sha256sum "$base/package/peerimeter-agent" | awk '{print $1}'); notice_digest=$(sha256sum "$base/package/peerimeter-agent.NOTICES.txt" | awk '{print $1}'); else digest=$(shasum -a 256 "$base/package/peerimeter-agent" | awk '{print $1}'); notice_digest=$(shasum -a 256 "$base/package/peerimeter-agent.NOTICES.txt" | awk '{print $1}'); fi
 install_program() {
  sh "$repo/docs/install.sh" --binary "$base/package/peerimeter-agent" --sha256 "$digest" --notices "$base/package/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notice_digest" --install-dir "$1"
- [[ -f "$1/.peerimeter-agent.install.json" ]]
+ [[ -f "$1.data/.peerimeter-agent.install.json" ]]
  chmod 0755 "$(dirname "$1")" "$1"
 }
 as_operator() {
@@ -163,7 +169,7 @@ program_default=/usr/local/bin
 # /usr/local. A system-service executable requires trusted ancestors. Prepare
 # only the default resource ancestors on the disposable VM and restore metadata
 # on exit; no product permission checks are weakened by the fixture.
-python3 - "$base/default-parent-permissions.json" "$program_default" "$defaults_config" "$defaults_state" "$defaults_runtime" <<'PYTRUST'
+python3 - "$base/default-parent-permissions.json" "$program_default" "$defaults_config" "$defaults_state" "$defaults_runtime" "$installer_data" "$installer_lock" "$installer_doc" <<'PYTRUST'
 import json,os,pathlib,stat,sys
 records=[];seen=set()
 for target in sys.argv[2:]:
@@ -174,19 +180,19 @@ for target in sys.argv[2:]:
   s=directory.lstat()
   print('CI default resource ancestor:',directory,'uid='+str(s.st_uid),'mode='+oct(stat.S_IMODE(s.st_mode)))
   assert stat.S_ISDIR(s.st_mode),'default resource ancestor must be an existing real directory'
-  assert s.st_uid==0 or str(directory) in ('/usr/local','/usr/local/bin'),'unexpected ownership outside the disposable test prefix'
+  assert s.st_uid==0 or str(directory) in ('/usr/local','/usr/local/bin','/usr/local/share'),'unexpected ownership outside the disposable test prefix'
   records.append(dict(path=str(directory),uid=s.st_uid,gid=s.st_gid,mode=stat.S_IMODE(s.st_mode)))
 with open(sys.argv[1],'w') as f:json.dump(records,f)
 for item in records:
  if item['uid']!=0:os.chown(item['path'],0,item['gid'])
  if item['mode']&0o022:os.chmod(item['path'],item['mode']&~0o022)
 PYTRUST
-for member in peerimeter-agent peerimeter-agent.NOTICES.txt .peerimeter-agent.install.json .peerimeter-agent.install.lock; do
+for member in peerimeter-agent .peerimeter-agent.install.ref; do
  [[ ! -e "$program_default/$member" && ! -L "$program_default/$member" ]] || { echo 'Default program install destination is already occupied.' >&2; exit 1; }
 done
 # Omit --install-dir to verify the actual Unix installer destination default.
 sh "$repo/docs/install.sh" --binary "$base/package/peerimeter-agent" --sha256 "$digest" --notices "$base/package/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notice_digest"
-[[ -f "$program_default/.peerimeter-agent.install.json" ]]
+[[ -f "$installer_data/.peerimeter-agent.install.json" && -f "$program_default/.peerimeter-agent.install.ref" && -f "$installer_doc/peerimeter-agent.NOTICES.txt" ]]
 printf 'unrelated shared-bin resource\n' >"$default_sentinel"
 agent="$program_default/peerimeter-agent"
 active="$agent"
@@ -308,26 +314,27 @@ cmp "$base/before-dry-run.json" "$base/after-dry-run.json"
 # Refuse hash-changed owned program resources without stopping the working
 # service. Restoring and then omitting a previously removed member exercises retry
 # from a partial inventory cleanup, without adding production-only fault hooks.
-cp "$program/peerimeter-agent.NOTICES.txt" "$base/notices.original"
-printf 'operator changed tracked notice\n' >>"$program/peerimeter-agent.NOTICES.txt"
+cp "$program.docs/peerimeter-agent.NOTICES.txt" "$base/notices.original"
+printf 'operator changed tracked notice\n' >>"$program.docs/peerimeter-agent.NOTICES.txt"
 if "$agent" uninstall --json --install-dir "$program" >"$base/changed-file.log" 2>&1; then echo 'Uninstall ignored changed owned-file hash.' >&2; exit 1; fi
-[[ -f "$new_config/service.key" && -f "$program/.peerimeter-agent.install.json" ]]
+[[ -f "$new_config/service.key" && -f "$program.data/.peerimeter-agent.install.json" ]]
 "$agent" status --json --runtime-dir "$new_runtime" >"$base/still-running-after-rejection.json"
-cp "$base/notices.original" "$program/peerimeter-agent.NOTICES.txt"
-rm "$program/peerimeter-agent.NOTICES.txt"
+cp "$base/notices.original" "$program.docs/peerimeter-agent.NOTICES.txt"
+rm "$program.docs/peerimeter-agent.NOTICES.txt"
 "$agent" uninstall --json --install-dir "$program" >"$base/removed.json"
 check_state "$base/removed.json" removed
 wait_interface_gone "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["interface_name"])' "$base/migrated-status.json")"
 active=''
 [[ ! -e "$service_file" && ! -e "$new_runtime/control.sock" ]]
-for path in "$program/peerimeter-agent" "$program/.peerimeter-agent.install.json" "$program/.peerimeter-agent.install.lock" "$new_config/service.json" "$new_config/service.key" "$legacy/ownership" "$legacy/network.json" "$legacy/agent.lock" "$legacy/.peerimeter-agent.profile"; do [[ ! -e "$path" ]] || { echo "Managed resource survived uninstall: $path" >&2; exit 1; }; done
+for path in "$program/peerimeter-agent" "$program/.peerimeter-agent.install.ref" "$program.data/.peerimeter-agent.install.json" "$program.locks/.peerimeter-agent.install.lock" "$program.docs/peerimeter-agent.NOTICES.txt" "$new_config/service.json" "$new_config/service.key" "$legacy/ownership" "$legacy/network.json" "$legacy/agent.lock" "$legacy/.peerimeter-agent.profile"; do [[ ! -e "$path" ]] || { echo "Managed resource survived uninstall: $path" >&2; exit 1; }; done
 for directory in "$program" "$new_config" "$legacy" "$new_runtime"; do [[ $(cat "$directory/unrelated.txt") == 'unrelated operator file' ]]; done
 "$source_cli" uninstall --json --install-dir "$program" >"$base/already-absent.json"
 check_state "$base/already-absent.json" already_absent
 "$program_default/peerimeter-agent" uninstall --json --install-dir "$program_default" >"$base/default-removed.json"
 check_state "$base/default-removed.json" removed
 [[ $(cat "$default_sentinel") == 'unrelated shared-bin resource' ]]
-for member in peerimeter-agent peerimeter-agent.NOTICES.txt .peerimeter-agent.install.json .peerimeter-agent.install.lock; do [[ ! -e "$program_default/$member" ]]; done
+for member in peerimeter-agent .peerimeter-agent.install.ref; do [[ ! -e "$program_default/$member" ]]; done
+for path in "$installer_doc/peerimeter-agent.NOTICES.txt" "$installer_data/.peerimeter-agent.install.json" "$installer_lock/.peerimeter-agent.install.lock"; do [[ ! -e "$path" ]]; done
 for path in "$defaults_config/service.json" "$defaults_config/service.key" "$defaults_state/ownership" "$defaults_state/network.json" "$defaults_state/.peerimeter-agent.profile" "$defaults_runtime/control.sock"; do [[ ! -e "$path" ]] || { echo "Default managed resource survived uninstall: $path" >&2; exit 1; }; done
 snapshot "$base/original credentials" >"$base/original-after.json"
 cmp "$base/original-before.json" "$base/original-after.json"

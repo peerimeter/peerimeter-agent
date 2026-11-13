@@ -20,12 +20,14 @@ import (
 
 const Filename = ".peerimeter-agent.install.json"
 const LockFilename = ".peerimeter-agent.install.lock"
+const ReferenceFilename = ".peerimeter-agent.install.ref"
 const MarkerFilename = ".peerimeter-agent.profile"
 const RuntimeMarkerFilename = ".peerimeter-agent.runtime"
 const MaxInventorySize = 1 << 20
 
 type File struct {
 	Name   string `json:"name"`
+	Dir    string `json:"dir,omitempty"`
 	SHA256 string `json:"sha256"`
 }
 type Profile struct {
@@ -50,8 +52,14 @@ type Inventory struct {
 	AllowInsecureInstallDir bool      `json:"allow_insecure_install_dir,omitempty"`
 	ID                      string    `json:"id"`
 	InstallDir              string    `json:"install_dir"`
+	DataDir                 string    `json:"data_dir,omitempty"`
+	DocDir                  string    `json:"doc_dir,omitempty"`
+	LockDir                 string    `json:"lock_dir,omitempty"`
 	Files                   []File    `json:"files"`
 	Profiles                []Profile `json:"profiles"`
+}
+type installReference struct {
+	DataDir string `json:"data_dir"`
 }
 type marker struct {
 	Version   int    `json:"version"`
@@ -77,6 +85,14 @@ func ProgramNames() []string {
 		names = append(names, "wireguard.dll")
 	}
 	return names
+}
+
+func ResourcePath(inv Inventory, f File) string {
+	dir := f.Dir
+	if dir == "" {
+		dir = inv.InstallDir
+	}
+	return filepath.Join(dir, f.Name)
 }
 
 // Canonical validates existing components without following untrusted links.
@@ -274,7 +290,28 @@ func load(dir string, allowInsecureOverride bool) (Inventory, error) {
 	if err := CheckDirectoryWithPolicy(canonical, true); err != nil {
 		return inv, err
 	}
-	data, err := readPrivate(filepath.Join(canonical, Filename))
+	dataDir := canonical // legacy installs kept the inventory beside the binary.
+	refPath := filepath.Join(canonical, ReferenceFilename)
+	if _, statErr := os.Lstat(refPath); statErr == nil {
+		refData, readErr := readPrivate(refPath)
+		if readErr != nil {
+			return inv, readErr
+		}
+		var ref installReference
+		if json.Unmarshal(refData, &ref) != nil {
+			return inv, errors.New("installation reference is invalid")
+		}
+		dataDir, err = Canonical(ref.DataDir)
+		if err != nil || dataDir != ref.DataDir {
+			return inv, errors.New("installation reference path is invalid")
+		}
+	} else if !os.IsNotExist(statErr) {
+		return inv, statErr
+	}
+	if err := CheckDirectoryWithPolicy(dataDir, true); err != nil {
+		return inv, err
+	}
+	data, err := readPrivate(filepath.Join(dataDir, Filename))
 	if err != nil {
 		return inv, err
 	}
@@ -286,6 +323,24 @@ func load(dir string, allowInsecureOverride bool) (Inventory, error) {
 	if inv.Version != 1 || !validID(inv.ID) || inv.InstallDir != canonical {
 		return inv, errors.New("installation inventory identity or directory does not match")
 	}
+	if inv.DataDir == "" {
+		inv.DataDir = canonical
+	}
+	if inv.DocDir == "" {
+		inv.DocDir = canonical
+	}
+	if inv.LockDir == "" {
+		inv.LockDir = canonical
+	}
+	for _, resourceDir := range []string{inv.DataDir, inv.DocDir, inv.LockDir} {
+		resolved, e := Canonical(resourceDir)
+		if e != nil || resolved != resourceDir {
+			return inv, errors.New("installation resource directory is invalid")
+		}
+		if err := CheckDirectoryWithPolicy(resourceDir, inv.AllowInsecureInstallDir || allowInsecureOverride); err != nil {
+			return inv, err
+		}
+	}
 	if err := CheckDirectoryWithPolicy(canonical, inv.AllowInsecureInstallDir || allowInsecureOverride); err != nil {
 		return inv, err
 	}
@@ -296,7 +351,12 @@ func load(dir string, allowInsecureOverride bool) (Inventory, error) {
 	seen := map[string]bool{}
 	for _, f := range inv.Files {
 		digest, e := hex.DecodeString(f.SHA256)
-		if !names[f.Name] || seen[f.Name] || e != nil || len(digest) != 32 {
+		dir := f.Dir
+		if dir == "" {
+			dir = inv.InstallDir
+		}
+		resolved, dirErr := Canonical(dir)
+		if !names[f.Name] || seen[f.Name] || dirErr != nil || resolved != dir || e != nil || len(digest) != 32 {
 			return inv, errors.New("installation inventory contains an invalid program resource")
 		}
 		seen[f.Name] = true
@@ -330,7 +390,7 @@ func save(inv Inventory) error {
 	if err != nil {
 		return err
 	}
-	return WritePrivateWithPolicy(filepath.Join(inv.InstallDir, Filename), append(data, '\n'), inv.AllowInsecureInstallDir)
+	return WritePrivateWithPolicy(filepath.Join(inv.DataDir, Filename), append(data, '\n'), inv.AllowInsecureInstallDir)
 }
 
 // Lock serializes inventory mutations. Dry-run must never call this function.
@@ -338,6 +398,9 @@ func Lock(dir string) (io.Closer, error) {
 	inv, err := Load(dir)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
+	}
+	if err == nil {
+		dir = inv.LockDir
 	}
 	return LockWithPolicy(dir, err == nil && inv.AllowInsecureInstallDir)
 }
@@ -354,9 +417,25 @@ func Register(dir string) error {
 	return RegisterWithPolicy(dir, false)
 }
 func RegisterWithPolicy(dir string, allowInsecure bool) error {
+	return RegisterWithDirectories(dir, dir, dir, dir, allowInsecure)
+}
+
+// RegisterWithDirectories keeps program resources, notices, persistent
+// inventory and lock files in their selected directories. A small protected
+// reference beside the executable lets service startup find the inventory.
+func RegisterWithDirectories(dir, docDir, dataDir, lockDir string, allowInsecure bool) error {
 	dir, err := Canonical(dir)
 	if err != nil {
 		return err
+	}
+	for target, value := range map[string]*string{"documentation": &docDir, "data": &dataDir, "lock": &lockDir} {
+		*value, err = Canonical(*value)
+		if err != nil {
+			return fmt.Errorf("invalid %s directory: %w", target, err)
+		}
+		if err := CheckDirectoryWithPolicy(*value, allowInsecure); err != nil {
+			return fmt.Errorf("unsafe %s directory: %w", target, err)
+		}
 	}
 	existing, loadErr := load(dir, allowInsecure)
 	if loadErr != nil && !os.IsNotExist(loadErr) {
@@ -366,32 +445,77 @@ func RegisterWithPolicy(dir string, allowInsecure bool) error {
 	if err := CheckDirectoryWithPolicy(dir, allowInsecure); err != nil {
 		return err
 	}
-	lock, err := LockWithPolicy(dir, allowInsecure)
+	lock, err := LockWithPolicy(lockDir, allowInsecure)
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
 	inv, err := load(dir, allowInsecure)
 	if os.IsNotExist(err) {
-		inv = Inventory{Version: 1, InstallDir: dir, Profiles: []Profile{}, AllowInsecureInstallDir: allowInsecure}
+		inv = Inventory{Version: 1, InstallDir: dir, DataDir: dataDir, DocDir: docDir, LockDir: lockDir, Profiles: []Profile{}, AllowInsecureInstallDir: allowInsecure}
 		inv.ID, err = NewID()
 	} else if err != nil {
 		return err
 	}
 	// Once selected, retain the explicit exception on upgrades.
 	inv.AllowInsecureInstallDir = inv.AllowInsecureInstallDir || allowInsecure
+	if inv.InstallDir != dir {
+		return errors.New("installation directory changed; remove the existing installation first")
+	}
+	// Older installers kept all package metadata beside the executable. Move
+	// that inventory to the selected data directory during the first upgrade.
+	legacyInventory := inv.DataDir == dir && inv.DocDir == dir && inv.LockDir == dir
+	legacyNotice := ""
+	if legacyInventory {
+		for _, oldFile := range inv.Files {
+			if oldFile.Name == "peerimeter-agent.NOTICES.txt" {
+				legacyNotice = filepath.Join(dir, oldFile.Name)
+				break
+			}
+		}
+	}
+	if !legacyInventory && (inv.DataDir != dataDir || inv.DocDir != docDir || inv.LockDir != lockDir) {
+		return errors.New("installation resource directories changed; remove the existing installation first")
+	}
+	if legacyInventory {
+		inv.DataDir, inv.DocDir, inv.LockDir = dataDir, docDir, lockDir
+	}
 	if err != nil {
 		return err
 	}
 	inv.Files = nil
 	for _, name := range ProgramNames() {
-		hash, e := Hash(filepath.Join(dir, name))
+		resourceDir := dir
+		if name == "peerimeter-agent.NOTICES.txt" {
+			resourceDir = docDir
+		}
+		hash, e := Hash(filepath.Join(resourceDir, name))
 		if e != nil {
 			return fmt.Errorf("inspect installed program resource %s: %w", name, e)
 		}
-		inv.Files = append(inv.Files, File{Name: name, SHA256: hash})
+		inv.Files = append(inv.Files, File{Name: name, Dir: resourceDir, SHA256: hash})
 	}
-	return save(inv)
+	if err := save(inv); err != nil {
+		return err
+	}
+	ref, _ := json.Marshal(installReference{DataDir: dataDir})
+	if err := WritePrivateWithPolicy(filepath.Join(dir, ReferenceFilename), append(ref, '\n'), allowInsecure); err != nil {
+		return err
+	}
+	if legacyInventory && dataDir != dir {
+		_ = os.Remove(filepath.Join(dir, Filename))
+		_ = os.Remove(filepath.Join(dir, LockFilename))
+		if legacyNotice != "" && filepath.Join(docDir, "peerimeter-agent.NOTICES.txt") != legacyNotice {
+			if oldHash, e := Hash(legacyNotice); e == nil {
+				for _, current := range inv.Files {
+					if current.Name == "peerimeter-agent.NOTICES.txt" && current.Dir == docDir && oldHash == current.SHA256 {
+						_ = os.Remove(legacyNotice)
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // RegisterProfile records only managed snapshots, durable metadata and runtime
