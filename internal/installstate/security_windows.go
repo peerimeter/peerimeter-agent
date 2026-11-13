@@ -91,7 +91,9 @@ func allowedUntrustedAccess(mask uint32, path string, directory, private bool) b
 	clean := filepath.Clean(path)
 	// Standard shared system roots grant child creation and root metadata writes,
 	// but must never grant deletion of protected children or ACL/owner changes.
-	if directory && !private && (filepath.Dir(clean) == clean || strings.EqualFold(clean, filepath.Clean(os.Getenv("ProgramData")))) {
+	programData := filepath.Clean(os.Getenv("ProgramData"))
+	applicationRoot := filepath.Join(programData, "Peerimeter")
+	if directory && !private && (filepath.Dir(clean) == clean || strings.EqualFold(clean, programData) || strings.EqualFold(clean, applicationRoot)) {
 		allowed |= windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA | windows.FILE_WRITE_EA | windows.FILE_WRITE_ATTRIBUTES
 	}
 	return mask == 0 || !private && mask & ^allowed == 0
