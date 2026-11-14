@@ -293,6 +293,9 @@ func Load(dir string) (Inventory, error) {
 	return load(dir, false)
 }
 func load(dir string, allowInsecureOverride bool) (Inventory, error) {
+	return loadAtDataDir(dir, "", allowInsecureOverride)
+}
+func loadAtDataDir(dir, requestedDataDir string, allowInsecureOverride bool) (Inventory, error) {
 	var inv Inventory
 	canonical, err := Canonical(dir)
 	if err != nil {
@@ -323,14 +326,21 @@ func load(dir string, allowInsecureOverride bool) (Inventory, error) {
 	} else if !os.IsNotExist(statErr) {
 		return inv, statErr
 	} else {
-		dataDir, err = defaultInstallDataDir(canonical)
-		if err != nil {
-			return inv, err
+		if requestedDataDir != "" {
+			dataDir, err = Canonical(requestedDataDir)
+			if err != nil {
+				return inv, err
+			}
+		} else {
+			dataDir, err = defaultInstallDataDir(canonical)
+			if err != nil {
+				return inv, err
+			}
 		}
 	}
 	// Older installations kept their inventory beside the executable. Keep
 	// reading that layout when neither a reference nor the default inventory exists.
-	if !hasReference {
+	if !hasReference && requestedDataDir == "" {
 		if _, statErr := os.Lstat(filepath.Join(dataDir, Filename)); os.IsNotExist(statErr) {
 			if _, legacyErr := os.Lstat(filepath.Join(canonical, Filename)); legacyErr == nil {
 				dataDir = canonical
@@ -418,6 +428,35 @@ func load(dir string, allowInsecureOverride bool) (Inventory, error) {
 	}
 	return inv, nil
 }
+
+func loadForRegistration(dir, dataDir string, allowInsecureOverride bool) (Inventory, error) {
+	if _, err := os.Lstat(filepath.Join(dir, ReferenceFilename)); err == nil {
+		return load(dir, allowInsecureOverride)
+	} else if !os.IsNotExist(err) {
+		return Inventory{}, err
+	}
+	defaultDataDir, err := defaultInstallDataDir(dir)
+	if err == nil {
+		data, readErr := readPrivate(filepath.Join(defaultDataDir, Filename))
+		if readErr == nil {
+			var owner Inventory
+			if json.Unmarshal(data, &owner) != nil || owner.InstallDir == "" {
+				return Inventory{}, errors.New("installation inventory is invalid")
+			}
+			if owner.InstallDir == dir {
+				return load(dir, allowInsecureOverride)
+			}
+		} else if !os.IsNotExist(readErr) {
+			return Inventory{}, readErr
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(dir, Filename)); err == nil {
+		return loadAtDataDir(dir, dir, allowInsecureOverride)
+	} else if !os.IsNotExist(err) {
+		return Inventory{}, err
+	}
+	return loadAtDataDir(dir, dataDir, allowInsecureOverride)
+}
 func save(inv Inventory) error {
 	data, err := json.MarshalIndent(inv, "", "  ")
 	if err != nil {
@@ -492,7 +531,7 @@ func RegisterWithDirectories(dir, docDir, dataDir, lockDir string, allowInsecure
 			return fmt.Errorf("unsafe %s directory: %w", target, err)
 		}
 	}
-	existing, loadErr := load(dir, allowInsecure)
+	existing, loadErr := loadForRegistration(dir, dataDir, allowInsecure)
 	if loadErr != nil && !os.IsNotExist(loadErr) {
 		return loadErr
 	}
