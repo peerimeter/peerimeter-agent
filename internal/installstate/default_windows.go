@@ -17,5 +17,5 @@ func defaultInstallDataDir(installDir string) (string, error) {
 	}
 	sum := sha256.Sum256([]byte(strings.ToLower(installDir)))
 	key := fmt.Sprintf("%x", sum[:])
-	return filepath.Join(base, "Peerimeter", "Installations", key, "State"), nil
+	return Canonical(filepath.Join(base, "Peerimeter", "Installations", key, "State"))
 }

@@ -338,17 +338,28 @@ func loadAtDataDir(dir, requestedDataDir string, allowInsecureOverride bool) (In
 			}
 		}
 	}
-	// Older installations kept their inventory beside the executable. Keep
-	// reading that layout when neither a reference nor the default inventory exists.
+	// Older installations kept their inventory beside the executable. Ignore a
+	// different installation's default inventory and preserve this legacy lookup.
 	if !hasReference && requestedDataDir == "" {
-		if _, statErr := os.Lstat(filepath.Join(dataDir, Filename)); os.IsNotExist(statErr) {
+		defaultInventory := filepath.Join(dataDir, Filename)
+		if defaultData, readErr := readPrivate(defaultInventory); readErr == nil {
+			var owner struct {
+				InstallDir string `json:"install_dir"`
+			}
+			if json.Unmarshal(defaultData, &owner) != nil || owner.InstallDir == "" {
+				return inv, errors.New("installation inventory is invalid")
+			}
+			if owner.InstallDir != canonical {
+				dataDir = canonical
+			}
+		} else if os.IsNotExist(readErr) {
 			if _, legacyErr := os.Lstat(filepath.Join(canonical, Filename)); legacyErr == nil {
 				dataDir = canonical
 			} else if legacyErr != nil && !os.IsNotExist(legacyErr) {
 				return inv, legacyErr
 			}
-		} else if statErr != nil {
-			return inv, statErr
+		} else {
+			return inv, readErr
 		}
 	}
 	if err := CheckDirectoryWithPolicy(dataDir, true); err != nil {
