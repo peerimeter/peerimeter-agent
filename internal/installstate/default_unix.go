@@ -16,15 +16,16 @@ func defaultInstallDataDir(_ string) (string, error) {
 		}
 		return "/var/lib/peerimeter-agent-install", nil
 	}
+	base := os.Getenv("XDG_STATE_HOME")
+	if base != "" {
+		if !filepath.IsAbs(base) {
+			return "", errors.New("XDG_STATE_HOME must be absolute")
+		}
+		return filepath.Join(base, "peerimeter-agent"), nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" || !filepath.IsAbs(home) {
 		return "", errors.New("cannot determine current user's home directory for installation state")
 	}
-	base := os.Getenv("XDG_STATE_HOME")
-	if base == "" {
-		base = filepath.Join(home, ".local", "state")
-	} else if !filepath.IsAbs(base) {
-		return "", errors.New("XDG_STATE_HOME must be absolute")
-	}
-	return filepath.Join(base, "peerimeter-agent"), nil
+	return filepath.Join(home, ".local", "state", "peerimeter-agent"), nil
 }
