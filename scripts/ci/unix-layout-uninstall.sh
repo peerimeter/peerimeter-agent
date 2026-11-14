@@ -192,7 +192,7 @@ for member in peerimeter-agent .peerimeter-agent.install.ref; do
 done
 # Omit --install-dir to verify the actual Unix installer destination default.
 sh "$repo/docs/install.sh" --binary "$base/package/peerimeter-agent" --sha256 "$digest" --notices "$base/package/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notice_digest"
-[[ -f "$installer_data/.peerimeter-agent.install.json" && -f "$program_default/.peerimeter-agent.install.ref" && -f "$installer_doc/peerimeter-agent.NOTICES.txt" ]]
+[[ -f "$installer_data/.peerimeter-agent.install.json" && ! -e "$program_default/.peerimeter-agent.install.ref" && -f "$installer_doc/peerimeter-agent.NOTICES.txt" ]]
 printf 'unrelated shared-bin resource\n' >"$default_sentinel"
 agent="$program_default/peerimeter-agent"
 active="$agent"
