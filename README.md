@@ -86,7 +86,11 @@ persistent state directory. Windows stores program files under Program Files
 and per-install metadata under `ProgramData\Peerimeter\Installations`. When a
 custom Unix `--install-dir` is selected without the other directory flags, its
 inventory, lock and documentation go into a sibling `.peerimeter` resource
-directory.
+directory. The binary locates default inventory from the current user's state
+directory (or the system state directory for root installs); running it as a
+different user therefore does not fall back to another user's inventory. A
+protected `.peerimeter-agent.install.ref` is written beside the binary only
+when a non-default `--data-dir` is selected.
 
 Both installers report progress as they resolve or download the release, verify
 the package, install files and register the protected inventory.

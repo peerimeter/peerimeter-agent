@@ -303,9 +303,11 @@ func load(dir string, allowInsecureOverride bool) (Inventory, error) {
 	if err := CheckDirectoryWithPolicy(canonical, true); err != nil {
 		return inv, err
 	}
-	dataDir := canonical // legacy installs kept the inventory beside the binary.
+	dataDir := ""
+	hasReference := false
 	refPath := filepath.Join(canonical, ReferenceFilename)
 	if _, statErr := os.Lstat(refPath); statErr == nil {
+		hasReference = true
 		refData, readErr := readPrivate(refPath)
 		if readErr != nil {
 			return inv, readErr
@@ -320,6 +322,24 @@ func load(dir string, allowInsecureOverride bool) (Inventory, error) {
 		}
 	} else if !os.IsNotExist(statErr) {
 		return inv, statErr
+	} else {
+		dataDir, err = defaultInstallDataDir(canonical)
+		if err != nil {
+			return inv, err
+		}
+	}
+	// Older installations kept their inventory beside the executable. Keep
+	// reading that layout when neither a reference nor the default inventory exists.
+	if !hasReference {
+		if _, statErr := os.Lstat(filepath.Join(dataDir, Filename)); os.IsNotExist(statErr) {
+			if _, legacyErr := os.Lstat(filepath.Join(canonical, Filename)); legacyErr == nil {
+				dataDir = canonical
+			} else if legacyErr != nil && !os.IsNotExist(legacyErr) {
+				return inv, legacyErr
+			}
+		} else if statErr != nil {
+			return inv, statErr
+		}
 	}
 	if err := CheckDirectoryWithPolicy(dataDir, true); err != nil {
 		return inv, err
@@ -456,8 +476,8 @@ func RegisterWithPolicy(dir string, allowInsecure bool) error {
 }
 
 // RegisterWithDirectories keeps program resources, notices, persistent
-// inventory and lock files in their selected directories. A small protected
-// reference beside the executable lets service startup find the inventory.
+// inventory and lock files in their selected directories. Non-default data
+// directories are recorded in a protected reference beside the executable.
 func RegisterWithDirectories(dir, docDir, dataDir, lockDir string, allowInsecure bool) error {
 	dir, err := Canonical(dir)
 	if err != nil {
@@ -565,8 +585,19 @@ func RegisterWithDirectories(dir, docDir, dataDir, lockDir string, allowInsecure
 	if err := save(inv); err != nil {
 		return err
 	}
-	ref, _ := json.Marshal(installReference{DataDir: dataDir})
-	if err := WritePrivateWithPolicy(filepath.Join(dir, ReferenceFilename), append(ref, '\n'), allowInsecure); err != nil {
+	refPath := filepath.Join(dir, ReferenceFilename)
+	var refErr error
+	defaultDataDir, defaultErr := defaultInstallDataDir(dir)
+	if defaultErr == nil && dataDir == defaultDataDir {
+		refErr = os.Remove(refPath)
+		if os.IsNotExist(refErr) {
+			refErr = nil
+		}
+	} else {
+		ref, _ := json.Marshal(installReference{DataDir: dataDir})
+		refErr = WritePrivateWithPolicy(refPath, append(ref, '\n'), allowInsecure)
+	}
+	if refErr != nil {
 		inventoryPath := filepath.Join(dataDir, Filename)
 		var rollbackErr error
 		if previousInventoryErr == nil {
@@ -577,7 +608,7 @@ func RegisterWithDirectories(dir, docDir, dataDir, lockDir string, allowInsecure
 				rollbackErr = nil
 			}
 		}
-		return errors.Join(fmt.Errorf("write installation reference: %w", err), rollbackErr)
+		return errors.Join(fmt.Errorf("update installation reference: %w", refErr), rollbackErr)
 	}
 	if legacyInventory && dataDir != dir {
 		_ = os.Remove(filepath.Join(dir, Filename))

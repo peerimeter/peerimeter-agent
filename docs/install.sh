@@ -158,7 +158,8 @@ if [ "$allow_insecure_install_dir" -eq 1 ]; then
 else
  "$install_dir/peerimeter-agent" register-installation --install-dir "$install_dir" --doc-dir "$doc_dir" --data-dir "$data_dir" --lock-dir "$lock_dir" >/dev/null
 fi
-[ -f "$data_dir/.peerimeter-agent.install.json" ] && [ ! -L "$data_dir/.peerimeter-agent.install.json" ] && [ -f "$install_dir/.peerimeter-agent.install.ref" ] || { echo 'Installation inventory registration failed.' >&2; exit 1; }
+[ -f "$data_dir/.peerimeter-agent.install.json" ] && [ ! -L "$data_dir/.peerimeter-agent.install.json" ] || { echo 'Installation inventory registration failed.' >&2; exit 1; }
+[ ! -e "$install_dir/.peerimeter-agent.install.ref" ] || { [ -f "$install_dir/.peerimeter-agent.install.ref" ] && [ ! -L "$install_dir/.peerimeter-agent.install.ref" ]; } || { echo 'Installation reference is invalid.' >&2; exit 1; }
 completed=1
 printf 'Installation directories:\n  Install: %s\n  Documentation: %s\n  State: %s\n  Locks: %s\n' "$install_dir" "$doc_dir" "$data_dir" "$lock_dir"
 printf 'Installed Peerimeter Agent %s to %s/peerimeter-agent (%s/%s). Config and services are managed separately.\n' "$installed_version" "$install_dir" "$os" "$arch"
