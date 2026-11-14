@@ -170,5 +170,10 @@ try {
         foreach ($path in $staged) { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force } }
     }
     foreach ($pair in $moved) { Remove-Item -LiteralPath $pair[0] -Force }
+    Write-Output 'Installation directories:'
+    Write-Output "  Install: $InstallDir"
+    Write-Output "  Documentation: $DocDir"
+    Write-Output "  State: $DataDir"
+    Write-Output "  Locks: $LockDir"
     Write-Output "Installed Peerimeter Agent $installedVersion to $InstallDir (windows/$arch). Config and services are managed separately."
 } finally { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
