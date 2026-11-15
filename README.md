@@ -11,7 +11,7 @@ API server, enrollment, MQTT or STUN. No relay or desktop application.
 
 ## Project status
 
-**✅ Phase 0 complete · ✅ Phase 1 complete · ⬜ Phase 2 not started**
+**✅ Phase 0 complete · ✅ Phase 1 complete · 🔄 Phase 2 self-update in progress**
 
 The offline agent, directory separation, migration, services, installers and full
 uninstall passed native tests and independent review.

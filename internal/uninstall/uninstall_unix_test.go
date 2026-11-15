@@ -223,6 +223,10 @@ func TestLivePersistentGuardPreventsDeletion(t *testing.T) {
 	}
 	defer guard.Close()
 	before := snapshotTree(t, filepath.Dir(dir))
+	canonicalDir, err := installstate.Canonical(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	inv, err := installstate.Load(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -230,22 +234,25 @@ func TestLivePersistentGuardPreventsDeletion(t *testing.T) {
 	updateLockPath := filepath.Join(inv.LockDir, selfupdate.UpdateLockFilename)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if err := Execute(ctx, Options{InstallDir: dir}, &bytes.Buffer{}); err == nil {
+	executeErr := executeWithRegistrationProbe(ctx, Options{InstallDir: dir}, &bytes.Buffer{}, func(context.Context, string) (bool, error) {
+		return false, nil
+	})
+	if executeErr == nil {
 		t.Fatal("uninstall bypassed a live manager state lock")
 	}
 	after := snapshotTree(t, filepath.Dir(dir))
-	delete(before, filepath.Join(dir, installstate.Filename))
-	delete(after, filepath.Join(dir, installstate.Filename))
+	delete(before, filepath.Join(canonicalDir, installstate.Filename))
+	delete(after, filepath.Join(canonicalDir, installstate.Filename))
 	delete(before, updateLockPath)
 	delete(after, updateLockPath)
-	delete(before, dir)
-	delete(after, dir)
+	delete(before, canonicalDir)
+	delete(after, canonicalDir)
 	if !reflect.DeepEqual(before, after) {
 		t.Fatal("live lock refusal deleted or changed managed data")
 	}
 	inv, e := installstate.Load(dir)
 	if e != nil || !inv.Removing {
-		t.Fatal("incomplete removal must durably prevent a new manager startup")
+		t.Fatalf("incomplete removal must durably prevent a new manager startup: removing=%v load_err=%v execute_err=%v", inv.Removing, e, executeErr)
 	}
 }
 func TestUntrackedOverrideAndSymlinkRefused(t *testing.T) {

@@ -3,12 +3,12 @@
 ## Current status
 
 ✅ Phase 0 complete. ✅ Phase 1 complete after native verification and independent
-review at `091bd40d115c7371e1c0f4cd0f18fb8f3ab71ca2`. ⬜ Phase 2 has not started.
+review at `091bd40d115c7371e1c0f4cd0f18fb8f3ab71ca2`. 🔄 Phase 2 is in progress.
 Exact native evidence, review outcome and limitations are recorded below.
 
-## Current focus — Phase 7 self-update brought forward
+## Current focus — Phase 2 self-update
 
-The Phase 7 self-update is now the active implementation alongside the completed
+The self-update is now the active Phase 2 implementation alongside the completed
 Phase 1 baseline. PR [#37](https://github.com/peerimeter/peerimeter-agent/pull/37)
 contains the updater and is assigned to the requester. End-to-end orchestration
 tests now cover release retrieval, inventory-selected replacement, preserved
@@ -29,12 +29,12 @@ A passed test alone does not mean the phase is complete; Phase 1 and later also 
 |---|---|
 | 0 — Static contract and cross-platform baseline | ✅ Complete |
 | 1 — Native offline WireGuard agent and services | ✅ Complete |
-| 2 — Service, enrollment, sync | ⬜ Not started |
-| 3 — NAT and recovery | ⬜ Not started |
-| 4 — Browser dashboard | ⬜ Not started |
-| 5 — External client gateways | ⬜ Not started |
-| 6 — Resilience and packaging | ⬜ Not started |
-| 7 — Hardening and agent self-update | 🔄 In progress |
+| 2 — Agent self-update | 🔄 In progress |
+| 3 — Service, enrollment, sync | ⬜ Not started |
+| 4 — NAT and recovery | ⬜ Not started |
+| 5 — Browser dashboard | ⬜ Not started |
+| 6 — External client gateways | ⬜ Not started |
+| 7 — Resilience and packaging | ⬜ Not started |
 
 ## Completed implementation
 
@@ -80,20 +80,19 @@ uses two agents in isolated namespaces; macOS/Windows use a native agent and an
 independent userspace peer. Linux amd64, macOS arm64 and Windows amd64 are native
 verified; other packaged architectures are cross-build only. One named native
 service is currently supported per machine. Address changes on macOS/Windows
-require explicit stop/start. Phase 7 self-update work has been brought forward;
+require explicit stop/start. Phase 2 self-update work is active;
 the implementation and test review are still in progress.
 
 No public agent release has been published. Native installer tests exercise
 latest/pinned URL resolution through explicit fixtures and install/execute real
 packages; live `latest` downloads need a published release. Next choose a first
-release or Phase 2 when requested. The service repository remains unstarted.
+release or Phase 3 when requested. The service repository remains unstarted.
 
 ## Decisions
 
 No relay or desktop UI. No static-mode API/MQTT/STUN dependency. See README for
 the exact interface-name algorithm and trusted-parent key storage requirement.
-Go 1.27.4 is pinned by project requirement. Self-update belongs to Phase 7 and
-is being implemented ahead of the earlier phase sequence.
+Go 1.27.4 is pinned by project requirement. Self-update is Phase 2; the remaining phases have each moved down one place.
 
 ## Native evidence — 2026-11-11, commit ebb4a1f880e39e2ca1003d9551c185a76ee81069
 
@@ -302,7 +301,7 @@ published, so live latest-release downloads remain unverified (URL resolution is
 fixture-tested with actual native packages). These limits belong to the later
 network/resilience/release work and are not claims of verified connectivity.
 
-✅ Phase 0 complete · ✅ Phase 1 complete · ⬜ Phase 2 not started.
+✅ Phase 0 complete · ✅ Phase 1 complete · 🔄 Phase 2 self-update in progress.
 
 ## 🔄 Phase 1 add-on: STUN probe command
 
@@ -355,7 +354,7 @@ behavior remain pending.
   final table refinement. Native privileged networking/service workflows and
   Windows PowerShell execution were not rerun; native CI remains authoritative.
 - The separate `.github` planning PR schedules concurrent multi-network service
-  management in Phase 2 (additional-plan.md A12); it is not implemented here.
+  management in Phase 3 (additional-plan.md A12); it is not implemented here.
   No new native connectivity or phase-completion claim is made.
 
 ## Windows release notice fix (2026-11-13)
@@ -388,7 +387,7 @@ and reran Go lint, tests and build.
   `CGO_ENABLED=0 go test ./internal/cli ./internal/selfupdate`.
 - Full `make lint`, `make test`, and `make build` passed locally. Native
   update execution through the service manager and recovery after a real OS
-  interruption are not yet verified. At PR head `9dc63d4`, native build/test,
-  package and WireGuard integration jobs passed on Linux, macOS and Windows;
-  the newly added integration tests are not included in that run. Phase 7
-  remains in progress pending CI on the new test commit and independent review.
+  interruption are not yet verified. At PR head `bd6726a`, Linux and Windows build/test plus all package jobs passed.
+  macOS tests and Linux native integration exposed issues under correction; the
+  new test commit requires clean cross-platform CI and independent review. Phase 2
+  remains in progress.
