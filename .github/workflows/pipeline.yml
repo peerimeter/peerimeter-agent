@@ -200,6 +200,8 @@ jobs:
   action-lock:
     name: Verify workflow action lock
     runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Install GitHub Actions lock verifier
