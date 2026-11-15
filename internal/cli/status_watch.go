@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
 	"github.com/peerimeter/peerimeter-agent/internal/presentation"
@@ -72,12 +72,12 @@ func (m statusWatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.clampScroll()
-	case tea.KeyMsg:
-		if msg.String() == "q" || msg.Type == tea.KeyEsc || msg.Type == tea.KeyCtrlC {
+	case tea.KeyPressMsg:
+		if msg.String() == "q" || msg.Code == tea.KeyEsc || msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
 		page := max(1, m.viewportHeight()-1)
-		switch msg.Type {
+		switch msg.Code {
 		case tea.KeyUp:
 			m.scroll--
 		case tea.KeyDown:
@@ -90,8 +90,8 @@ func (m statusWatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scroll = 0
 		case tea.KeyEnd:
 			m.scroll = m.maxScroll()
-		case tea.KeyRunes:
-			switch string(msg.Runes) {
+		default:
+			switch msg.Text {
 			case "k":
 				m.scroll--
 			case "j":
@@ -111,7 +111,7 @@ func (m statusWatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m statusWatchModel) View() string {
+func (m statusWatchModel) View() tea.View {
 	lines := m.contentLines()
 	m.clampScroll()
 	start := m.scroll
@@ -124,7 +124,9 @@ func (m statusWatchModel) View() string {
 	} else {
 		fmt.Fprintf(&view, "Updated %s · j/k scroll · q quit\n", m.updated.Format("15:04:05"))
 	}
-	return view.String()
+	v := tea.NewView(view.String())
+	v.AltScreen = true
+	return v
 }
 
 func (m statusWatchModel) contentLines() []string {
@@ -180,7 +182,6 @@ func watchStatusTerminal(cmd *cobra.Command, runtimeDir string, interval time.Du
 		tea.WithContext(cmd.Context()),
 		tea.WithInput(cmd.InOrStdin()),
 		tea.WithOutput(app.out),
-		tea.WithAltScreen(),
 	)
 	_, err := program.Run()
 	if errors.Is(err, tea.ErrProgramKilled) && cmd.Context().Err() != nil {

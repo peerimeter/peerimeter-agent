@@ -4,27 +4,15 @@ import (
 	"io"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/lipgloss/table"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/table"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/muesli/termenv"
 )
-
-func newRenderer(out io.Writer, color bool) *lipgloss.Renderer {
-	r := lipgloss.NewRenderer(out)
-	if color {
-		r.SetColorProfile(termenv.ANSI256)
-	} else {
-		r.SetColorProfile(termenv.Ascii)
-	}
-	return r
-}
 
 // Table gives command results shared cell borders and color policy. Headers
 // are optional for tables where row labels already provide enough context.
 // Data is sanitized before deliberate multiline cells are rendered.
 func Table(out io.Writer, headers []string, rows [][]string, color bool, width int) error {
-	r := newRenderer(out, color)
 	width = max(20, width)
 	width = preferredWidth(headers, rows, width)
 	padding := 1
@@ -38,11 +26,18 @@ func Table(out io.Writer, headers []string, rows [][]string, color bool, width i
 	if columns == 0 {
 		return nil
 	}
+	borderStyle := lipgloss.NewStyle()
+	if color {
+		borderStyle = borderStyle.Foreground(lipgloss.Color("60"))
+	}
 	t := table.New().Width(width).Wrap(true).
 		Border(lipgloss.RoundedBorder()).BorderRow(true).
-		BorderStyle(r.NewStyle().Foreground(lipgloss.Color("60"))).
+		BorderStyle(borderStyle).
 		StyleFunc(func(row, col int) lipgloss.Style {
-			style := r.NewStyle().Padding(0, padding)
+			style := lipgloss.NewStyle().Padding(0, padding)
+			if !color {
+				return style
+			}
 			if row == table.HeaderRow {
 				return style.Bold(true).Foreground(lipgloss.Color("205"))
 			}

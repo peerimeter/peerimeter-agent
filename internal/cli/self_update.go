@@ -106,6 +106,7 @@ type selfUpdateDeps struct {
 // complete inventory-to-replacement flow can be exercised without network or
 // service side effects.
 func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDir, currentVersion, goos, goarch string, deps selfUpdateDeps) error {
+	defer deps.progress.close()
 	inv, err := runSelfUpdateStep(deps.progress, "Validating installation inventory", func() (installstate.Inventory, error) {
 		return installstate.Load(installDir)
 	})

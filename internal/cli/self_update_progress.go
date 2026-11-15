@@ -7,13 +7,30 @@ import (
 	"sync"
 	"time"
 
+	"charm.land/bubbles/v2/progress"
+	tea "charm.land/bubbletea/v2"
 	"golang.org/x/term"
 )
 
 type selfUpdateProgress struct {
-	out io.Writer
-	tty bool
-	mu  sync.Mutex
+	out     io.Writer
+	tty     bool
+	mu      sync.Mutex
+	program *tea.Program
+	stopped chan struct{}
+}
+
+type selfUpdateProgressStart struct{ message string }
+type selfUpdateProgressFinish struct{ err error }
+type selfUpdateProgressTick struct{}
+type selfUpdateProgressClose struct{}
+
+type selfUpdateProgressModel struct {
+	bar     progress.Model
+	message string
+	active  bool
+	err     error
+	percent float64
 }
 
 func newSelfUpdateProgress(out io.Writer) *selfUpdateProgress {
@@ -39,41 +56,87 @@ func (p *selfUpdateProgress) start(message string) func(error) {
 		}
 	}
 
-	frames := [...]string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-	done := make(chan struct{})
-	stopped := make(chan struct{})
-	var index int
-	write := func(frame string) {
-		p.mu.Lock()
-		defer p.mu.Unlock()
-		_, _ = fmt.Fprintf(p.out, "\r%s %s", frame, message)
-	}
-	write(frames[0])
-	go func() {
-		defer close(stopped)
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-ticker.C:
-				index = (index + 1) % len(frames)
-				write(frames[index])
-			}
-		}
-	}()
+	program := p.getProgram()
+	program.Send(selfUpdateProgressStart{message: message})
+	var once sync.Once
 	return func(err error) {
-		close(done)
-		<-stopped
-		icon := "✓"
-		if err != nil {
-			icon = "✗"
-		}
-		p.mu.Lock()
-		defer p.mu.Unlock()
-		_, _ = fmt.Fprintf(p.out, "\r%s %s\n", icon, message)
+		once.Do(func() { program.Send(selfUpdateProgressFinish{err: err}) })
 	}
+}
+
+func (p *selfUpdateProgress) getProgram() *tea.Program {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.program == nil {
+		model := selfUpdateProgressModel{bar: progress.New(
+			progress.WithWidth(32),
+			progress.WithoutPercentage(),
+			progress.WithDefaultBlend(),
+		)}
+		p.program = tea.NewProgram(model, tea.WithInput(nil), tea.WithOutput(p.out))
+		p.stopped = make(chan struct{})
+		go func() {
+			_, _ = p.program.Run()
+			close(p.stopped)
+		}()
+	}
+	return p.program
+}
+
+func (p *selfUpdateProgress) close() {
+	if p == nil || !p.tty {
+		return
+	}
+	p.mu.Lock()
+	program, stopped := p.program, p.stopped
+	p.mu.Unlock()
+	if program == nil {
+		return
+	}
+	program.Send(selfUpdateProgressClose{})
+	<-stopped
+}
+
+func (m selfUpdateProgressModel) Init() tea.Cmd { return nil }
+
+func (m selfUpdateProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case selfUpdateProgressStart:
+		m.message, m.active, m.err, m.percent = msg.message, true, nil, 0
+		return m, tea.Batch(m.bar.SetPercent(0), selfUpdateProgressTickCmd())
+	case selfUpdateProgressFinish:
+		m.active, m.err, m.percent = false, msg.err, 1
+		return m, m.bar.SetPercent(1)
+	case selfUpdateProgressTick:
+		if m.active {
+			m.percent += 0.06
+			if m.percent > 0.9 {
+				m.percent = 0.06
+			}
+			return m, tea.Batch(m.bar.SetPercent(m.percent), selfUpdateProgressTickCmd())
+		}
+	case progress.FrameMsg:
+		var cmd tea.Cmd
+		m.bar, cmd = m.bar.Update(msg)
+		return m, cmd
+	case selfUpdateProgressClose:
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+func (m selfUpdateProgressModel) View() tea.View {
+	icon := "✓"
+	if m.active {
+		icon = "→"
+	} else if m.err != nil {
+		icon = "✗"
+	}
+	return tea.NewView(fmt.Sprintf("%s %s\n%s", icon, m.message, m.bar.View()))
+}
+
+func selfUpdateProgressTickCmd() tea.Cmd {
+	return tea.Tick(140*time.Millisecond, func(time.Time) tea.Msg { return selfUpdateProgressTick{} })
 }
 
 func runSelfUpdateStep[T any](progress *selfUpdateProgress, message string, action func() (T, error)) (T, error) {
