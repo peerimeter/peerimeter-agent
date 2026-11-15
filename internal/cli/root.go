@@ -68,7 +68,11 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer, backend 
 	if !app.ran {
 		err = errors.New("invalid command or arguments; use --help")
 	}
-	handler, handlerErr := logging.NewHandler(os.Getenv(logging.FormatEnv), errOut)
+	format := os.Getenv(logging.FormatEnv)
+	if app.jsonOutput {
+		format = "json"
+	}
+	handler, handlerErr := logging.NewHandler(format, errOut)
 	if handlerErr != nil {
 		_, _ = io.WriteString(errOut, "ERROR: "+err.Error()+"\n")
 	} else {
@@ -101,7 +105,15 @@ Environment variables:
 		SilenceUsage:       true,
 		SilenceErrors:      true,
 		DisableSuggestions: true,
-		RunE:               app.handle(func(cmd *cobra.Command) error { return cmd.Help() }),
+		RunE: app.handle(func(cmd *cobra.Command) error {
+			if err := renderVersion(app.out, shouldColor(app.out, app.color)); err != nil {
+				return err
+			}
+			if err := cmd.Help(); err != nil {
+				return err
+			}
+			return checkForUpgrade(cmd.Context(), app.out, app.color, false, false)
+		}),
 	}
 	root.PersistentPreRunE = func(*cobra.Command, []string) error {
 		if app.color != "auto" && app.color != "always" && app.color != "never" {
@@ -111,7 +123,7 @@ Environment variables:
 	}
 	root.SetOut(app.out)
 	root.PersistentFlags().StringVar(&app.color, "color", "auto", "Color mode: auto, always or never (auto respects NO_COLOR)")
-	root.PersistentFlags().BoolVar(&app.jsonOutput, "json", false, "Print machine-readable JSON for command results")
+	root.PersistentFlags().BoolVar(&app.jsonOutput, "json", false, "Use JSON output and structured logs where supported")
 	root.PersistentFlags().BoolVar(&app.debug, "debug", false, "include captured stack trace when an error occurs")
 	root.SetErr(io.Discard)
 	root.SetFlagErrorFunc(func(*cobra.Command, error) error { return errors.New("invalid command flags; use --help") })
@@ -123,7 +135,7 @@ Environment variables:
 		}
 		return target.Help()
 	}})
-	root.AddCommand(newVersionCommand(app), newGenerateExampleCommand(app), newRunCommand(app), newValidateConfigCommand(app), newStatusCommand(app), newWGCommand(app), newSyncCommand(app), newStopCommand(app), newServiceCommand(app), newUninstallCommand(app), newRegisterInstallationCommand(app), newStunCommand(app))
+	root.AddCommand(newVersionCommand(app), newUpdateCommand(app), newGenerateExampleCommand(app), newRunCommand(app), newValidateConfigCommand(app), newStatusCommand(app), newWGCommand(app), newSyncCommand(app), newStopCommand(app), newServiceCommand(app), newUninstallCommand(app), newRegisterInstallationCommand(app), newStunCommand(app))
 	return root
 }
 

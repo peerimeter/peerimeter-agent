@@ -211,6 +211,9 @@ func TestCobraHelpAndCompletion(t *testing.T) {
 		if len(args) == 0 && (!strings.Contains(out, "Usage:") || !strings.Contains(out, "Available Commands")) {
 			t.Fatalf("bare invocation did not print root help: %s", out)
 		}
+		if len(args) == 0 && (strings.Index(out, versionLogo) < 0 || strings.Index(out, versionLogo) > strings.Index(out, "Usage:")) {
+			t.Fatalf("bare invocation should print version before help: %s", out)
+		}
 	}
 	code, out, err := invoke(t, "run", "--config")
 	if code == 0 || out != "" || err == "" {

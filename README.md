@@ -373,6 +373,14 @@ peerimeter-agent status --watch --json
 ```
 
 Cobra provides contextual `--help` and `completion bash|zsh|fish|powershell`.
+Running `peerimeter-agent` without arguments prints the version banner first,
+then the help, and checks GitHub Releases. When a newer stable release is
+available, it shows a boxed update notice with the platform's install command.
+`peerimeter-agent check-update` runs the same check explicitly and supports
+`--json` (`current_version`, `latest_version`, `update_available`, and, when
+available, the release URL and platform install command);
+`--help` never makes a network request. The automatic check has a short timeout
+and does not prevent help from appearing when GitHub is unavailable.
 Commands live in separate files under `internal/cli` (`root.go`, `run.go`,
 `version.go`, `service_*.go`, etc.). `version` prints the orbit/P ASCII logo and
 human-readable build details, with terminal-aware pink/purple color. Use
@@ -450,8 +458,10 @@ WireGuard connectivity or promise NAT traversal.
 
 Command results default to readable console text, including example generation,
 configuration validation, service actions, sync, stop and uninstall. Use `--json`
-when a script needs the machine-readable result. `PEERIMETER_LOG_FORMAT` controls
-diagnostic logs separately. Config files and the local control protocol remain JSON.
+when a script needs the machine-readable result. For `run`, `--json` selects
+newline-delimited structured JSON runtime logs on stderr; it does not change the
+agent's normal stdout output. `PEERIMETER_LOG_FORMAT` controls diagnostic logs
+unless `--json` is supplied. Config files and the local control protocol remain JSON.
 
 STUN uses a Bubble Tea progress indicator in an interactive terminal and prints
 a table containing the STUN server, local address and mapped address on completion.
