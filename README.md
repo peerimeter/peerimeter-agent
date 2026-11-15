@@ -146,7 +146,10 @@ and architecture using the installer naming rules.
 asset with `SHA256SUMS` before changing installed files. Since the checksum
 manifest currently shares the HTTPS release trust channel, add a detached
 signature verified by a public key embedded in the agent before treating that
-manifest as authenticated update metadata.
+manifest as authenticated update metadata. The signed manifest must name the
+selected release tag, and the agent must reject it unless that tag matches the
+release being installed; this prevents replay of a valid signature for an older
+release.
 3. Read the protected installation inventory and update only files owned by
 that installation. Preserve configs, keys, service registration and state;
 require the existing system privilege for system-wide installs.
