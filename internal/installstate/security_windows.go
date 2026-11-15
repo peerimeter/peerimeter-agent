@@ -1,6 +1,8 @@
 package installstate
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"golang.org/x/sys/windows"
 	"os"
@@ -126,17 +128,7 @@ func checkTrustWithPolicy(path string, info os.FileInfo, directory, allowInsecur
 }
 func checkPrivate(path string, info os.FileInfo) error { return checkACL(path, true, false) }
 func protect(path string) error {
-	all, e := trustedSIDs()
-	if e != nil {
-		return e
-	}
-	who := all[0]
-	owner := (*windows.SID)(nil)
-	if windows.GetCurrentProcessToken().IsElevated() {
-		who = all[1]
-		owner = who
-	}
-	sd, e := windows.SecurityDescriptorFromString("D:P(A;;FA;;;" + who.String() + ")(A;;FA;;;SY)(A;;FA;;;BA)")
+	sd, owner, e := privateSecurityDescriptor()
 	if e != nil {
 		return e
 	}
@@ -150,8 +142,60 @@ func protect(path string) error {
 	}
 	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, flags, owner, nil, acl, nil)
 }
+func privateSecurityDescriptor() (*windows.SECURITY_DESCRIPTOR, *windows.SID, error) {
+	all, e := trustedSIDs()
+	if e != nil {
+		return nil, nil, e
+	}
+	who := all[0]
+	owner := (*windows.SID)(nil)
+	if windows.GetCurrentProcessToken().IsElevated() {
+		who = all[1]
+		owner = who
+	}
+	sd, e := windows.SecurityDescriptorFromString("D:P(A;OICI;FA;;;" + who.String() + ")(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")
+	if e != nil {
+		return nil, nil, e
+	}
+	return sd, owner, nil
+}
 func protectCreatedTemp(path string) error { return protect(path) }
-func syncInventoryDirectory(string) error  { return nil }
+func CreatePrivateTempDir(parent, prefix string) (string, error) {
+	sd, _, err := privateSecurityDescriptor()
+	if err != nil {
+		return "", err
+	}
+	attrs := windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
+	for attempt := 0; attempt < 10; attempt++ {
+		var suffix [12]byte
+		if _, err := rand.Read(suffix[:]); err != nil {
+			return "", err
+		}
+		path := filepath.Join(parent, prefix+hex.EncodeToString(suffix[:]))
+		name, err := windows.UTF16PtrFromString(path)
+		if err != nil {
+			return "", err
+		}
+		if err := windows.CreateDirectory(name, &attrs); err == nil {
+			return path, nil
+		} else if !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+			return "", err
+		}
+	}
+	return "", errors.New("could not create a unique protected temporary directory")
+}
+func renamePrivateFile(source, target string) error {
+	from, err := windows.UTF16PtrFromString(source)
+	if err != nil {
+		return err
+	}
+	to, err := windows.UTF16PtrFromString(target)
+	if err != nil {
+		return err
+	}
+	return windows.MoveFileEx(from, to, windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH)
+}
+func syncInventoryDirectory(string) error { return nil }
 func lockInventory(path string) (*os.File, error) {
 	existed := false
 	if info, err := os.Lstat(path); err == nil {

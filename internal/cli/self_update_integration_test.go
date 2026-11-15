@@ -277,13 +277,17 @@ func TestSelfUpdateIntegrationRefusesProfileStartingDuringReleaseFetch(t *testin
 func TestWindowsUpdateHelperRetainsOriginalServiceProfileForCleanup(t *testing.T) {
 	original := installstate.Profile{ID: "original-service", Service: true, StateDir: "old-state", RuntimeDir: "old-runtime"}
 	added := installstate.Profile{ID: "new-service", Service: true, StateDir: "new-state", RuntimeDir: "new-runtime"}
-	profile, multiple := serviceProfileForHelper([]installstate.Profile{original, added}, []installstate.Profile{original})
+	profile, multiple := serviceProfileForHelper([]installstate.Profile{original, added}, []installstate.Profile{original}, true)
 	if profile == nil || profile.ID != original.ID || profile.StateDir != original.StateDir || !multiple {
 		t.Fatalf("helper cleanup profile = %#v, want original stopped service %#v", profile, original)
 	}
-	profile, multiple = serviceProfileForHelper([]installstate.Profile{added}, nil)
+	profile, multiple = serviceProfileForHelper([]installstate.Profile{added}, nil, false)
 	if profile == nil || profile.ID != added.ID || multiple {
 		t.Fatalf("helper fallback profile = %#v, multiple = %v", profile, multiple)
+	}
+	profile, multiple = serviceProfileForHelper([]installstate.Profile{added}, []installstate.Profile{{ID: "foreground"}}, true)
+	if profile != nil || multiple {
+		t.Fatalf("helper selected a service that was not stopped before update: %#v, multiple = %v", profile, multiple)
 	}
 }
 

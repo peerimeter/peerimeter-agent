@@ -162,8 +162,10 @@ installation data. Linux and macOS finish the update synchronously. Windows
 reports that the helper has started; the helper completes replacement and
 service readiness checks in the background. Use `peerimeter-agent status` to
 confirm the service is running. The updater records each multi-file replacement
-in the install lock directory and recovers it before a later `update` attempt.
-Uninstall refuses to proceed while recovery is pending.
+in the install lock directory. If Windows recovery is needed, `update` starts a
+separate protected helper and reports `recovery_scheduled`; that helper restores
+the recorded files after the installed process exits. Uninstall refuses to
+proceed while recovery is pending.
 Recovery is operator-triggered rather than an automatic boot action, and Phase
 7 remains in progress until the native recovery paths have been verified.
 

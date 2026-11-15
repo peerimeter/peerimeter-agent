@@ -206,7 +206,7 @@ func unpack(goos string, archive []byte) (map[string][]byte, error) {
 	wanted := map[string]bool{"peerimeter-agent.exe": true, "peerimeter-agent.NOTICES.txt": true, "wireguard.dll": true}
 	files := make(map[string][]byte, len(wanted))
 	for _, member := range r.File {
-		if !wanted[member.Name] || member.FileInfo().IsDir() || member.Mode()&0o170000 == 0o120000 {
+		if !wanted[member.Name] || !member.Mode().IsRegular() {
 			return nil, errors.New("Windows release package contains an unexpected member")
 		}
 		if _, exists := files[member.Name]; exists {
