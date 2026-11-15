@@ -330,6 +330,7 @@ func buildAgentE2E(t *testing.T, root, output, version, serverURL string) {
 	t.Helper()
 	ldflags := strings.Join([]string{
 		"-X github.com/peerimeter/peerimeter-agent/internal/cli.Version=" + version,
+		"-X github.com/peerimeter/peerimeter-agent/internal/cli.latestReleaseURL=" + serverURL + "/latest",
 		"-X github.com/peerimeter/peerimeter-agent/internal/selfupdate.latestReleaseEndpoint=" + serverURL + "/latest",
 		"-X github.com/peerimeter/peerimeter-agent/internal/selfupdate.releaseDownloadBase=" + serverURL + "/download/",
 	}, " ")
