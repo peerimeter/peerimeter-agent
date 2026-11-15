@@ -155,12 +155,14 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 			managedService = p
 			continue
 		}
-		guard, err := local.TryAcquireExisting(p.RuntimeDir)
-		if err != nil {
-			return errors.New("an agent process is using an installed profile; stop it before updating")
-		}
-		if guard != nil {
-			_ = guard.Close()
+		for _, dir := range []string{p.StateDir, p.RuntimeDir} {
+			guard, err := local.TryAcquireExisting(dir)
+			if err != nil {
+				return errors.New("an agent process started while the release was being fetched; retry self-update")
+			}
+			if guard != nil {
+				_ = guard.Close()
+			}
 		}
 	}
 	if managedService != nil {
@@ -189,13 +191,15 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 		return restartAfterFailure(managedService, errors.New("installation profiles or files changed while the release was being fetched; retry self-update"))
 	}
 	for _, profile := range inv.Profiles {
-		guard, guardErr := local.TryAcquireExisting(profile.RuntimeDir)
-		if guardErr != nil {
-			_ = lock.Close()
-			return restartAfterFailure(managedService, errors.New("an agent process started while the release was being fetched; retry self-update"))
-		}
-		if guard != nil {
-			_ = guard.Close()
+		for _, dir := range []string{profile.StateDir, profile.RuntimeDir} {
+			guard, guardErr := local.TryAcquireExisting(dir)
+			if guardErr != nil {
+				_ = lock.Close()
+				return restartAfterFailure(managedService, errors.New("an agent process started while the release was being fetched; retry self-update"))
+			}
+			if guard != nil {
+				_ = guard.Close()
+			}
 		}
 	}
 	if err := verifyInstalledFiles(inv); err != nil {
