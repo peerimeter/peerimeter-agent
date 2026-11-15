@@ -14,7 +14,6 @@ import (
 func newRegisterInstallationCommand(app *application) *cobra.Command {
 	var dir string
 	var docDir, dataDir, lockDir string
-	var allowInsecureInstallDir bool
 	cmd := &cobra.Command{Use: "register-installation", Hidden: true, Args: noArguments, RunE: app.handleResponse(func(*cobra.Command) error {
 		exe, err := os.Executable()
 		if err != nil {
@@ -35,7 +34,7 @@ func newRegisterInstallationCommand(app *application) *cobra.Command {
 		if !same {
 			return fmt.Errorf("installation registration must run from the selected installed program directory (executable %q, selected %q)", actual, requested)
 		}
-		if err := installstate.RegisterWithDirectories(dir, docDir, dataDir, lockDir, allowInsecureInstallDir); err != nil {
+		if err := installstate.RegisterWithDirectories(dir, docDir, dataDir, lockDir, false); err != nil {
 			return err
 		}
 		return json.NewEncoder(app.out).Encode(map[string]string{"state": "registered"})
@@ -44,7 +43,6 @@ func newRegisterInstallationCommand(app *application) *cobra.Command {
 	cmd.Flags().StringVar(&docDir, "doc-dir", "", "Absolute notices directory")
 	cmd.Flags().StringVar(&dataDir, "data-dir", "", "Absolute persistent installation inventory directory")
 	cmd.Flags().StringVar(&lockDir, "lock-dir", "", "Absolute installation lock directory")
-	cmd.Flags().BoolVar(&allowInsecureInstallDir, "allow-insecure-install-dir", false, "Deprecated compatibility flag; installation directory permission checks are disabled")
 	_ = cmd.MarkFlagRequired("install-dir")
 	_ = cmd.MarkFlagRequired("doc-dir")
 	_ = cmd.MarkFlagRequired("data-dir")

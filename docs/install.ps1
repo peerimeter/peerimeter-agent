@@ -5,8 +5,7 @@ param(
     [string]$DataDir,
     [string]$LockDir,
     [string]$Archive,
-    [string]$SHA256,
-    [switch]$AllowInsecureInstallDir
+    [string]$SHA256
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -162,7 +161,6 @@ try {
         if ([string]::IsNullOrWhiteSpace($installedVersion)) { throw 'Could not determine installed agent version' }
         Write-InstallerProgress 'Registering protected installation inventory.'
         $registerArgs = @('register-installation','--install-dir',$InstallDir,'--doc-dir',$DocDir,'--data-dir',$DataDir,'--lock-dir',$LockDir)
-        if ($AllowInsecureInstallDir) { $registerArgs += '--allow-insecure-install-dir' }
         & (Join-Path $InstallDir 'peerimeter-agent.exe') @registerArgs | Out-Null
         $inventoryPath = Join-Path $DataDir '.peerimeter-agent.install.json'
         $referencePath = Join-Path $InstallDir '.peerimeter-agent.install.ref'

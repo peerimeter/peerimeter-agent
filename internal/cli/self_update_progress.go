@@ -118,12 +118,15 @@ func (m selfUpdateProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case selfUpdateProgressFinish:
 		m.active, m.err, m.percent = false, msg.err, 1
 		m.generation++
-		return m, m.bar.SetPercent(1)
+		return m, nil
 	case selfUpdateProgressTick:
 		if m.active && msg.generation == m.generation {
+			if m.percent >= 0.9 {
+				return m, nil
+			}
 			m.percent += 0.06
 			if m.percent > 0.9 {
-				m.percent = 0.06
+				m.percent = 0.9
 			}
 			return m, tea.Batch(m.bar.SetPercent(m.percent), selfUpdateProgressTickCmd(m.generation))
 		}
@@ -144,7 +147,11 @@ func (m selfUpdateProgressModel) View() tea.View {
 	} else if m.err != nil {
 		icon = "✗"
 	}
-	v := tea.NewView(fmt.Sprintf("%s %s\n%s", icon, m.message, m.bar.View()))
+	bar := m.bar.View()
+	if !m.active && m.err == nil && m.percent == 1 {
+		bar = m.bar.ViewAs(1)
+	}
+	v := tea.NewView(fmt.Sprintf("%s %s\n%s", icon, m.message, bar))
 	v.DisableBracketedPasteMode = true
 	return v
 }

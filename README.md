@@ -123,7 +123,6 @@ sh docs/install.sh --version latest --install-dir "$HOME/.local/bin" --doc-dir "
 .\docs\install.ps1 -Version v0.1.0 -InstallDir 'C:\Program Files\Peerimeter'
 .\docs\install.ps1 -Version latest -InstallDir 'D:\Tools\Peerimeter Agent'
 .\docs\install.ps1 -DocDir 'D:\Peerimeter\Docs' -DataDir 'D:\Peerimeter\State' -LockDir 'D:\Peerimeter\Locks'
-# The legacy -AllowInsecureInstallDir switch remains accepted for compatibility.
 ```
 
 ### Package verification
