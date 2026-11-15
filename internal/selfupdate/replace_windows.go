@@ -17,20 +17,28 @@ func replaceFile(stage, path, backup string) error {
 	if err != nil {
 		return err
 	}
-	defer source.Close()
 	destination, err := os.OpenFile(backup, os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
+		_ = source.Close()
 		return err
 	}
 	if _, err := io.Copy(destination, source); err != nil {
-		destination.Close()
+		_ = destination.Close()
+		_ = source.Close()
 		return err
 	}
 	if err := destination.Sync(); err != nil {
-		destination.Close()
+		_ = destination.Close()
+		_ = source.Close()
 		return err
 	}
 	if err := destination.Close(); err != nil {
+		_ = source.Close()
+		return err
+	}
+	// Windows refuses to replace a file while this process still has a handle
+	// open without FILE_SHARE_DELETE, which is how os.Open opens it.
+	if err := source.Close(); err != nil {
 		return err
 	}
 	from, err := windows.UTF16PtrFromString(stage)
