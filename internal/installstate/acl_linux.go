@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"os"
 
 	"golang.org/x/sys/unix"
 )
@@ -33,10 +34,27 @@ func checkAncestorACL(path string) error {
 		}
 		for offset := 4; offset < len(data); offset += 8 {
 			tag := binary.LittleEndian.Uint16(data[offset : offset+2])
-			if tag == 0x02 || tag == 0x08 { // ACL_USER or ACL_GROUP
+			id := binary.LittleEndian.Uint32(data[offset+4 : offset+8])
+			if !allowedAncestorACLEntry(tag, id) {
 				return errors.New("installation ancestor has named ACL entries")
 			}
 		}
 	}
 	return nil
+}
+
+func allowedAncestorACLEntry(tag uint16, id uint32) bool {
+	switch tag {
+	case 0x02: // ACL_USER
+		// An ACL entry for the installing user cannot grant access to another
+		// principal, even when the runner's temporary directory has one.
+		return id == uint32(os.Geteuid())
+	case 0x08: // ACL_GROUP
+		// Group ACL entries are safe only for a verified private primary group.
+		return id == uint32(os.Getegid()) && hasPrivatePrimaryGroup(uint32(os.Geteuid()), id)
+	case 0x01, 0x04, 0x10, 0x20: // ACL_USER_OBJ, ACL_GROUP_OBJ, ACL_MASK, ACL_OTHER
+		return true
+	default:
+		return false
+	}
 }
