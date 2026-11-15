@@ -42,17 +42,17 @@ func TestCheckUpdateJSON(t *testing.T) {
 			if result.CurrentVersion != Version || result.LatestVersion != test.tag || result.UpdateAvailable != test.wantUpdate {
 				t.Fatalf("unexpected update result: %+v", result)
 			}
-			if test.wantUpdate && (result.ReleaseURL != "https://example.test/release" || result.InstallCommand == "") {
+			if test.wantUpdate && (result.ReleaseURL != "https://example.test/release" || result.UpdateCommand != "peerimeter-agent update") {
 				t.Fatalf("update result omitted release/install details: %+v", result)
 			}
-			if !test.wantUpdate && (result.ReleaseURL != "" || result.InstallCommand != "") {
+			if !test.wantUpdate && (result.ReleaseURL != "" || result.UpdateCommand != "") {
 				t.Fatalf("current result unexpectedly contains update details: %+v", result)
 			}
 		})
 	}
 }
 
-func TestCheckUpdateConsoleBoxIncludesInstallCommand(t *testing.T) {
+func TestCheckUpdateConsoleBoxRecommendsSelfUpdate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"tag_name":"v1.3.0"}`))
 	}))
@@ -62,7 +62,7 @@ func TestCheckUpdateConsoleBoxIncludesInstallCommand(t *testing.T) {
 	if err := checkForUpgradeAt(context.Background(), &out, "never", true, false, server.URL, server.Client()); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "Update available") || !strings.Contains(out.String(), installCommand()) {
+	if !strings.Contains(out.String(), "Update available") || !strings.Contains(out.String(), "peerimeter-agent update") {
 		t.Fatalf("update alert omitted upgrade/install instructions: %s", out.String())
 	}
 }

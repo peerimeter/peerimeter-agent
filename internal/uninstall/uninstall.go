@@ -17,6 +17,7 @@ import (
 
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
 	"github.com/peerimeter/peerimeter-agent/internal/local"
+	"github.com/peerimeter/peerimeter-agent/internal/selfupdate"
 	"github.com/peerimeter/peerimeter-agent/internal/service"
 )
 
@@ -363,6 +364,11 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	if err != nil {
 		return err
 	}
+	if _, err := os.Lstat(filepath.Join(inv.LockDir, selfupdate.JournalFilename)); err == nil {
+		return errors.New("an interrupted self-update must be recovered with `peerimeter-agent update` before uninstall")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	if err := validateOverrides(opts, inv); err != nil {
 		return err
 	}
@@ -426,6 +432,11 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	}
 	if reread.ID != inv.ID {
 		return errors.New("installation inventory changed before removal")
+	}
+	if _, err := os.Lstat(filepath.Join(reread.LockDir, selfupdate.JournalFilename)); err == nil {
+		return errors.New("an interrupted self-update must be recovered with `peerimeter-agent update` before uninstall")
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 	inv = reread
 	for i, p := range inv.Profiles {

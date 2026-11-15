@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -99,14 +98,14 @@ func checkForUpgradeAt(parent context.Context, out io.Writer, color string, repo
 			LatestVersion:   release.TagName,
 			UpdateAvailable: true,
 			ReleaseURL:      release.HTMLURL,
-			InstallCommand:  installCommand(),
+			UpdateCommand:   "peerimeter-agent update",
 		})
 	}
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	if shouldColor(out, color) {
 		box = box.BorderForeground(lipgloss.Color("198"))
 	}
-	message := fmt.Sprintf("Update available: %s → %s\nRelease: %s\n\nInstall with:\n%s", Version, release.TagName, release.HTMLURL, installCommand())
+	message := fmt.Sprintf("Update available: %s → %s\nRelease: %s\n\nUpdate with:\npeerimeter-agent update", Version, release.TagName, release.HTMLURL)
 	_, err = fmt.Fprintln(out, box.Render(message))
 	return err
 }
@@ -116,14 +115,7 @@ type updateCheckResult struct {
 	LatestVersion   string `json:"latest_version"`
 	UpdateAvailable bool   `json:"update_available"`
 	ReleaseURL      string `json:"release_url,omitempty"`
-	InstallCommand  string `json:"install_command,omitempty"`
-}
-
-func installCommand() string {
-	if runtime.GOOS == "windows" {
-		return "irm https://agent.peerimeter.app/install.ps1 | iex"
-	}
-	return "curl -fsSL https://agent.peerimeter.app/install.sh | sh"
+	UpdateCommand   string `json:"update_command,omitempty"`
 }
 
 type releaseVersion struct {

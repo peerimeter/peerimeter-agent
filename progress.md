@@ -20,7 +20,7 @@ A passed test alone does not mean the phase is complete; Phase 1 and later also 
 | 4 — Browser dashboard | ⬜ Not started |
 | 5 — External client gateways | ⬜ Not started |
 | 6 — Resilience and packaging | ⬜ Not started |
-| 7 — Hardening and agent self-update | ⬜ Not started |
+| 7 — Hardening and agent self-update | 🔄 In progress |
 
 ## Completed implementation
 
@@ -350,3 +350,22 @@ packaging now includes the license text in a module-specific override. Verified
 with the full Windows/amd64 `scripts/package.py --resources-only` workflow,
 including dependency notice generation and the pinned WireGuardNT archive/hash,
 and reran Go lint, tests and build.
+
+## Self-update implementation evidence
+
+- Added `peerimeter-agent update` and changed the update-check recommendation to
+  that command. Release packages and Unix notices are verified against strict
+  entries in `SHA256SUMS` over HTTPS; no detached signature is claimed.
+- The updater checks every recorded program-file hash, uses the inventory to
+  select destinations, preserves profile and data paths, coordinates managed
+  service stop/start, checks the local status endpoint, and rolls back files and
+  inventory hashes if readiness fails. Windows uses a helper from the staged
+  release and refuses to change `wireguard.dll`.
+- Added tests for checksum parsing, package retrieval, Windows archive members,
+  inventoried-file replacement and rollback, and inventory-profile
+  preservation. Targeted local checks passed:
+  `CGO_ENABLED=0 go test ./internal/selfupdate ./internal/installstate ./internal/cli`.
+- Full `make lint`, `make test`, and `make build` passed locally. Native
+  Windows/macOS update runs and interrupted-update recovery on those operating
+  systems are not yet verified. Phase 7 remains in progress pending those checks
+  and review.

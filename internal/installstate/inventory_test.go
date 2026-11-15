@@ -70,6 +70,45 @@ func TestInventoryUpgradeAndProfileMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestUpdateProgramHashesPreservesProfileAndDirectories(t *testing.T) {
+	dir := fixtureInstall(t)
+	p := fixtureProfile(t)
+	p.Service = true
+	if err := RegisterProfile(dir, p); err != nil {
+		t.Fatal(err)
+	}
+	before, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := Lock(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hashes := make(map[string]string, len(before.Files))
+	for _, f := range before.Files {
+		hashes[f.Name] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	}
+	if err := UpdateProgramHashesLocked(before, hashes); err != nil {
+		t.Fatal(err)
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	after, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.ID != after.ID || before.InstallDir != after.InstallDir || before.DataDir != after.DataDir || before.DocDir != after.DocDir || before.LockDir != after.LockDir || len(before.Profiles) != len(after.Profiles) || before.Profiles[0] != after.Profiles[0] {
+		t.Fatal("program hash update changed installation identity, directories or profile")
+	}
+	for _, f := range after.Files {
+		if f.SHA256 != hashes[f.Name] {
+			t.Fatalf("hash for %s was not updated", f.Name)
+		}
+	}
+}
 func TestForeignProfileAndChangedLayoutRefused(t *testing.T) {
 	first, second := fixtureInstall(t), fixtureInstall(t)
 	p := fixtureProfile(t)
