@@ -153,6 +153,7 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	if err != nil {
 		return err
 	}
+	deps.progress.stop()
 	latest, ok := parseReleaseVersion(latestTag)
 	current, currentOK := parseReleaseVersion(currentVersion)
 	if !ok || !currentOK {
@@ -170,7 +171,6 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 		if deps.confirm == nil {
 			return errors.New("self-update confirmation is unavailable; rerun with --yes")
 		}
-		deps.progress.stop()
 		confirmed, err := deps.confirm(currentVersion, latestTag)
 		if err != nil {
 			return err

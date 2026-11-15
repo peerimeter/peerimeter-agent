@@ -98,6 +98,7 @@ func (p *selfUpdateProgress) stop() {
 	}
 	program.Send(selfUpdateProgressClose{})
 	<-stopped
+	_, _ = fmt.Fprintln(p.out)
 	p.mu.Lock()
 	if p.program == program {
 		p.program = nil
