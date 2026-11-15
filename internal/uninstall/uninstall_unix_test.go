@@ -134,7 +134,7 @@ func TestUninstallRefusesPendingSelfUpdateRecovery(t *testing.T) {
 	}
 	var out bytes.Buffer
 	err = Execute(context.Background(), Options{InstallDir: dir}, &out)
-	if err == nil || !strings.Contains(err.Error(), "recovered with `peerimeter-agent update`") {
+	if err == nil || !strings.Contains(err.Error(), "recovered with `peerimeter-agent self-update`") {
 		t.Fatalf("uninstall did not preserve pending recovery files: %v", err)
 	}
 	if _, err := os.Stat(path); err != nil {

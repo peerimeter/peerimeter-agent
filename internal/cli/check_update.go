@@ -42,32 +42,10 @@ func checkForUpgrade(parent context.Context, out io.Writer, color string, report
 }
 
 func checkForUpgradeAt(parent context.Context, out io.Writer, color string, reportCurrent, jsonOutput bool, endpoint string, client *http.Client) error {
-	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "peerimeter-agent-update-check")
-	resp, err := client.Do(req)
+	release, err := latestReleaseAt(parent, endpoint, client)
 	if err != nil {
 		if reportCurrent {
 			return fmt.Errorf("check for updates: %w", err)
-		}
-		return nil
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		if reportCurrent {
-			return fmt.Errorf("check for updates: GitHub returned %s", resp.Status)
-		}
-		return nil
-	}
-	var release latestRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		if reportCurrent {
-			return fmt.Errorf("decode latest release: %w", err)
 		}
 		return nil
 	}
@@ -98,16 +76,43 @@ func checkForUpgradeAt(parent context.Context, out io.Writer, color string, repo
 			LatestVersion:   release.TagName,
 			UpdateAvailable: true,
 			ReleaseURL:      release.HTMLURL,
-			UpdateCommand:   "peerimeter-agent update",
+			UpdateCommand:   "peerimeter-agent self-update",
 		})
 	}
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	if shouldColor(out, color) {
 		box = box.BorderForeground(lipgloss.Color("198"))
 	}
-	message := fmt.Sprintf("Update available: %s → %s\nRelease: %s\n\nUpdate with:\npeerimeter-agent update", Version, release.TagName, release.HTMLURL)
+	message := fmt.Sprintf("Update available: %s → %s\nRelease: %s\n\nUpdate with:\npeerimeter-agent self-update", Version, release.TagName, release.HTMLURL)
 	_, err = fmt.Fprintln(out, box.Render(message))
 	return err
+}
+
+func latestReleaseAt(parent context.Context, endpoint string, client *http.Client) (latestRelease, error) {
+	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return latestRelease{}, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "peerimeter-agent-update-check")
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return latestRelease{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return latestRelease{}, fmt.Errorf("GitHub returned %s", resp.Status)
+	}
+	var release latestRelease
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return latestRelease{}, fmt.Errorf("decode latest release: %w", err)
+	}
+	return release, nil
 }
 
 type updateCheckResult struct {

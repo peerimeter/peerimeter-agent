@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
@@ -23,13 +25,18 @@ import (
 )
 
 func newSelfUpdateCommand(app *application) *cobra.Command {
-	return &cobra.Command{
-		Use:   "update",
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "self-update",
 		Short: "Update this installed agent to the latest stable release",
-		Long:  "Downloads the latest stable release, verifies SHA256SUMS, and replaces only program files recorded by this installation.",
+		Long:  "Checks for the latest stable release, displays the current and new versions, asks before updating unless --yes is set, verifies SHA256SUMS, and replaces only program files recorded by this installation.",
 		Args:  noArguments,
-		RunE:  app.handle(func(cmd *cobra.Command) error { return selfUpdate(cmd.Context(), app.out, app.jsonOutput) }),
+		RunE: app.handle(func(cmd *cobra.Command) error {
+			return selfUpdate(cmd.Context(), app.out, app.promptOut, app.in, app.jsonOutput, yes)
+		}),
 	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "Update without asking for confirmation")
+	return cmd
 }
 
 type selfUpdateResult struct {
@@ -39,7 +46,7 @@ type selfUpdateResult struct {
 	Files           []string `json:"files,omitempty"`
 }
 
-func selfUpdate(ctx context.Context, out io.Writer, jsonOutput bool) error {
+func selfUpdate(ctx context.Context, out, promptOut io.Writer, in io.Reader, jsonOutput, yes bool) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
@@ -49,20 +56,49 @@ func selfUpdate(ctx context.Context, out io.Writer, jsonOutput bool) error {
 		return err
 	}
 	return selfUpdateAt(ctx, out, jsonOutput, installDir, Version, runtime.GOOS, runtime.GOARCH, selfUpdateDeps{
-		fetch: selfupdate.Fetch, verify: verifyUpdatedBinary, manage: service.Manage, wait: waitForService,
+		latest: latestStableReleaseTag,
+		fetch:  selfupdate.Fetch, verify: verifyUpdatedBinary, manage: service.Manage, wait: waitForService,
+		yes: yes,
+		confirm: func(current, latest string) (bool, error) {
+			return confirmSelfUpdate(in, promptOut, current, latest)
+		},
 	})
 }
 
+func latestStableReleaseTag(ctx context.Context) (string, error) {
+	release, err := latestReleaseAt(ctx, latestReleaseURL, http.DefaultClient)
+	if err != nil {
+		return "", fmt.Errorf("check latest release before self-update: %w", err)
+	}
+	return release.TagName, nil
+}
+
+func confirmSelfUpdate(in io.Reader, promptOut io.Writer, current, latest string) (bool, error) {
+	if _, err := fmt.Fprintf(promptOut, "Update Peerimeter Agent from %s to %s? [y/N]: ", current, latest); err != nil {
+		return false, err
+	}
+	answer, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, fmt.Errorf("read update confirmation: %w", err)
+	}
+	answer = strings.TrimSpace(answer)
+	return strings.EqualFold(answer, "y") || strings.EqualFold(answer, "yes"), nil
+}
+
 type updateFetcher func(context.Context, *http.Client, string, string) (string, map[string][]byte, error)
+type updateReleaseChecker func(context.Context) (string, error)
 type updateBinaryVerifier func(context.Context, string, string) error
 type updateServiceManager func(string, service.Config) error
 type updateServiceWaiter func(context.Context, string) error
 
 type selfUpdateDeps struct {
-	fetch  updateFetcher
-	verify updateBinaryVerifier
-	manage updateServiceManager
-	wait   updateServiceWaiter
+	latest  updateReleaseChecker
+	fetch   updateFetcher
+	verify  updateBinaryVerifier
+	manage  updateServiceManager
+	wait    updateServiceWaiter
+	yes     bool
+	confirm func(string, string) (bool, error)
 }
 
 // selfUpdateAt keeps release retrieval and binary execution injectable so the
@@ -99,6 +135,35 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	if err := verifyInstalledFiles(inv); err != nil {
 		return err
 	}
+	latestTag, err := deps.latest(ctx)
+	if err != nil {
+		return err
+	}
+	latest, ok := parseReleaseVersion(latestTag)
+	current, currentOK := parseReleaseVersion(currentVersion)
+	if !ok || !currentOK {
+		return fmt.Errorf("cannot compare agent version %q with release %q", currentVersion, latestTag)
+	}
+	if !jsonOutput {
+		if _, err := fmt.Fprintf(out, "Current version: %s\nLatest version: %s\n", currentVersion, latestTag); err != nil {
+			return err
+		}
+	}
+	if compareVersion(latest, current) <= 0 {
+		return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "up_to_date", PreviousVersion: currentVersion, UpdatedVersion: latestTag})
+	}
+	if !deps.yes {
+		if deps.confirm == nil {
+			return errors.New("self-update confirmation is unavailable; rerun with --yes")
+		}
+		confirmed, err := deps.confirm(currentVersion, latestTag)
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "cancelled", PreviousVersion: currentVersion, UpdatedVersion: latestTag})
+		}
+	}
 	updateSnapshot := inv
 	updateSnapshot.Files = slices.Clone(inv.Files)
 	updateSnapshot.Profiles = slices.Clone(inv.Profiles)
@@ -106,13 +171,8 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	if err != nil {
 		return err
 	}
-	latest, ok := parseReleaseVersion(tag)
-	current, currentOK := parseReleaseVersion(currentVersion)
-	if !ok || !currentOK {
-		return fmt.Errorf("cannot compare agent version %q with release %q", currentVersion, tag)
-	}
-	if compareVersion(latest, current) <= 0 {
-		return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "up_to_date", PreviousVersion: currentVersion, UpdatedVersion: tag})
+	if tag != latestTag {
+		return fmt.Errorf("latest release changed from %s to %s while preparing the update; run self-update again", latestTag, tag)
 	}
 	for _, owned := range inv.Files {
 		if _, ok := files[owned.Name]; !ok {
@@ -468,12 +528,16 @@ func writeSelfUpdateResult(out io.Writer, jsonOutput bool, result selfUpdateResu
 		_, err := fmt.Fprintf(out, "Peerimeter Agent is already up to date (%s).\n", result.PreviousVersion)
 		return err
 	}
+	if result.State == "cancelled" {
+		_, err := fmt.Fprintln(out, "Update cancelled.")
+		return err
+	}
 	if result.State == "scheduled" {
 		_, err := fmt.Fprintf(out, "Windows update helper started for %s. It will finish replacing the agent in the background.\n", result.UpdatedVersion)
 		return err
 	}
 	if result.State == "recovered" {
-		_, err := fmt.Fprintln(out, "Recovered the previous installation after an interrupted update. Run `peerimeter-agent update` again to retry.")
+		_, err := fmt.Fprintln(out, "Recovered the previous installation after an interrupted update. Run `peerimeter-agent self-update` again to retry.")
 		return err
 	}
 	if result.State == "recovery_scheduled" {

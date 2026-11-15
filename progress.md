@@ -3,22 +3,21 @@
 ## Current status
 
 ✅ Phase 0 complete. ✅ Phase 1 complete after native verification and independent
-review at `091bd40d115c7371e1c0f4cd0f18fb8f3ab71ca2`. 🔄 Phase 2 is in progress.
-Exact native evidence, review outcome and limitations are recorded below.
+review at `091bd40d115c7371e1c0f4cd0f18fb8f3ab71ca2`. ✅ Phase 2 self-update
+implementation complete after native CI and review follow-ups. The command UX
+follow-up in the current PR adds explicit confirmation and is awaiting its own
+CI/review. Exact evidence and remaining limitations are recorded below.
 
-## Current focus — Phase 2 self-update
+## Current focus — Phase 3
 
-The self-update is now the active Phase 2 implementation alongside the completed
-Phase 1 baseline. PR [#37](https://github.com/peerimeter/peerimeter-agent/pull/37)
-contains the updater and is assigned to the requester. End-to-end orchestration
-tests now cover release retrieval, inventory-selected replacement, preserved
-profile data and paths, managed-service readiness, rollback, tamper refusal and
-interrupted-update recovery. Old-binary compatibility was removed from the Unix
-control lock and native integration workflow; the legacy data-layout migration
-is still tested using the current binary. Local unit, vet, build and installed
-binary E2E checks pass with `CGO_ENABLED=0`. macOS CI exposed temporary-path
-canonicalization assumptions in tests, now fixed; native CI and independent
-review must rerun before this work is accepted. No released updater is claimed.
+Phase 2 delivered `peerimeter-agent self-update` across Linux, macOS and Windows.
+PR [#37](https://github.com/peerimeter/peerimeter-agent/pull/37) merged at
+`7e3cb8b80587a123097b272c1c81989097a5841e`; its native CI passed on all three
+platforms, all six package targets and the action-lock gate. The current PR
+finishes the command UX: it displays current/latest versions, asks before an
+upgrade, and provides `--yes` for automation. It also refreshes the agent
+documentation. Phase 3 service/control-plane work remains unstarted. No public
+agent release has been published.
 
 ## Phase checklist
 
@@ -29,7 +28,7 @@ A passed test alone does not mean the phase is complete; Phase 1 and later also 
 |---|---|
 | 0 — Static contract and cross-platform baseline | ✅ Complete |
 | 1 — Native offline WireGuard agent and services | ✅ Complete |
-| 2 — Agent self-update | 🔄 In progress |
+| 2 — Agent self-update | ✅ Complete |
 | 3 — Service, enrollment, sync | ⬜ Not started |
 | 4 — NAT and recovery | ⬜ Not started |
 | 5 — Browser dashboard | ⬜ Not started |
@@ -50,6 +49,8 @@ A passed test alone does not mean the phase is complete; Phase 1 and later also 
   `status`, `peers`, `sync` and `stop` are operational. Cobra supplies help and
   completion. Systemd/launchd/SCM services and protected operator access work.
 - Testable platform backend/session contracts and cancellation/cleanup lifecycle.
+- Inventory-aware `self-update` with SHA256SUMS verification, protected
+  replacement/rollback, service readiness checks and Windows helper recovery.
 - Three independent workflows: native baseline, real backend feasibility, and
   explicitly blocked connectivity E2E until agent/topology implementation.
 
@@ -80,8 +81,9 @@ uses two agents in isolated namespaces; macOS/Windows use a native agent and an
 independent userspace peer. Linux amd64, macOS arm64 and Windows amd64 are native
 verified; other packaged architectures are cross-build only. One named native
 service is currently supported per machine. Address changes on macOS/Windows
-require explicit stop/start. Phase 2 self-update work is active;
-the implementation and test review are still in progress.
+require explicit stop/start. Phase 2 self-update is complete; no public release
+has been published. The command-confirmation follow-up remains under CI/review in
+the current PR.
 
 No public agent release has been published. Native installer tests exercise
 latest/pinned URL resolution through explicit fixtures and install/execute real
@@ -92,7 +94,8 @@ release or Phase 3 when requested. The service repository remains unstarted.
 
 No relay or desktop UI. No static-mode API/MQTT/STUN dependency. See README for
 the exact interface-name algorithm and trusted-parent key storage requirement.
-Go 1.27.4 is pinned by project requirement. Self-update is Phase 2; the remaining phases have each moved down one place.
+Go 1.27.4 is pinned by project requirement. Self-update is Phase 2; the later
+work moved down one place, with service/control-plane work in Phase 3.
 
 ## Native evidence — 2026-11-11, commit ebb4a1f880e39e2ca1003d9551c185a76ee81069
 
@@ -301,7 +304,7 @@ published, so live latest-release downloads remain unverified (URL resolution is
 fixture-tested with actual native packages). These limits belong to the later
 network/resilience/release work and are not claims of verified connectivity.
 
-✅ Phase 0 complete · ✅ Phase 1 complete · 🔄 Phase 2 self-update in progress.
+✅ Phase 0 complete · ✅ Phase 1 complete · ✅ Phase 2 self-update complete.
 
 ## 🔄 Phase 1 add-on: STUN probe command
 
@@ -368,9 +371,11 @@ and reran Go lint, tests and build.
 
 ## Self-update implementation evidence
 
-- Added `peerimeter-agent update` and changed the update-check recommendation to
-  that command. Release packages and Unix notices are verified against strict
-  entries in `SHA256SUMS` over HTTPS; no detached signature is claimed.
+- Added `peerimeter-agent self-update` and changed the update-check recommendation
+  to that command. The command displays current/latest versions and asks for
+  confirmation unless `--yes` is supplied; current installations do not prompt.
+  Release packages and Unix notices are verified against strict entries in
+  `SHA256SUMS` over HTTPS; no detached signature is claimed.
 - The updater checks every recorded program-file hash, uses the inventory to
   select destinations, preserves profile and data paths, coordinates managed
   service stop/start, checks the local status endpoint, and rolls back files and
@@ -391,14 +396,19 @@ and reran Go lint, tests and build.
   installed-binary self-update E2E and packaging passed on Linux, macOS and
   Windows; native WireGuard integration passed on all three platforms. A prior
   run exposed macOS temporary-path and legacy-binary fixture assumptions; both
-  were corrected. Phase 2 remains in progress pending final review.
+  were corrected. At PR #37 head `74c5de2c16ba806e8e89dbc5c1f5c3973a8a0966`,
+  all build/test, installed-binary E2E, WireGuard integration and package jobs
+  passed; the PR merged as `7e3cb8b80587a123097b272c1c81989097a5841e`. This
+  verified the update engine and recovery paths on native runners. The current
+  confirmation UX change has targeted local tests; its native CI and review are
+  pending and are tracked by the active PR.
 
-Latest review follow-up on the active PR adds a protected Windows recovery
-helper, write-through inventory/journal replacement, restrictive staging ACLs,
-HTTPS checks on every redirect hop, and rollback guards for profiles that start
-during service verification. Windows installed-binary E2E now covers recovery
-from an interrupted replacement. Migration alone checks the old `agent.lock`
-while converting the legacy combined data layout; current runtime ownership no
-longer uses that protocol. Local `go test ./...`, `go vet ./...`, `make lint`,
-Windows/amd64 test cross-compiles and Linux installed-binary self-update E2E
-pass. Native Windows recovery E2E and the refreshed PR CI/review remain pending.
+PR #37 review follow-ups added a protected Windows recovery helper,
+write-through inventory/journal replacement, restrictive staging ACLs, HTTPS
+checks on every redirect hop and rollback guards for profiles that start during
+service verification. Windows installed-binary E2E covers recovery from an
+interrupted replacement. Migration alone checks the old `agent.lock` while
+converting the legacy combined data layout; current runtime ownership no longer
+uses that protocol. The merged PR's native CI passed all update tests, including
+Windows recovery. Mixed-OS/NAT scenarios and a public release remain outside
+the completed self-update scope.

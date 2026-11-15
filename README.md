@@ -11,7 +11,7 @@ API server, enrollment, MQTT or STUN. No relay or desktop application.
 
 ## Project status
 
-**✅ Phase 0 complete · ✅ Phase 1 complete · 🔄 Phase 2 self-update in progress**
+**✅ Phase 0 complete · ✅ Phase 1 complete · ✅ Phase 2 self-update complete**
 
 The offline agent, directory separation, migration, services, installers and full
 uninstall passed native tests and independent review.
@@ -136,12 +136,22 @@ a local ZIP with `-Archive` and `-SHA256`. Installers replace program files
 only; they preserve configuration and keys. Installation ancestor owner and
 permission checks are disabled; symbolic links and reparse points remain
 rejected. Key files and managed inventory files retain their private-file checks.
-`peerimeter-agent update` explicitly updates a registered installation to the
-latest stable release. It selects the package for the current OS and CPU, then
-checks the package against the release `SHA256SUMS` file downloaded over
-HTTPS. This is an integrity check using the GitHub release trust channel; it
-does not claim a detached release signature. Startup checks may notify about an
-update, but never replace a running agent.
+`peerimeter-agent self-update` explicitly updates a registered installation to
+the latest stable release. It displays the current and latest versions, then
+asks for confirmation before upgrading. Pass `--yes` to skip the prompt. If no
+new version is available, it reports that without prompting. The command selects
+the package for the current OS and CPU, then checks it against the release
+`SHA256SUMS` file downloaded over HTTPS. This is an integrity check using the
+GitHub release trust channel; it does not claim a detached release signature.
+Startup checks may notify about an update, but never replace a running agent.
+
+```sh
+peerimeter-agent self-update       # show versions and ask before upgrading
+peerimeter-agent self-update --yes # upgrade without prompting
+```
+
+With `--json`, the result includes the current and latest version; the
+confirmation prompt is written to stderr so stdout remains valid JSON.
 
 The updater verifies the protected installation inventory and each recorded
 program-file hash before making changes. It replaces only those inventoried
@@ -162,19 +172,18 @@ installation data. Linux and macOS finish the update synchronously. Windows
 reports that the helper has started; the helper completes replacement and
 service readiness checks in the background. Use `peerimeter-agent status` to
 confirm the service is running. The updater records each multi-file replacement
-in the install lock directory. If Windows recovery is needed, `update` starts a
-separate protected helper and reports `recovery_scheduled`; that helper restores
-the recorded files after the installed process exits. Uninstall refuses to
-proceed while recovery is pending.
-Recovery is operator-triggered rather than an automatic boot action, and Phase
-7 remains in progress until the native recovery paths have been verified.
+in the install lock directory. If Windows recovery is needed, `self-update`
+starts a separate protected helper and reports `recovery_scheduled`; that helper
+restores the recorded files after the installed process exits. Uninstall refuses
+to proceed while recovery is pending.
+Recovery is operator-triggered rather than an automatic boot action.
 
 ### Publishing a release
 
 Start **Actions → Publish release → Run workflow** on `main`. The workflow
-uses the pinned `ietf-tools/semver-action` to read Conventional Commits since
-the latest stable tag: `feat` bumps minor, patch-level changes bump patch, and
-breaking changes bump major. If commits do not call for a version bump, package
+uses the lockfile-verified `ietf-tools/semver-action` to read Conventional
+Commits since the latest stable tag: `feat` bumps minor, patch-level changes
+bump patch, and breaking changes bump major. If commits do not call for a version bump, package
 and release jobs are skipped. Native installer checks run on Linux, macOS and
 Windows; GoReleaser cross-builds both `x86_64` and `aarch64` assets for all
 three platforms, creates the Windows ZIP and `SHA256SUMS`, and publishes the

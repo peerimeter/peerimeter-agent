@@ -366,7 +366,7 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		return err
 	}
 	if _, err := os.Lstat(filepath.Join(inv.LockDir, selfupdate.JournalFilename)); err == nil {
-		return errors.New("an interrupted self-update must be recovered with `peerimeter-agent update` before uninstall")
+		return errors.New("an interrupted self-update must be recovered with `peerimeter-agent self-update` before uninstall")
 	} else if !os.IsNotExist(err) {
 		return err
 	}
@@ -446,7 +446,7 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		return errors.New("installation inventory changed before removal")
 	}
 	if _, err := os.Lstat(filepath.Join(reread.LockDir, selfupdate.JournalFilename)); err == nil {
-		return errors.New("an interrupted self-update must be recovered with `peerimeter-agent update` before uninstall")
+		return errors.New("an interrupted self-update must be recovered with `peerimeter-agent self-update` before uninstall")
 	} else if !os.IsNotExist(err) {
 		return err
 	}

@@ -134,9 +134,12 @@ func TestErrorRedaction(t *testing.T) {
 }
 
 func TestSelfUpdateHasExplicitHelp(t *testing.T) {
-	code, out, stderr := invoke(t, "update", "--help")
-	if code != 0 || stderr != "" || !strings.Contains(out, "latest stable release") || !strings.Contains(out, "SHA256SUMS") {
+	code, out, stderr := invoke(t, "self-update", "--help")
+	if code != 0 || stderr != "" || !strings.Contains(out, "latest stable release") || !strings.Contains(out, "SHA256SUMS") || !strings.Contains(out, "--yes") {
 		t.Fatalf("unexpected update help: %d %q %s", code, out, stderr)
+	}
+	if code, _, _ := invoke(t, "update", "--help"); code == 0 {
+		t.Fatal("legacy update command unexpectedly remains available")
 	}
 }
 
