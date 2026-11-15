@@ -387,7 +387,8 @@ and reran Go lint, tests and build.
   `CGO_ENABLED=0 go test ./internal/cli ./internal/selfupdate`.
 - Full `make lint`, `make test`, and `make build` passed locally. Native
   update execution through the service manager and recovery after a real OS
-  interruption are not yet verified. At PR head `bd6726a`, Linux and Windows build/test plus all package jobs passed.
-  macOS tests and Linux native integration exposed issues under correction; the
-  new test commit requires clean cross-platform CI and independent review. Phase 2
-  remains in progress.
+  interruption are not yet verified. At PR head `d592713`, build/tests, the
+  installed-binary self-update E2E and packaging passed on Linux, macOS and
+  Windows; native WireGuard integration passed on all three platforms. A prior
+  run exposed macOS temporary-path and legacy-binary fixture assumptions; both
+  were corrected. Phase 2 remains in progress pending final review.
