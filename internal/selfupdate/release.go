@@ -127,9 +127,29 @@ func getBytes(ctx context.Context, client *http.Client, url string, limit int64)
 	if err != nil {
 		return nil, err
 	}
+	if req.URL.Scheme != "https" {
+		return nil, errors.New("release downloads require HTTPS")
+	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "peerimeter-agent-self-update")
-	resp, err := client.Do(req)
+	if client == nil {
+		client = http.DefaultClient
+	}
+	secureClient := *client
+	previousRedirectCheck := client.CheckRedirect
+	secureClient.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if next.URL.Scheme != "https" {
+			return errors.New("release redirects require HTTPS")
+		}
+		if previousRedirectCheck != nil {
+			return previousRedirectCheck(next, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("release download stopped after 10 redirects")
+		}
+		return nil
+	}
+	resp, err := secureClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

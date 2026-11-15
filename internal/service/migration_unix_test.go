@@ -11,12 +11,14 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
 	"github.com/peerimeter/peerimeter-agent/internal/secret"
+	"golang.org/x/sys/unix"
 )
 
 func migrationFixture(t *testing.T) (Config, [32]byte, map[string][]byte) {
@@ -104,6 +106,27 @@ func TestUnixMigrationPreservesKeyAndDurableIdentity(t *testing.T) {
 	for _, name := range []string{"operator.json", "operator.key"} {
 		if _, err := os.Stat(filepath.Join(filepath.Dir(cfg.StateDirectory), name)); err != nil {
 			t.Fatal("operator original was moved or removed")
+		}
+	}
+}
+
+func TestUnixMigrationRefusesLiveLegacyManager(t *testing.T) {
+	cfg, _, _ := migrationFixture(t)
+	legacyLock, err := os.OpenFile(filepath.Join(cfg.StateDirectory, "agent.lock"), os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer legacyLock.Close()
+	if err := unix.Flock(int(legacyLock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	err = migrate(cfg, func(Config) error { return nil }, func(Config) error { return nil }, func(...string) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "legacy agent is still using persistent state") {
+		t.Fatalf("migration should refuse a live legacy manager, got %v", err)
+	}
+	for _, name := range []string{"service.json", "service.key", "agent.lock"} {
+		if _, err := os.Stat(filepath.Join(cfg.StateDirectory, name)); err != nil {
+			t.Fatalf("migration removed legacy %s while manager lock was held: %v", name, err)
 		}
 	}
 }

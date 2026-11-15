@@ -392,3 +392,13 @@ and reran Go lint, tests and build.
   Windows; native WireGuard integration passed on all three platforms. A prior
   run exposed macOS temporary-path and legacy-binary fixture assumptions; both
   were corrected. Phase 2 remains in progress pending final review.
+
+Latest review follow-up on the active PR adds a protected Windows recovery
+helper, write-through inventory/journal replacement, restrictive staging ACLs,
+HTTPS checks on every redirect hop, and rollback guards for profiles that start
+during service verification. Windows installed-binary E2E now covers recovery
+from an interrupted replacement. Migration alone checks the old `agent.lock`
+while converting the legacy combined data layout; current runtime ownership no
+longer uses that protocol. Local `go test ./...`, `go vet ./...`, `make lint`,
+Windows/amd64 test cross-compiles and Linux installed-binary self-update E2E
+pass. Native Windows recovery E2E and the refreshed PR CI/review remain pending.
