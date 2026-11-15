@@ -77,6 +77,16 @@ $work = Join-Path ([IO.Path]::GetTempPath()) ('peerimeter-install-' + [guid]::Ne
 New-Item -ItemType Directory -Path $work | Out-Null
 Set-InstallerACL $work $true
 try {
+    if ($resourceRoot) {
+        # Resource folders live below a shared ProgramData tree. Protect the
+        # common installation root before creating per-installation children,
+        # so a less-privileged user cannot replace their parent directories.
+        $installationsRoot = Join-Path $env:ProgramData 'Peerimeter\Installations'
+        New-Item -ItemType Directory -Path $installationsRoot -Force | Out-Null
+        Set-InstallerACL $installationsRoot $true
+        New-Item -ItemType Directory -Path $resourceRoot -Force | Out-Null
+        Set-InstallerACL $resourceRoot $true
+    }
     if (-not $Archive) {
         Write-InstallerProgress 'Resolving release version and downloading package files.'
         $repo = 'https://api.github.com/repos/peerimeter/peerimeter-agent'
