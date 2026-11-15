@@ -583,15 +583,17 @@ func RegisterWithDirectories(dir, docDir, dataDir, lockDir string, allowInsecure
 		if err != nil {
 			return fmt.Errorf("invalid %s directory: %w", target, err)
 		}
-		if err := CheckDirectoryWithPolicy(*value, allowInsecure); err != nil {
-			return fmt.Errorf("unsafe %s directory: %w", target, err)
-		}
 	}
 	existing, loadErr := loadForRegistration(dir, dataDir, allowInsecure)
 	if loadErr != nil && !os.IsNotExist(loadErr) {
 		return loadErr
 	}
 	allowInsecure = allowInsecure || loadErr == nil && existing.AllowInsecureInstallDir
+	for target, value := range map[string]string{"documentation": docDir, "data": dataDir, "lock": lockDir} {
+		if err := CheckDirectoryWithPolicy(value, allowInsecure); err != nil {
+			return fmt.Errorf("unsafe %s directory: %w", target, err)
+		}
+	}
 	if err := CheckDirectoryWithPolicy(dir, allowInsecure); err != nil {
 		return err
 	}

@@ -108,6 +108,58 @@ func TestInventoryUpgradeAndProfileMerge(t *testing.T) {
 	}
 }
 
+func TestRegistrationUpgradePreservesStoredInsecureDirectoryPolicy(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX mode-bit trust check")
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, "install")
+	docDir := filepath.Join(root, "docs")
+	dataDir := filepath.Join(root, "state")
+	lockDir := filepath.Join(root, "locks")
+	for _, path := range []string{dir, docDir, dataDir, lockDir} {
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range ProgramNames() {
+		resourceDir, mode := dir, os.FileMode(0755)
+		if name == "peerimeter-agent.NOTICES.txt" {
+			resourceDir, mode = docDir, 0644
+		}
+		if err := os.WriteFile(filepath.Join(resourceDir, name), []byte("public fixture program "+name), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := RegisterWithDirectories(dir, docDir, dataDir, lockDir, false); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv.AllowInsecureInstallDir = true
+	if err := save(inv); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{dir, docDir, dataDir, lockDir} {
+		if err := os.Chmod(path, 0770); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := RegisterWithDirectories(dir, docDir, dataDir, lockDir, false); err != nil {
+		t.Fatalf("upgrade rejected directories allowed by stored policy: %v", err)
+	}
+	upgraded, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !upgraded.AllowInsecureInstallDir {
+		t.Fatal("upgrade lost the stored insecure-directory policy")
+	}
+}
+
 func TestUpdateProgramHashesPreservesProfileAndDirectories(t *testing.T) {
 	dir := fixtureInstall(t)
 	p := fixtureProfile(t)
