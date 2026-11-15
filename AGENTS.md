@@ -1,6 +1,6 @@
 # Repository guidance
 
-This is the independent `peerimeter-agent` Go repository. The sibling `../.github` directory is a separate Git repository. Its `docs/planning/` directory contains the project plan, additional requirements, progress tracker, and historical Codex handoff. Consult those documents for scope and decisions, then check this repository's current code, `README.md`, and `progress.md` for actual behavior and verification.
+This is the independent `peerimeter-agent` Go repository. The sibling `../.github` directory is a separate Git repository. Its `docs/planning/` directory contains the project plan, additional requirements, shared progress tracker, and historical Codex handoff. Consult those documents for scope and decisions, then check this repository's current code and `README.md` for actual behavior and verification.
 
 ## Project map
 
@@ -11,7 +11,7 @@ This is the independent `peerimeter-agent` Go repository. The sibling `../.githu
 - `internal/stunprobe/`: standalone UDP STUN probe; `internal/presentation/`: peer output.
 - `examples/`: static configuration examples; `docs/`: published installer site and install scripts.
 - `.github/workflows/`: native CI, integration, packaging, release, and connectivity availability checks; `scripts/ci/`: their supporting scripts.
-- `README.md`: operating instructions; `progress.md`: agent-specific evidence and limitations.
+- `README.md`: operating instructions; `../.github/docs/planning/progress.md`: implementation evidence and limitations.
 
 ## Development
 

@@ -17,7 +17,8 @@ The offline agent, directory separation, migration, services, installers and ful
 uninstall passed native tests and independent review.
 Linux/macOS/Windows agent links, local control, native services and installers
 are verified for the CI architectures below. Exact code SHAs, run links and
-remaining limitations are tracked in [progress.md](progress.md).
+remaining limitations are tracked in the [shared project progress
+tracker](https://github.com/peerimeter/.github/blob/main/docs/planning/progress.md).
 
 | Platform (native CI architecture) | Native tunnel | Service manager | Runtime privileges |
 | --- | --- | --- | --- |
@@ -350,8 +351,9 @@ before deletion. Windows uses a bounded helper after the running executable
 exits; a `pending` result names a temporary receipt reporting eventual removal
 or remaining failures. The shared system WireGuard driver is preserved. Repeated
 removal is safe; partial failures remain reportable and retryable. Removal and
-migration are natively verified; see [progress.md](progress.md) for exact tested
-commits and remaining limits.
+migration are natively verified; see the [shared project progress
+tracker](https://github.com/peerimeter/.github/blob/main/docs/planning/progress.md)
+for exact tested commits and remaining limits.
 
 ## CLI output
 
@@ -445,8 +447,9 @@ The [reference peer and original backend probes](tests/backendprobe/README.md)
 remain separate from agent acceptance. Mixed-OS VM connectivity and
 NAT/IP-change recovery require dedicated topology and remain unverified;
 separate hosted jobs are not a LAN. No cross-compilation result is treated as
-native connectivity proof. See [progress.md](progress.md) for exact tested
-commits and limitations.
+native connectivity proof. See the [shared project progress
+tracker](https://github.com/peerimeter/.github/blob/main/docs/planning/progress.md)
+for exact tested commits and limitations.
 
 ## STUN port probe
 
