@@ -4,20 +4,19 @@
 
 ✅ Phase 0 complete. ✅ Phase 1 complete after native verification and independent
 review at `091bd40d115c7371e1c0f4cd0f18fb8f3ab71ca2`. ✅ Phase 2 self-update
-implementation complete after native CI and review follow-ups. The command UX
-follow-up in the current PR adds explicit confirmation and is awaiting its own
-CI/review. Exact evidence and remaining limitations are recorded below.
+implementation complete after native CI and review follow-ups. PR #38 merged at
+`2b4fac8891bf4320f24a8b79a75eab24bd4ea0de`; current local work adds visible
+progress reporting during updates and is not yet reviewed or merged.
 
 ## Current focus — Phase 3
 
 Phase 2 delivered `peerimeter-agent self-update` across Linux, macOS and Windows.
 PR [#37](https://github.com/peerimeter/peerimeter-agent/pull/37) merged at
 `7e3cb8b80587a123097b272c1c81989097a5841e`; its native CI passed on all three
-platforms, all six package targets and the action-lock gate. The current PR
-finishes the command UX: it displays current/latest versions, asks before an
-upgrade, and provides `--yes` for automation. It also refreshes the agent
-documentation. Phase 3 service/control-plane work remains unstarted. No public
-agent release has been published.
+platforms, all six package targets and the action-lock gate. PR #38 finished the
+command UX: it displays current/latest versions, asks before an upgrade, and
+provides `--yes` for automation. Phase 3 service/control-plane work remains
+unstarted. No public agent release has been published.
 
 ## Phase checklist
 
@@ -374,6 +373,8 @@ and reran Go lint, tests and build.
 - Added `peerimeter-agent self-update` and changed the update-check recommendation
   to that command. The command displays current/latest versions and asks for
   confirmation unless `--yes` is supplied; current installations do not prompt.
+  The current progress-reporting follow-up shows the active update operation on
+  stderr without contaminating JSON output.
   Release packages and Unix notices are verified against strict entries in
   `SHA256SUMS` over HTTPS; no detached signature is claimed.
 - The updater checks every recorded program-file hash, uses the inventory to
@@ -399,9 +400,13 @@ and reran Go lint, tests and build.
   were corrected. At PR #37 head `74c5de2c16ba806e8e89dbc5c1f5c3973a8a0966`,
   all build/test, installed-binary E2E, WireGuard integration and package jobs
   passed; the PR merged as `7e3cb8b80587a123097b272c1c81989097a5841e`. This
-  verified the update engine and recovery paths on native runners. The current
-  confirmation UX change has targeted local tests; its native CI and review are
-  pending and are tracked by the active PR.
+  verified the update engine and recovery paths on native runners. PR #38's
+  confirmation UX and release endpoint fix passed native build/test, installed-
+  binary E2E, WireGuard integration and packaging jobs on Linux, macOS and
+  Windows; CodeRabbit reported no remaining actionable comments. The current
+  progress-reporting follow-up passes `CGO_ENABLED=0 go test ./...`, `go vet
+  ./...`, and a production build locally. Native CI and independent review for
+  the progress-reporting change are pending.
 
 PR #37 review follow-ups added a protected Windows recovery helper,
 write-through inventory/journal replacement, restrictive staging ACLs, HTTPS

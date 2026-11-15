@@ -134,7 +134,9 @@ func (f selfUpdateFixture) deps(tag string, manage updateServiceManager, wait up
 func TestSelfUpdateIntegrationUpdatesOwnedFilesAndPreservesProfileData(t *testing.T) {
 	f := newSelfUpdateFixture(t, false)
 	var output bytes.Buffer
+	var progress bytes.Buffer
 	deps := f.deps("v1.2.0", nil, nil)
+	deps.progress = newSelfUpdateProgress(&progress)
 	confirmCalls := 0
 	deps.confirm = func(string, string) (bool, error) {
 		confirmCalls++
@@ -153,6 +155,14 @@ func TestSelfUpdateIntegrationUpdatesOwnedFilesAndPreservesProfileData(t *testin
 	}
 	if result.State != "updated" || result.PreviousVersion != "v1.0.0" || result.UpdatedVersion != "v1.2.0" || len(result.Files) != len(f.files) {
 		t.Fatalf("unexpected result: %+v", result)
+	}
+	for _, stage := range []string{"Checking the latest stable release", "Downloading and verifying v1.2.0", "Replacing inventoried program files", "Verifying the updated agent binary"} {
+		if !strings.Contains(progress.String(), stage) {
+			t.Errorf("progress omitted stage %q: %s", stage, progress.String())
+		}
+	}
+	if strings.Contains(output.String(), "Downloading") || strings.Contains(output.String(), "Replacing") {
+		t.Fatalf("progress polluted JSON stdout: %s", output.String())
 	}
 	for name, want := range f.files {
 		dir := f.install
