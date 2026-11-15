@@ -25,11 +25,10 @@ binary=
 notices=
 expected=
 notices_expected=
-allow_insecure_install_dir=0
 doc_dir_set=0
 data_dir_set=0
 lock_dir_set=0
-usage() { echo 'Usage: install.sh [--version <tag|latest>] [--install-dir <path>] [--doc-dir <path>] [--data-dir <path>] [--lock-dir <path>] [--allow-insecure-install-dir] [--binary <local-file> --sha256 <digest> --notices <local-file> --notices-sha256 <digest>]' >&2; exit 1; }
+usage() { echo 'Usage: install.sh [--version <tag|latest>] [--install-dir <path>] [--doc-dir <path>] [--data-dir <path>] [--lock-dir <path>] [--binary <local-file> --sha256 <digest> --notices <local-file> --notices-sha256 <digest>]' >&2; exit 1; }
 while [ "$#" -gt 0 ]; do
  case "$1" in
   --version) [ "$#" -ge 2 ] || usage; version=$2; shift 2;;
@@ -37,7 +36,6 @@ while [ "$#" -gt 0 ]; do
   --doc-dir) [ "$#" -ge 2 ] || usage; doc_dir=$2; doc_dir_set=1; shift 2;;
   --data-dir) [ "$#" -ge 2 ] || usage; data_dir=$2; data_dir_set=1; shift 2;;
   --lock-dir) [ "$#" -ge 2 ] || usage; lock_dir=$2; lock_dir_set=1; shift 2;;
-  --allow-insecure-install-dir) allow_insecure_install_dir=1; shift;;
   --binary) [ "$#" -ge 2 ] || usage; binary=$2; shift 2;;
   --notices) [ "$#" -ge 2 ] || usage; notices=$2; shift 2;;
   --sha256) [ "$#" -ge 2 ] || usage; expected=$2; shift 2;;
@@ -153,11 +151,7 @@ installed_version=$("$install_dir/peerimeter-agent" version --json | sed -n 's/.
 progress 'Registering protected installation inventory.'
 # The installed binary writes the protected inventory using the same audited
 # ownership/path rules as full uninstall. Source configs and keys are not claimed.
-if [ "$allow_insecure_install_dir" -eq 1 ]; then
- "$install_dir/peerimeter-agent" register-installation --install-dir "$install_dir" --doc-dir "$doc_dir" --data-dir "$data_dir" --lock-dir "$lock_dir" --allow-insecure-install-dir >/dev/null
-else
- "$install_dir/peerimeter-agent" register-installation --install-dir "$install_dir" --doc-dir "$doc_dir" --data-dir "$data_dir" --lock-dir "$lock_dir" >/dev/null
-fi
+"$install_dir/peerimeter-agent" register-installation --install-dir "$install_dir" --doc-dir "$doc_dir" --data-dir "$data_dir" --lock-dir "$lock_dir" >/dev/null
 [ -f "$data_dir/.peerimeter-agent.install.json" ] && [ ! -L "$data_dir/.peerimeter-agent.install.json" ] || { echo 'Installation inventory registration failed.' >&2; exit 1; }
 [ ! -e "$install_dir/.peerimeter-agent.install.ref" ] || { [ -f "$install_dir/.peerimeter-agent.install.ref" ] && [ ! -L "$install_dir/.peerimeter-agent.install.ref" ]; } || { echo 'Installation reference is invalid.' >&2; exit 1; }
 completed=1
