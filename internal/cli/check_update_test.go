@@ -9,6 +9,12 @@ import (
 	"testing"
 )
 
+type updateTestRoundTripper func(*http.Request) (*http.Response, error)
+
+func (roundTrip updateTestRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return roundTrip(req)
+}
+
 func TestCheckUpdateJSON(t *testing.T) {
 	for _, test := range []struct {
 		name       string
