@@ -272,6 +272,10 @@ func secureSnapshot(cfg Config, destination, key string, secure func(...string) 
 // after replacement registration succeeds; failed attempts retain recoverable
 // legacy credentials and never overwrite a conflicting destination.
 func migrate(cfg Config, unregister func(Config) error, register func(Config) error, secure func(...string) error) error {
+	return migrateWithContext(context.Background(), cfg, unregister, register, secure)
+}
+
+func migrateWithContext(ctx context.Context, cfg Config, unregister func(Config) error, register func(Config) error, secure func(...string) error) error {
 	if runtime.GOOS == "windows" {
 		return errors.New("Windows retains its existing storage layout; no Unix layout migration is required")
 	}
@@ -342,12 +346,12 @@ func migrate(cfg Config, unregister func(Config) error, register func(Config) er
 	if err := startup.Check(); err != nil {
 		return err
 	}
-	guard, err := acquireMigrationState(context.Background(), cfg.StateDirectory)
+	guard, err := acquireMigrationState(ctx, cfg.StateDirectory)
 	if err != nil {
 		return err
 	}
 	defer guard.Close()
-	legacyManagerLock, err := acquireLegacyManagerLock(cfg.StateDirectory)
+	legacyManagerLock, err := acquireLegacyManagerLock(ctx, cfg.StateDirectory)
 	if err != nil {
 		return err
 	}
