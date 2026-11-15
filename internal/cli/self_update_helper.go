@@ -254,7 +254,10 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 		return err
 	}
 	profile, _ := serviceProfileForHelper(inv.Profiles, nil, false)
-	updateLock, err := acquireWindowsUpdateLock(ctx, inv, 45*time.Second)
+	// The parent already stopped the service before scheduling this helper.
+	// Wait until update ownership transfers instead of abandoning that service
+	// on a bounded lock timeout.
+	updateLock, err := acquireWindowsUpdateLock(context.Background(), inv, 0)
 	if err != nil {
 		return err
 	}
@@ -484,8 +487,12 @@ func helperRollback(dir string, rollback func() error, profile installstate.Prof
 }
 
 func acquireWindowsUpdateLock(ctx context.Context, inv installstate.Inventory, timeout time.Duration) (io.Closer, error) {
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
+	var deadline <-chan time.Time
+	if timeout > 0 {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		deadline = timer.C
+	}
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -496,7 +503,7 @@ func acquireWindowsUpdateLock(ctx context.Context, inv installstate.Inventory, t
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-deadline.C:
+		case <-deadline:
 			return nil, fmt.Errorf("wait for update ownership lock: %w", err)
 		case <-ticker.C:
 		}

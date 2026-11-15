@@ -9,6 +9,7 @@ import (
 	"os/user"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -58,16 +59,52 @@ func checkTrust(path string, info os.FileInfo, directory bool) error {
 	return checkTrustWithPolicy(path, info, directory, false)
 }
 
-func hasPrivatePrimaryGroup() bool {
+func hasPrivatePrimaryGroup(uid, gid uint32) bool {
 	privatePrimaryGroupOnce.Do(func() {
-		current, err := user.Current()
+		current, err := user.LookupId(strconv.FormatUint(uint64(uid), 10))
 		if err != nil {
 			return
 		}
-		group, err := user.LookupGroupId(current.Gid)
-		if err == nil && group.Name == current.Username {
-			currentHasPrivatePrimaryGroup = true
+		group, err := user.LookupGroupId(strconv.FormatUint(uint64(gid), 10))
+		if err != nil || group.Name != current.Username {
+			return
 		}
+		groupData, err := os.ReadFile("/etc/group")
+		if err != nil {
+			return
+		}
+		groupFound := false
+		for _, line := range strings.Split(string(groupData), "\n") {
+			fields := strings.Split(line, ":")
+			if len(fields) != 4 || fields[2] != strconv.FormatUint(uint64(gid), 10) {
+				continue
+			}
+			if groupFound || fields[0] != current.Username {
+				return
+			}
+			groupFound = true
+			for _, member := range strings.Split(fields[3], ",") {
+				if member != "" && member != current.Username {
+					return
+				}
+			}
+		}
+		passwdData, err := os.ReadFile("/etc/passwd")
+		if err != nil || !groupFound {
+			return
+		}
+		primaryUsers := 0
+		for _, line := range strings.Split(string(passwdData), "\n") {
+			fields := strings.Split(line, ":")
+			if len(fields) < 4 || fields[3] != strconv.FormatUint(uint64(gid), 10) {
+				continue
+			}
+			primaryUsers++
+			if fields[0] != current.Username {
+				return
+			}
+		}
+		currentHasPrivatePrimaryGroup = primaryUsers == 1
 	})
 	return currentHasPrivatePrimaryGroup
 }
@@ -87,11 +124,11 @@ func checkAncestorDirectoryTrust(path string, info os.FileInfo) error {
 		return errors.New("installation resource parent grants other write access")
 	}
 	if info.Mode().Perm()&0020 != 0 && !sticky && !androidSystemDir {
-		if uid == 0 || st.Uid != uid || st.Gid != uint32(os.Getegid()) || !hasPrivatePrimaryGroup() {
+		if uid == 0 || st.Uid != uid || st.Gid != uint32(os.Getegid()) || !hasPrivatePrimaryGroup(st.Uid, st.Gid) {
 			return errors.New("installation resource parent grants group write access")
 		}
 	}
-	return checkExtendedTrust(path, false, true)
+	return checkAncestorACL(path)
 }
 
 func checkTrustWithPolicy(path string, info os.FileInfo, directory, allowInsecureDirectory bool) error {

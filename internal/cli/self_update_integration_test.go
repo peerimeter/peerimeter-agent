@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
 	"github.com/peerimeter/peerimeter-agent/internal/local"
@@ -657,6 +659,52 @@ func TestRecoveryAbortRestartsManagedServiceAfterReleasingInstallLock(t *testing
 		})
 	if !errors.Is(err, cause) || !lock.closed || started != 1 || waited != 1 {
 		t.Fatalf("recovery abort cleanup incomplete: err=%v closed=%v starts=%d waits=%d", err, lock.closed, started, waited)
+	}
+}
+
+func TestWindowsUpdateHelperWaitsUntilUpdateOwnershipIsAvailable(t *testing.T) {
+	f := newSelfUpdateFixture(t, false)
+	inv, err := installstate.Load(f.install)
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder, err := selfupdate.LockUpdate(inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		lock io.Closer
+		err  error
+	}
+	acquired := make(chan result, 1)
+	go func() {
+		lock, err := acquireWindowsUpdateLock(context.Background(), inv, 0)
+		acquired <- result{lock: lock, err: err}
+	}()
+	select {
+	case got := <-acquired:
+		if got.lock != nil {
+			_ = got.lock.Close()
+		}
+		t.Fatalf("helper stopped waiting while update ownership was held: %v", got.err)
+	case <-time.After(350 * time.Millisecond):
+	}
+	if err := holder.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-acquired:
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		if got.lock == nil {
+			t.Fatal("helper acquired no update lock")
+		}
+		if err := got.lock.Close(); err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("helper did not acquire update ownership after it became available")
 	}
 }
 
