@@ -255,59 +255,28 @@ with (root/'queued-process.log').open('w') as log:
 PYQUEUED
 echo 'PASS: a loaded pre-start Unix process cannot recreate manager state after its installation is completely removed.'
 
-# A second real installation will migrate an already-running old combined
-# service. The supervisor path remains identical while its executable inode is
-# atomically upgraded, exactly as an operator upgrade behaves on Unix.
-program="$base/migration program/bin"
+# A second real installation exercises service dry-run and uninstall with the
+# current agent and separate managed directories.
+program="$base/managed program/bin"
 install_program "$program"
 agent="$program/peerimeter-agent"
-legacy="$base/legacy combined state"
-new_config="$base/migrated configuration"
-new_runtime="$base/migrated runtime files"
-install -m 0755 "$agent_source" "$program/legacy.new"
-mv -f "$program/legacy.new" "$agent"
-active="$agent"
-"$agent" service install --config "$source_config" --state-dir "$legacy" --operator "$operator"
+new_config="$base/managed configuration"
+new_state="$base/managed state"
+new_runtime="$base/managed runtime files"
+"$agent" service install --config "$source_config" --config-dir "$new_config" --state-dir "$new_state" --runtime-dir "$new_runtime" --operator "$operator"
 "$agent" service start
-for attempt in {1..40}; do
- if "$agent" status --json --state-dir "$legacy" >"$base/legacy-status.json" 2>/dev/null; then break; fi
- sleep 0.3
-done
-[[ -S "$legacy/control.sock" ]]
-cp "$legacy/ownership" "$base/old-ownership"
-if [[ -f "$legacy/network.json" ]]; then cp "$legacy/network.json" "$base/old-network.json"; fi
-cp "$legacy/service.key" "$base/old-service.key"
-install -m 0755 "$source_cli" "$program/current.new"
-mv -f "$program/current.new" "$agent"
-mkdir -m 0700 "$new_config"
-printf 'conflicting protected destination\n' >"$new_config/service.key"
-cp "$new_config/service.key" "$base/conflict.original"
-if "$agent" service migrate --state-dir "$legacy" --config-dir "$new_config" --runtime-dir "$new_runtime" --operator "$operator" >"$base/migration-conflict.log" 2>&1; then
- echo 'Migration overwrote a conflicting destination.' >&2; exit 1
-fi
-cmp "$new_config/service.key" "$base/conflict.original"
-cmp "$legacy/service.key" "$base/old-service.key"
-cmp "$legacy/ownership" "$base/old-ownership"
-"$agent" status --json --runtime-dir "$legacy" >"$base/legacy-after-conflict.json"
-rm "$new_config/service.key"
-"$agent" service migrate --state-dir "$legacy" --config-dir "$new_config" --runtime-dir "$new_runtime" --operator "$operator"
-[[ ! -e "$legacy/service.json" && ! -e "$legacy/service.key" && ! -e "$legacy/control.sock" ]]
-cmp "$new_config/service.key" "$base/old-service.key"
-cmp "$legacy/ownership" "$base/old-ownership"
-if [[ -f "$base/old-network.json" ]]; then cmp "$legacy/network.json" "$base/old-network.json"; fi
-"$agent" service start
-wait_status "$agent" "$new_runtime" "$base/migrated-status.json"
-check_layout "$new_config" "$legacy" "$new_runtime"
-as_operator "$agent" status --json --runtime-dir "$new_runtime" >"$base/migrated-operator.json"
-as_operator "$agent" wg --json --runtime-dir "$new_runtime" >"$base/migrated-operator-peers.json"
+wait_status "$agent" "$new_runtime" "$base/managed-status.json"
+check_layout "$new_config" "$new_state" "$new_runtime"
+as_operator "$agent" status --json --runtime-dir "$new_runtime" >"$base/managed-operator.json"
+as_operator "$agent" wg --json --runtime-dir "$new_runtime" >"$base/managed-operator-peers.json"
 as_operator "$agent" sync --runtime-dir "$new_runtime"
-echo 'PASS: live old combined service migration rejects conflicts, preserves keys/interface identity and starts with spaced separate directories.'
+echo 'PASS: current agent manages a live service with separate directories and preserves protected profile data.'
 
-for directory in "$program" "$new_config" "$legacy" "$new_runtime"; do printf 'unrelated operator file\n' >"$directory/unrelated.txt"; done
-snapshot "$program" "$new_config" "$legacy" "$new_runtime" "$service_file" >"$base/before-dry-run.json"
+for directory in "$program" "$new_config" "$new_state" "$new_runtime"; do printf 'unrelated operator file\n' >"$directory/unrelated.txt"; done
+snapshot "$program" "$new_config" "$new_state" "$new_runtime" "$service_file" >"$base/before-dry-run.json"
 "$agent" uninstall --json --install-dir "$program" --dry-run >"$base/dry-run.json"
 check_state "$base/dry-run.json" dry_run
-snapshot "$program" "$new_config" "$legacy" "$new_runtime" "$service_file" >"$base/after-dry-run.json"
+snapshot "$program" "$new_config" "$new_state" "$new_runtime" "$service_file" >"$base/after-dry-run.json"
 cmp "$base/before-dry-run.json" "$base/after-dry-run.json"
 "$agent" status --json --runtime-dir "$new_runtime" >"$base/still-running-after-dry-run.json"
 # Refuse hash-changed owned program resources without stopping the working
@@ -322,11 +291,11 @@ cp "$base/notices.original" "$program.docs/peerimeter-agent.NOTICES.txt"
 rm "$program.docs/peerimeter-agent.NOTICES.txt"
 "$agent" uninstall --json --install-dir "$program" >"$base/removed.json"
 check_state "$base/removed.json" removed
-wait_interface_gone "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["interface_name"])' "$base/migrated-status.json")"
+wait_interface_gone "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["interface_name"])' "$base/managed-status.json")"
 active=''
 [[ ! -e "$service_file" && ! -e "$new_runtime/control.sock" ]]
-for path in "$program/peerimeter-agent" "$program/.peerimeter-agent.install.ref" "$program.data/.peerimeter-agent.install.json" "$program.locks/.peerimeter-agent.install.lock" "$program.docs/peerimeter-agent.NOTICES.txt" "$new_config/service.json" "$new_config/service.key" "$legacy/ownership" "$legacy/network.json" "$legacy/agent.lock" "$legacy/.peerimeter-agent.profile"; do [[ ! -e "$path" ]] || { echo "Managed resource survived uninstall: $path" >&2; exit 1; }; done
-for directory in "$program" "$new_config" "$legacy" "$new_runtime"; do [[ $(cat "$directory/unrelated.txt") == 'unrelated operator file' ]]; done
+for path in "$program/peerimeter-agent" "$program/.peerimeter-agent.install.ref" "$program.data/.peerimeter-agent.install.json" "$program.locks/.peerimeter-agent.install.lock" "$program.docs/peerimeter-agent.NOTICES.txt" "$new_config/service.json" "$new_config/service.key" "$new_state/ownership" "$new_state/network.json" "$new_state/agent.lock" "$new_state/.peerimeter-agent.profile"; do [[ ! -e "$path" ]] || { echo "Managed resource survived uninstall: $path" >&2; exit 1; }; done
+for directory in "$program" "$new_config" "$new_state" "$new_runtime"; do [[ $(cat "$directory/unrelated.txt") == 'unrelated operator file' ]]; done
 "$source_cli" uninstall --json --install-dir "$program" >"$base/already-absent.json"
 check_state "$base/already-absent.json" already_absent
 "$program_default/peerimeter-agent" uninstall --json --install-dir "$program_default" >"$base/default-removed.json"
