@@ -143,6 +143,9 @@ new version is available, it reports that without prompting. The command selects
 the package for the current OS and CPU, then checks it against the release
 `SHA256SUMS` file downloaded over HTTPS. This is an integrity check using the
 GitHub release trust channel; it does not claim a detached release signature.
+During the update it shows the current operation on stderr: an animated spinner
+in a terminal, or start/completion lines when output is redirected. With
+`--json`, progress stays on stderr and the final result remains on stdout.
 Startup checks may notify about an update, but never replace a running agent.
 
 ```sh
@@ -383,10 +386,10 @@ peerimeter-agent status --watch --json
 Cobra provides contextual `--help` and `completion bash|zsh|fish|powershell`.
 Running `peerimeter-agent` without arguments prints the version banner first,
 then the help, and checks GitHub Releases. When a newer stable release is
-available, it shows a boxed update notice recommending `peerimeter-agent
-update`. `peerimeter-agent check-update` runs the same check explicitly and
-supports `--json` (`current_version`, `latest_version`, `update_available`, and,
-when available, the release URL and `update_command`);
+available, it shows a boxed update notice recommending
+`peerimeter-agent self-update`. `peerimeter-agent check-update` runs the same
+check explicitly and supports `--json` (`current_version`, `latest_version`,
+`update_available`, and, when available, the release URL and `update_command`);
 `--help` never makes a network request. The automatic check has a short timeout
 and does not prevent help from appearing when GitHub is unavailable.
 Commands live in separate files under `internal/cli` (`root.go`, `run.go`,
