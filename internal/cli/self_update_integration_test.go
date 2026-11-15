@@ -32,6 +32,13 @@ type selfUpdateFixture struct {
 	files   map[string][]byte
 }
 
+type countedCloser struct{ closed bool }
+
+func (c *countedCloser) Close() error {
+	c.closed = true
+	return nil
+}
+
 func newSelfUpdateFixture(t *testing.T, serviceProfile bool) selfUpdateFixture {
 	t.Helper()
 	root := t.TempDir()
@@ -622,6 +629,34 @@ func TestSelfUpdateIntegrationLeavesRecoveryPendingWhileProfileIsActive(t *testi
 		if err != nil || !bytes.Equal(got, want) {
 			t.Fatalf("active profile recovery unexpectedly changed %s: got %q err=%v", name, got, err)
 		}
+	}
+}
+
+func TestRecoveryAbortRestartsManagedServiceAfterReleasingInstallLock(t *testing.T) {
+	cause := errors.New("profile became active during recovery")
+	profile := &installstate.Profile{RuntimeDir: "service-runtime", Service: true}
+	lock := &countedCloser{}
+	started, waited := 0, 0
+	err := restartServiceAfterRecoveryAbort(context.Background(), profile, lock, cause,
+		func(got installstate.Profile) error {
+			started++
+			if got.RuntimeDir != profile.RuntimeDir {
+				t.Fatalf("service restarted with wrong profile: %+v", got)
+			}
+			if !lock.closed {
+				t.Fatal("service was restarted before releasing the installation lock")
+			}
+			return nil
+		},
+		func(_ context.Context, runtimeDir string) error {
+			waited++
+			if runtimeDir != profile.RuntimeDir {
+				t.Fatalf("waited for wrong service runtime %q", runtimeDir)
+			}
+			return nil
+		})
+	if !errors.Is(err, cause) || !lock.closed || started != 1 || waited != 1 {
+		t.Fatalf("recovery abort cleanup incomplete: err=%v closed=%v starts=%d waits=%d", err, lock.closed, started, waited)
 	}
 }
 
