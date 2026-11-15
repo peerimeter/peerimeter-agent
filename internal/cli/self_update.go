@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"time"
 
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
@@ -94,6 +95,9 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	if err := verifyInstalledFiles(inv); err != nil {
 		return err
 	}
+	updateSnapshot := inv
+	updateSnapshot.Files = slices.Clone(inv.Files)
+	updateSnapshot.Profiles = slices.Clone(inv.Profiles)
 	tag, files, err := deps.fetch(ctx, nil, goos, goarch)
 	if err != nil {
 		return err
@@ -180,6 +184,20 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 		_ = lock.Close()
 		return restartAfterFailure(managedService, errors.New("this installation is being removed"))
 	}
+	if !sameUpdateSnapshot(updateSnapshot, inv) {
+		_ = lock.Close()
+		return restartAfterFailure(managedService, errors.New("installation profiles or files changed while the release was being fetched; retry self-update"))
+	}
+	for _, profile := range inv.Profiles {
+		guard, guardErr := local.TryAcquireExisting(profile.RuntimeDir)
+		if guardErr != nil {
+			_ = lock.Close()
+			return restartAfterFailure(managedService, errors.New("an agent process started while the release was being fetched; retry self-update"))
+		}
+		if guard != nil {
+			_ = guard.Close()
+		}
+	}
 	if err := verifyInstalledFiles(inv); err != nil {
 		_ = lock.Close()
 		return restartAfterFailure(managedService, err)
@@ -203,7 +221,9 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 			return rollbackInstalledUpdate(installDir, rollback, *managedService, fmt.Errorf("restart updated service: %w", err), deps.manage, deps.wait)
 		}
 		if err := deps.wait(ctx, managedService.RuntimeDir); err != nil {
-			_ = deps.manage("stop", serviceConfig(managedService))
+			if stopErr := deps.manage("stop", serviceConfig(managedService)); stopErr != nil {
+				return errors.Join(fmt.Errorf("updated service did not become ready: %w", err), fmt.Errorf("could not stop updated service; rollback is pending a later update recovery: %w", stopErr))
+			}
 			return rollbackInstalledUpdate(installDir, rollback, *managedService, fmt.Errorf("updated service did not become ready: %w", err), deps.manage, deps.wait)
 		}
 	} else if err := deps.verify(ctx, filepath.Join(installDir, binaryNameFor(goos)), tag); err != nil {
@@ -217,6 +237,27 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 		filesUpdated = append(filesUpdated, f.Name)
 	}
 	return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "updated", PreviousVersion: currentVersion, UpdatedVersion: tag, Files: filesUpdated})
+}
+
+func sameUpdateSnapshot(a, b installstate.Inventory) bool {
+	return snapshotUpdateInventory(a).matches(b)
+}
+
+type updateInventorySnapshot struct {
+	ID, InstallDir, DataDir, DocDir, LockDir string
+	Files                                    []installstate.File
+	Profiles                                 []installstate.Profile
+}
+
+func snapshotUpdateInventory(inv installstate.Inventory) updateInventorySnapshot {
+	return updateInventorySnapshot{
+		ID: inv.ID, InstallDir: inv.InstallDir, DataDir: inv.DataDir, DocDir: inv.DocDir, LockDir: inv.LockDir,
+		Files: slices.Clone(inv.Files), Profiles: slices.Clone(inv.Profiles),
+	}
+}
+
+func (s updateInventorySnapshot) matches(inv installstate.Inventory) bool {
+	return s.ID == inv.ID && s.InstallDir == inv.InstallDir && s.DataDir == inv.DataDir && s.DocDir == inv.DocDir && s.LockDir == inv.LockDir && slices.Equal(s.Files, inv.Files) && slices.Equal(s.Profiles, inv.Profiles)
 }
 
 func recoverInterruptedUpdate(installDir string, inv installstate.Inventory) (bool, error) {

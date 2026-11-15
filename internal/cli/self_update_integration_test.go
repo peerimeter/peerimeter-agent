@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
@@ -208,6 +209,77 @@ func TestSelfUpdateIntegrationServiceReadinessFailureRollsBack(t *testing.T) {
 		if hashErr != nil || got != file.SHA256 {
 			t.Fatalf("inventory hash for %s was not restored: %s, %v", file.Name, got, hashErr)
 		}
+	}
+}
+
+func TestSelfUpdateIntegrationRefusesProfileChangesDuringReleaseFetch(t *testing.T) {
+	f := newSelfUpdateFixture(t, true)
+	var actions []string
+	manage := func(action string, _ service.Config) error {
+		actions = append(actions, action)
+		return nil
+	}
+	deps := f.deps("v1.2.0", manage, func(context.Context, string) error { return nil })
+	fetch := deps.fetch
+	deps.fetch = func(ctx context.Context, client *http.Client, goos, goarch string) (string, map[string][]byte, error) {
+		root := t.TempDir()
+		profile := installstate.Profile{
+			ConfigDir:  filepath.Join(root, "configuration"),
+			StateDir:   filepath.Join(root, "state"),
+			RuntimeDir: filepath.Join(root, "runtime"),
+			Service:    true,
+		}
+		for _, dir := range []string{profile.ConfigDir, profile.StateDir, profile.RuntimeDir} {
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				return "", nil, err
+			}
+		}
+		if err := installstate.RegisterProfile(f.install, profile); err != nil {
+			return "", nil, err
+		}
+		return fetch(ctx, client, goos, goarch)
+	}
+	var output bytes.Buffer
+	err := selfUpdateAt(context.Background(), &output, false, f.install, "v1.0.0", "linux", runtime.GOARCH, deps)
+	if err == nil || !strings.Contains(err.Error(), "changed while the release was being fetched") {
+		t.Fatalf("expected changed profile set to abort update, got %v", err)
+	}
+	if !reflect.DeepEqual(actions, []string{"stop", "start"}) {
+		t.Fatalf("service actions after profile change: %v", actions)
+	}
+	assertSelfUpdateFiles(t, f, f.old)
+}
+
+func TestSelfUpdateIntegrationDoesNotRollbackUntilUpdatedServiceStops(t *testing.T) {
+	f := newSelfUpdateFixture(t, true)
+	var actions []string
+	stopCalls := 0
+	manage := func(action string, _ service.Config) error {
+		actions = append(actions, action)
+		if action == "stop" {
+			stopCalls++
+			if stopCalls == 2 {
+				return errors.New("service manager refused to stop updated service")
+			}
+		}
+		return nil
+	}
+	wait := func(context.Context, string) error { return errors.New("updated service did not answer status") }
+	var output bytes.Buffer
+	err := selfUpdateAt(context.Background(), &output, false, f.install, "v1.0.0", "linux", runtime.GOARCH, f.deps("v1.2.0", manage, wait))
+	if err == nil || !strings.Contains(err.Error(), "rollback is pending a later update recovery") {
+		t.Fatalf("expected rollback to remain pending while service is running, got %v", err)
+	}
+	if !reflect.DeepEqual(actions, []string{"stop", "start", "stop"}) {
+		t.Fatalf("service actions while stop failed: %v", actions)
+	}
+	assertSelfUpdateFiles(t, f, f.files)
+	inv, err := installstate.Load(f.install)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(inv.LockDir, selfupdate.JournalFilename)); err != nil {
+		t.Fatalf("rollback journal was removed while the updated service could still be running: %v", err)
 	}
 }
 

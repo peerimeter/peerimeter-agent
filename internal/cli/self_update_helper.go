@@ -23,9 +23,10 @@ import (
 const updateManifestName = ".peerimeter-agent.update.json"
 
 type helperManifest struct {
-	Version   string            `json:"version"`
-	InstallID string            `json:"installation_id"`
-	Hashes    map[string]string `json:"hashes"`
+	Version   string                  `json:"version"`
+	InstallID string                  `json:"installation_id"`
+	Hashes    map[string]string       `json:"hashes"`
+	Snapshot  updateInventorySnapshot `json:"inventory_snapshot"`
 }
 
 func scheduleWindowsUpdate(inv installstate.Inventory, files map[string][]byte, tag string, profile *installstate.Profile, out io.Writer, jsonOutput bool) error {
@@ -47,7 +48,7 @@ func scheduleWindowsUpdate(inv installstate.Inventory, files map[string][]byte, 
 			return restartServiceAfterFailure(profile, err)
 		}
 	}
-	manifest, err := json.Marshal(helperManifest{Version: tag, InstallID: inv.ID, Hashes: hashes})
+	manifest, err := json.Marshal(helperManifest{Version: tag, InstallID: inv.ID, Hashes: hashes, Snapshot: snapshotUpdateInventory(inv)})
 	if err != nil {
 		cleanup()
 		return restartServiceAfterFailure(profile, err)
@@ -122,7 +123,7 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 		return err
 	}
 	var manifest helperManifest
-	if json.Unmarshal(data, &manifest) != nil || manifest.InstallID != inv.ID {
+	if json.Unmarshal(data, &manifest) != nil || manifest.InstallID != inv.ID || !manifest.Snapshot.matches(inv) {
 		return errors.New("update helper manifest is invalid")
 	}
 	if _, ok := parseReleaseVersion(manifest.Version); !ok {
@@ -193,6 +194,10 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 		_ = lock.Close()
 		return err
 	}
+	if !manifest.Snapshot.matches(inv) {
+		_ = lock.Close()
+		return errors.New("installation profiles or files changed while the release was being fetched; retry self-update")
+	}
 	var lastErr error
 	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
@@ -232,7 +237,9 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 			return helperRollback(installDir, rollback, *profile, err)
 		}
 		if err := waitForService(ctx, profile.RuntimeDir); err != nil {
-			_ = service.Manage("stop", service.Config{ConfigDirectory: profile.ConfigDir, StateDirectory: profile.StateDir, RuntimeDirectory: profile.RuntimeDir})
+			if stopErr := service.Manage("stop", service.Config{ConfigDirectory: profile.ConfigDir, StateDirectory: profile.StateDir, RuntimeDirectory: profile.RuntimeDir}); stopErr != nil {
+				return errors.Join(fmt.Errorf("updated Windows service did not become ready: %w", err), fmt.Errorf("could not stop updated service; rollback is pending a later update recovery: %w", stopErr))
+			}
 			return helperRollback(installDir, rollback, *profile, err)
 		}
 	} else if err := verifyUpdatedBinary(ctx, filepath.Join(installDir, "peerimeter-agent.exe"), manifest.Version); err != nil {

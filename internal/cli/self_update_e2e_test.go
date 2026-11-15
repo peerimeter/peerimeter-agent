@@ -259,12 +259,15 @@ func prepareE2EInstallation(t *testing.T, oldBinary string, notices []byte, rele
 	if err := os.WriteFile(filepath.Join(install.stateDir, "state.json"), []byte(`{"keep":true}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	register := exec.Command(filepath.Join(install.installDir, executableName()), "register-installation",
+	registerCtx, cancelRegister := context.WithTimeout(context.Background(), 30*time.Second)
+	register := exec.CommandContext(registerCtx, filepath.Join(install.installDir, executableName()), "register-installation",
 		"--install-dir", install.installDir, "--doc-dir", install.docDir,
 		"--data-dir", install.dataDir, "--lock-dir", install.lockDir)
 	if output, err := register.CombinedOutput(); err != nil {
+		cancelRegister()
 		t.Fatalf("register installed binary: %v\n%s", err, output)
 	}
+	cancelRegister()
 	profile := installstate.Profile{ConfigDir: install.configDir, StateDir: install.stateDir, RuntimeDir: runtimeDir}
 	if err := installstate.RegisterProfile(install.installDir, profile); err != nil {
 		t.Fatal(err)
@@ -279,7 +282,9 @@ func buildAgentE2E(t *testing.T, root, output, version, serverURL string) {
 		"-X github.com/peerimeter/peerimeter-agent/internal/selfupdate.latestReleaseEndpoint=" + serverURL + "/latest",
 		"-X github.com/peerimeter/peerimeter-agent/internal/selfupdate.releaseDownloadBase=" + serverURL + "/download/",
 	}, " ")
-	cmd := exec.Command("go", "build", "-mod=readonly", "-ldflags", ldflags, "-o", output, "./cmd/peerimeter-agent")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "go", "build", "-mod=readonly", "-ldflags", ldflags, "-o", output, "./cmd/peerimeter-agent")
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if output, err := cmd.CombinedOutput(); err != nil {
