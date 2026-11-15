@@ -10,6 +10,8 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
 	"github.com/peerimeter/peerimeter-agent/internal/secret"
 	"github.com/peerimeter/peerimeter-agent/internal/stunprobe"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -203,6 +205,23 @@ func (rejectBackend) Inspect(context.Context) (platform.Snapshot, error) {
 }
 
 func TestCobraHelpAndCompletion(t *testing.T) {
+	previousClient := http.DefaultClient
+	client := *previousClient
+	release, marshalErr := json.Marshal(latestRelease{TagName: Version})
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	client.Transport = updateTestRoundTripper(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(bytes.NewReader(release)),
+			Request:    req,
+		}, nil
+	})
+	http.DefaultClient = &client
+	t.Cleanup(func() { http.DefaultClient = previousClient })
+
 	for _, args := range [][]string{{}, {"--help"}, {"run", "--help"}, {"service", "install", "--help"}, {"completion", "bash"}} {
 		code, out, err := invoke(t, args...)
 		if code != 0 || out == "" || err != "" {
