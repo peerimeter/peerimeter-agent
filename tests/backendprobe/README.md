@@ -2,7 +2,7 @@
 
 [Agent documentation](../../README.md) · [Native integration
 workflow](../../.github/workflows/wireguard-integration.yml) · [Verification
-evidence](../../progress.md)
+evidence](https://github.com/peerimeter/.github/blob/main/docs/planning/progress.md)
 
 This isolated Go module uses pinned official WireGuard libraries. It provides an
 independent userspace reference peer for the macOS and Windows agent integration
@@ -22,8 +22,9 @@ and Windows Server 2022, with `fail-fast` disabled.
 The reference peer's tunnel IP is never assigned to a host adapter. Both sides
 initiate TCP connections and check received payloads alongside real handshake
 and transfer counters. Tests also exercise reload, restart, native services and
-cleanup. See [progress.md](../../progress.md) for the exact tested commits and
-current acceptance status.
+cleanup. See the [shared project progress
+tracker](https://github.com/peerimeter/.github/blob/main/docs/planning/progress.md)
+for the exact tested commits and current acceptance status.
 
 The Windows reference peer uses `conn.NewStdNetBind`; the default Windows ring
 bind failed the earlier feasibility experiment.
