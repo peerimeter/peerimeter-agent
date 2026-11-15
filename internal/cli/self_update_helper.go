@@ -236,6 +236,11 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 		return err
 	}
 	profile, _ := serviceProfileForHelper(inv.Profiles, nil, false)
+	updateLock, err := acquireWindowsUpdateLock(ctx, inv, 45*time.Second)
+	if err != nil {
+		return err
+	}
+	defer updateLock.Close()
 	serviceRestartAttempted := false
 	if profile != nil {
 		defer func() {
@@ -244,11 +249,6 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 			}
 		}()
 	}
-	updateLock, err := acquireWindowsUpdateLock(ctx, inv, 45*time.Second)
-	if err != nil {
-		return err
-	}
-	defer updateLock.Close()
 	if !pathWithin(inv.LockDir, transactionDir) {
 		return errors.New("update transaction is outside the recorded lock directory")
 	}
@@ -389,6 +389,9 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 	if profile != nil {
 		serviceRestartAttempted = true
 		if err := startManagedService(*profile); err != nil {
+			if stopErr := service.Manage("stop", service.Config{ConfigDirectory: profile.ConfigDir, StateDirectory: profile.StateDir, RuntimeDirectory: profile.RuntimeDir}); stopErr != nil {
+				return errors.Join(fmt.Errorf("start updated Windows service: %w", err), fmt.Errorf("could not stop partially started service; rollback is pending a later update recovery: %w", stopErr))
+			}
 			return helperRollback(installDir, rollback, *profile, err)
 		}
 		if err := waitForService(ctx, profile.RuntimeDir); err != nil {
@@ -441,7 +444,15 @@ func helperRollback(dir string, rollback func() error, profile installstate.Prof
 	if lockErr != nil {
 		return errors.Join(cause, fmt.Errorf("automatic rollback was incomplete: %w", lockErr))
 	}
-	err := errors.Join(rollback(), lock.Close())
+	inv, err := installstate.Load(dir)
+	if err == nil {
+		err = ensureNoActiveUpdateProfiles(inv)
+	}
+	if err != nil {
+		_ = lock.Close()
+		return errors.Join(cause, fmt.Errorf("automatic rollback is pending because an agent profile may still be running: %w", err))
+	}
+	err = errors.Join(rollback(), lock.Close())
 	if profile.Service {
 		err = errors.Join(err, startManagedService(profile), waitForService(context.Background(), profile.RuntimeDir))
 	}

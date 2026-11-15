@@ -137,3 +137,23 @@ func TestGetBytesRejectsRedirectToPlainHTTP(t *testing.T) {
 		t.Fatal("accepted final HTTP response")
 	}
 }
+
+func TestGetBytesRejectsPlainHTTPAtEveryRedirectHop(t *testing.T) {
+	hitHTTP := false
+	client := &http.Client{Transport: releaseRoundTripper(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Scheme == "http" {
+			hitHTTP = true
+			return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": []string{"https://example.test/final"}}, Body: io.NopCloser(strings.NewReader("")), Request: req}, nil
+		}
+		if req.URL.Path == "/start" {
+			return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": []string{"http://example.test/plain"}}, Body: io.NopCloser(strings.NewReader("")), Request: req}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("payload")), Request: req}, nil
+	})}
+	if _, err := getBytes(context.Background(), client, "https://example.test/start", 100); err == nil {
+		t.Fatal("accepted an HTTPS to HTTP to HTTPS redirect chain")
+	}
+	if hitHTTP {
+		t.Fatal("dispatched an HTTP redirect hop before rejecting the chain")
+	}
+}

@@ -347,6 +347,13 @@ func migrate(cfg Config, unregister func(Config) error, register func(Config) er
 		return err
 	}
 	defer guard.Close()
+	legacyManagerLock, err := acquireLegacyManagerLock(cfg.StateDirectory)
+	if err != nil {
+		return err
+	}
+	if legacyManagerLock != nil {
+		defer legacyManagerLock.Close()
+	}
 	if err := startup.Check(); err != nil {
 		return err
 	}

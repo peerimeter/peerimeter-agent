@@ -226,6 +226,9 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	}
 	if managedService != nil {
 		if err := deps.manage("start", serviceConfig(managedService)); err != nil {
+			if stopErr := deps.manage("stop", serviceConfig(managedService)); stopErr != nil {
+				return errors.Join(fmt.Errorf("restart updated service: %w", err), fmt.Errorf("could not stop partially started service; rollback is pending a later update recovery: %w", stopErr))
+			}
 			return rollbackInstalledUpdate(installDir, rollback, *managedService, fmt.Errorf("restart updated service: %w", err), deps.manage, deps.wait)
 		}
 		if err := deps.wait(ctx, managedService.RuntimeDir); err != nil {
@@ -421,6 +424,14 @@ func rollbackInstalledUpdate(dir string, rollback func() error, p installstate.P
 	if err != nil {
 		return errors.Join(cause, fmt.Errorf("automatic rollback was incomplete: %w", err))
 	}
+	inv, err := installstate.Load(dir)
+	if err == nil {
+		err = ensureNoActiveUpdateProfiles(inv)
+	}
+	if err != nil {
+		_ = lock.Close()
+		return errors.Join(cause, fmt.Errorf("automatic rollback is pending because an agent profile may still be running: %w", err))
+	}
 	rollbackErr := errors.Join(rollback(), lock.Close())
 	if p.Service {
 		rollbackErr = errors.Join(rollbackErr, manage("start", service.Config{ConfigDirectory: p.ConfigDir, StateDirectory: p.StateDir, RuntimeDirectory: p.RuntimeDir}), wait(context.Background(), p.RuntimeDir))
@@ -429,6 +440,21 @@ func rollbackInstalledUpdate(dir string, rollback func() error, p installstate.P
 		return errors.Join(cause, fmt.Errorf("automatic rollback was incomplete: %w", rollbackErr))
 	}
 	return fmt.Errorf("%w; previous program files were restored", cause)
+}
+
+func ensureNoActiveUpdateProfiles(inv installstate.Inventory) error {
+	for _, profile := range inv.Profiles {
+		for _, dir := range []string{profile.StateDir, profile.RuntimeDir} {
+			guard, err := local.TryAcquireExisting(dir)
+			if err != nil {
+				return err
+			}
+			if guard != nil {
+				_ = guard.Close()
+			}
+		}
+	}
+	return nil
 }
 
 func writeSelfUpdateResult(out io.Writer, jsonOutput bool, result selfUpdateResult) error {
@@ -445,6 +471,10 @@ func writeSelfUpdateResult(out io.Writer, jsonOutput bool, result selfUpdateResu
 	}
 	if result.State == "recovered" {
 		_, err := fmt.Fprintln(out, "Recovered the previous installation after an interrupted update. Run `peerimeter-agent update` again to retry.")
+		return err
+	}
+	if result.State == "recovery_scheduled" {
+		_, err := fmt.Fprintln(out, "Windows recovery helper started. It will restore the previous installation after this command exits.")
 		return err
 	}
 	_, err := fmt.Fprintf(out, "Updated Peerimeter Agent %s → %s.\n", result.PreviousVersion, result.UpdatedVersion)

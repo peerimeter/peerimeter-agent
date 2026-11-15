@@ -324,6 +324,107 @@ func TestSelfUpdateIntegrationDoesNotRollbackUntilUpdatedServiceStops(t *testing
 	}
 }
 
+func TestSelfUpdateIntegrationStopsPartiallyStartedServiceBeforeRollback(t *testing.T) {
+	f := newSelfUpdateFixture(t, true)
+	var actions []string
+	startCalls := 0
+	manage := func(action string, _ service.Config) error {
+		actions = append(actions, action)
+		if action == "start" {
+			startCalls++
+			if startCalls == 1 {
+				return errors.New("service start returned an error after launching")
+			}
+		}
+		return nil
+	}
+	wait := func(context.Context, string) error { return nil }
+	var output bytes.Buffer
+	err := selfUpdateAt(context.Background(), &output, false, f.install, "v1.0.0", "linux", runtime.GOARCH, f.deps("v1.2.0", manage, wait))
+	if err == nil || !strings.Contains(err.Error(), "previous program files were restored") {
+		t.Fatalf("expected rollback after stopping partially started service, got %v", err)
+	}
+	if want := []string{"stop", "start", "stop", "start"}; !reflect.DeepEqual(actions, want) {
+		t.Fatalf("service actions = %v; want %v", actions, want)
+	}
+	assertSelfUpdateFiles(t, f, f.old)
+}
+
+func TestSelfUpdateIntegrationKeepsJournalWhenPartiallyStartedServiceWillNotStop(t *testing.T) {
+	f := newSelfUpdateFixture(t, true)
+	stopCalls := 0
+	manage := func(action string, _ service.Config) error {
+		if action == "start" {
+			return errors.New("service start returned after launching")
+		}
+		stopCalls++
+		if stopCalls == 2 {
+			return errors.New("service manager could not stop partially started service")
+		}
+		return nil
+	}
+	var output bytes.Buffer
+	err := selfUpdateAt(context.Background(), &output, false, f.install, "v1.0.0", "linux", runtime.GOARCH, f.deps("v1.2.0", manage, func(context.Context, string) error { return nil }))
+	if err == nil || !strings.Contains(err.Error(), "rollback is pending a later update recovery") {
+		t.Fatalf("expected rollback to remain pending after stop failure, got %v", err)
+	}
+	assertSelfUpdateFiles(t, f, f.files)
+	inv, err := installstate.Load(f.install)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(inv.LockDir, selfupdate.JournalFilename)); err != nil {
+		t.Fatalf("rollback journal was not retained: %v", err)
+	}
+}
+
+func TestSelfUpdateIntegrationLeavesJournalWhenNewProfileStartsBeforeRollback(t *testing.T) {
+	f := newSelfUpdateFixture(t, true)
+	newState := filepath.Join(t.TempDir(), "new state")
+	newRuntime := filepath.Join(t.TempDir(), "new runtime")
+	if err := os.Mkdir(newState, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(newRuntime, 0700); err != nil {
+		t.Fatal(err)
+	}
+	var stateGuard *local.Guard
+	defer func() {
+		if stateGuard != nil {
+			_ = stateGuard.Close()
+		}
+	}()
+	manage := func(string, service.Config) error { return nil }
+	wait := func(context.Context, string) error {
+		if stateGuard != nil {
+			return nil
+		}
+		profile := installstate.Profile{StateDir: newState, RuntimeDir: newRuntime}
+		if err := installstate.RegisterProfile(f.install, profile); err != nil {
+			return err
+		}
+		var err error
+		stateGuard, err = local.Acquire(newState)
+		if err != nil {
+			return err
+		}
+		return errors.New("updated service readiness failed")
+	}
+	var output bytes.Buffer
+	err := selfUpdateAt(context.Background(), &output, false, f.install, "v1.0.0", "linux", runtime.GOARCH, f.deps("v1.2.0", manage, wait))
+	if err == nil || !strings.Contains(err.Error(), "automatic rollback is pending because an agent profile may still be running") {
+		t.Fatalf("expected rollback to remain pending for active profile, got %v", err)
+	}
+	assertSelfUpdateFiles(t, f, f.files)
+	inv, err := installstate.Load(f.install)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(inv.LockDir, selfupdate.JournalFilename)); err != nil {
+		t.Fatalf("rollback journal was not retained: %v", err)
+	}
+}
+
 func TestSelfUpdateIntegrationRestartsManagedServiceAfterReplacement(t *testing.T) {
 	f := newSelfUpdateFixture(t, true)
 	var actions []string
