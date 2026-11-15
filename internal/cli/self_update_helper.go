@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
+	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/selfupdate"
 	"github.com/peerimeter/peerimeter-agent/internal/service"
 )
@@ -30,7 +31,7 @@ type helperManifest struct {
 }
 
 func scheduleWindowsUpdate(inv installstate.Inventory, files map[string][]byte, tag string, profile *installstate.Profile, out io.Writer, jsonOutput bool) error {
-	dir, err := os.MkdirTemp(inv.LockDir, ".peerimeter-update-")
+	dir, err := installstate.CreatePrivateTempDir(inv.LockDir, ".peerimeter-update-")
 	if err != nil {
 		return restartServiceAfterFailure(profile, fmt.Errorf("create update staging directory under recorded lock directory: %w", err))
 	}
@@ -68,6 +69,156 @@ func scheduleWindowsUpdate(inv installstate.Inventory, files map[string][]byte, 
 	return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "scheduled", PreviousVersion: Version, UpdatedVersion: tag})
 }
 
+func scheduleWindowsRecovery(inv installstate.Inventory) error {
+	dir, err := installstate.CreatePrivateTempDir(inv.LockDir, ".peerimeter-recovery-")
+	if err != nil {
+		return fmt.Errorf("create protected Windows recovery helper directory: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	executable, err := os.Executable()
+	if err != nil {
+		cleanup()
+		return err
+	}
+	source, err := os.Open(executable)
+	if err != nil {
+		cleanup()
+		return err
+	}
+	helperPath := filepath.Join(dir, "peerimeter-agent.exe")
+	help, err := os.OpenFile(helperPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0700)
+	if err != nil {
+		_ = source.Close()
+		cleanup()
+		return err
+	}
+	_, copyErr := io.Copy(help, source)
+	closeSourceErr := source.Close()
+	syncErr := help.Sync()
+	closeHelperErr := help.Close()
+	if err := errors.Join(copyErr, closeSourceErr, syncErr, closeHelperErr); err != nil {
+		cleanup()
+		return err
+	}
+	if err := installstate.CheckFile(helperPath); err != nil {
+		cleanup()
+		return fmt.Errorf("verify protected Windows recovery helper: %w", err)
+	}
+	cmd := exec.Command(helperPath, "__recover-helper", inv.InstallDir, dir)
+	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+	if err := cmd.Start(); err != nil {
+		cleanup()
+		return fmt.Errorf("start Windows recovery helper: %w", err)
+	}
+	_ = cmd.Process.Release()
+	return nil
+}
+
+func runWindowsRecoveryHelper(ctx context.Context, args []string) error {
+	if len(args) != 2 {
+		return errors.New("invalid recovery helper arguments")
+	}
+	installDir, err := installstate.Canonical(args[0])
+	if err != nil {
+		return err
+	}
+	helperDir, err := installstate.Canonical(args[1])
+	if err != nil {
+		return err
+	}
+	inv, err := installstate.Load(installDir)
+	if err != nil {
+		return err
+	}
+	if !pathWithin(inv.LockDir, helperDir) || installstate.CheckDirectory(helperDir) != nil {
+		return errors.New("recovery helper is outside the protected installation lock directory")
+	}
+	defer func() { _ = scheduleWindowsCleanup(helperDir) }()
+	if err := installstate.CheckPrivateFile(filepath.Join(inv.LockDir, selfupdate.JournalFilename)); err != nil {
+		return err
+	}
+	var profile *installstate.Profile
+	for i := range inv.Profiles {
+		p := &inv.Profiles[i]
+		if p.Service {
+			if profile != nil {
+				return errors.New("multiple service profiles prevent safe update recovery")
+			}
+			profile = p
+			continue
+		}
+		for _, dir := range []string{p.StateDir, p.RuntimeDir} {
+			guard, guardErr := local.TryAcquireExisting(dir)
+			if guardErr != nil {
+				return errors.New("stop active agent profiles before update recovery")
+			}
+			if guard != nil {
+				_ = guard.Close()
+			}
+		}
+	}
+	if profile != nil {
+		if err := service.Manage("stop", service.Config{ConfigDirectory: profile.ConfigDir, StateDirectory: profile.StateDir, RuntimeDirectory: profile.RuntimeDir}); err != nil {
+			return fmt.Errorf("stop service before update recovery: %w", err)
+		}
+	}
+	var updateLock io.Closer
+	recoveryDeadline := time.Now().Add(45 * time.Second)
+	for time.Now().Before(recoveryDeadline) {
+		updateLock, err = selfupdate.LockUpdate(inv)
+		if err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	if updateLock == nil {
+		return fmt.Errorf("wait for interrupted updater to exit: %w", err)
+	}
+	lock, err := installstate.Lock(installDir)
+	if err != nil {
+		return errors.Join(err, updateLock.Close())
+	}
+	var recoveryErr error
+	transactionDeadline := time.Now().Add(45 * time.Second)
+	for time.Now().Before(transactionDeadline) {
+		if err := ctx.Err(); err != nil {
+			recoveryErr = err
+			break
+		}
+		current, loadErr := installstate.Load(installDir)
+		if loadErr != nil {
+			recoveryErr = loadErr
+			break
+		}
+		recoveryErr = selfupdate.RecoverLocked(current)
+		if recoveryErr == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			recoveryErr = ctx.Err()
+			break
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	if err := errors.Join(recoveryErr, lock.Close(), updateLock.Close()); err != nil {
+		return err
+	}
+	if profile != nil {
+		if err := startManagedService(*profile); err != nil {
+			return err
+		}
+		if err := waitForService(ctx, profile.RuntimeDir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 	if len(args) != 2 {
 		return errors.New("invalid update helper arguments")
@@ -84,7 +235,7 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	profile, _ := serviceProfileForHelper(inv.Profiles, nil)
+	profile, _ := serviceProfileForHelper(inv.Profiles, nil, false)
 	serviceRestartAttempted := false
 	if profile != nil {
 		defer func() {
@@ -123,7 +274,7 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 	// The service was stopped using the profile set recorded before the release
 	// fetch. Prefer that profile for cleanup if another service profile was
 	// registered while the helper was being staged.
-	profile, multipleServiceProfiles := serviceProfileForHelper(inv.Profiles, manifest.Snapshot.Profiles)
+	profile, multipleServiceProfiles := serviceProfileForHelper(inv.Profiles, manifest.Snapshot.Profiles, true)
 	if !manifest.Snapshot.matches(inv) {
 		return errors.New("update helper manifest is invalid")
 	}
@@ -255,7 +406,7 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 	return nil
 }
 
-func serviceProfileForHelper(current, beforeUpdate []installstate.Profile) (*installstate.Profile, bool) {
+func serviceProfileForHelper(current, beforeUpdate []installstate.Profile, preferSnapshot bool) (*installstate.Profile, bool) {
 	profile := func(profiles []installstate.Profile) *installstate.Profile {
 		for i := range profiles {
 			if profiles[i].Service {
@@ -265,9 +416,9 @@ func serviceProfileForHelper(current, beforeUpdate []installstate.Profile) (*ins
 		}
 		return nil
 	}
-	selected := profile(beforeUpdate)
-	if selected == nil {
-		selected = profile(current)
+	selected := profile(current)
+	if preferSnapshot {
+		selected = profile(beforeUpdate)
 	}
 	serviceCount := 0
 	for _, p := range current {

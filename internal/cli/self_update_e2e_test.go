@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
+	"github.com/peerimeter/peerimeter-agent/internal/selfupdate"
 )
 
 func TestSelfUpdateBinaryEndToEnd(t *testing.T) {
@@ -133,8 +135,15 @@ func TestSelfUpdateBinaryEndToEnd(t *testing.T) {
 				if updateErr == nil || !bytes.Contains(output, []byte("checksum verification failed")) {
 					t.Fatalf("corrupt release was not rejected: err=%v output=%s", updateErr, output)
 				}
+			} else if runtime.GOOS == "windows" {
+				if updateErr != nil {
+					t.Fatalf("Windows update helper was not scheduled: %v\n%s", updateErr, output)
+				}
 			} else if updateErr != nil {
 				t.Fatalf("update command failed: %v\n%s", updateErr, output)
+			}
+			if runtime.GOOS == "windows" && !test.corrupt {
+				waitForWindowsUpdateCleanup(t, ctx, install.lockDir)
 			}
 			waitForE2EVersion(t, ctx, filepath.Join(install.installDir, executableName()), caPath, test.wantVersion)
 			if !test.corrupt {
@@ -147,13 +156,52 @@ func TestSelfUpdateBinaryEndToEnd(t *testing.T) {
 						t.Fatalf("update changed profile data %s: %q, %v", path, got, err)
 					}
 				}
-				if runtime.GOOS == "windows" {
-					waitForWindowsUpdateCleanup(t, ctx, install.lockDir)
-				}
 			}
 			serverMu.Lock()
 			corruptSums = false
 			serverMu.Unlock()
+		})
+	}
+
+	if runtime.GOOS == "windows" {
+		t.Run("recovers interrupted update through a separate helper", func(t *testing.T) {
+			install := prepareE2EInstallation(t, oldBinary, notices, releaseFiles)
+			inv, err := installstate.Load(install.installDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			updateLock, err := selfupdate.LockUpdate(inv)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inventoryLock, err := installstate.Lock(install.installDir)
+			if err != nil {
+				_ = updateLock.Close()
+				t.Fatal(err)
+			}
+			if _, _, _, err := selfupdate.Apply(inv, map[string][]byte{
+				"peerimeter-agent.exe":         newBytes,
+				"peerimeter-agent.NOTICES.txt": notices,
+				"wireguard.dll":                releaseFiles["wireguard.dll"],
+			}); err != nil {
+				_ = inventoryLock.Close()
+				_ = updateLock.Close()
+				t.Fatal(err)
+			}
+			if err := errors.Join(inventoryLock.Close(), updateLock.Close()); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, filepath.Join(install.installDir, executableName()), "update")
+			cmd.Env = withTestEnv(os.Environ(), "SSL_CERT_FILE", caPath)
+			cmd.Env = withTestEnv(cmd.Env, "NO_COLOR", "1")
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("recovery helper was not scheduled: %v\n%s", err, output)
+			}
+			waitForWindowsUpdateCleanup(t, ctx, install.lockDir)
+			waitForE2EVersion(t, ctx, filepath.Join(install.installDir, executableName()), caPath, "v1.0.0")
 		})
 	}
 
@@ -195,6 +243,12 @@ func TestSelfUpdateBinaryEndToEnd(t *testing.T) {
 		if runtime.GOOS != "windows" && (updateErr == nil || !bytes.Contains(output, []byte("unexpected version"))) {
 			t.Fatalf("mismatched executable was not rolled back: err=%v output=%s", updateErr, output)
 		}
+		if runtime.GOOS == "windows" {
+			if updateErr != nil {
+				t.Fatalf("Windows update helper was not scheduled: %v\n%s", updateErr, output)
+			}
+			waitForWindowsUpdateCleanup(t, ctx, install.lockDir)
+		}
 		waitForE2EVersion(t, ctx, filepath.Join(install.installDir, executableName()), caPath, "v1.0.0")
 		inv, err := installstate.Load(install.installDir)
 		if err != nil {
@@ -205,9 +259,6 @@ func TestSelfUpdateBinaryEndToEnd(t *testing.T) {
 			if hashErr != nil || digest != file.SHA256 {
 				t.Fatalf("rollback left stale inventory hash for %s: %s %v", file.Name, digest, hashErr)
 			}
-		}
-		if runtime.GOOS == "windows" {
-			waitForWindowsUpdateCleanup(t, ctx, install.lockDir)
 		}
 	})
 }
@@ -395,7 +446,7 @@ func waitForWindowsUpdateCleanup(t *testing.T, ctx context.Context, lockDir stri
 		if err == nil {
 			pending := false
 			for _, entry := range entries {
-				if strings.HasPrefix(entry.Name(), ".peerimeter-update-") {
+				if strings.HasPrefix(entry.Name(), ".peerimeter-update-") || strings.HasPrefix(entry.Name(), ".peerimeter-recovery-") {
 					pending = true
 					break
 				}

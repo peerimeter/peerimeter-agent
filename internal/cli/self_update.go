@@ -86,7 +86,11 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 		return err
 	}
 	if recovered {
-		return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "recovered", PreviousVersion: Version})
+		state := "recovered"
+		if goos == "windows" {
+			state = "recovery_scheduled"
+		}
+		return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: state, PreviousVersion: Version})
 	}
 	inv, err = installstate.Load(installDir)
 	if err != nil {
@@ -272,6 +276,9 @@ func recoverInterruptedUpdate(installDir string, inv installstate.Inventory) (bo
 	if err != nil {
 		return false, err
 	}
+	if runtime.GOOS == "windows" {
+		return true, scheduleWindowsRecovery(inv)
+	}
 	var profile *installstate.Profile
 	for i := range inv.Profiles {
 		p := &inv.Profiles[i]
@@ -319,6 +326,21 @@ func newUpdateHelperCommand(app *application) *cobra.Command {
 				return errors.New("update helper is only available on Windows")
 			}
 			return runWindowsUpdateHelper(cmd.Context(), args)
+		},
+	}
+}
+
+func newUpdateRecoveryHelperCommand(app *application) *cobra.Command {
+	return &cobra.Command{
+		Use:    "__recover-helper <install-dir> <helper-dir>",
+		Hidden: true,
+		Args:   cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			app.ran = true
+			if runtime.GOOS != "windows" {
+				return errors.New("update recovery helper is only available on Windows")
+			}
+			return runWindowsRecoveryHelper(cmd.Context(), args)
 		},
 	}
 }

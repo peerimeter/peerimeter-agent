@@ -186,16 +186,17 @@ func TestMigrationWaitsForCurrentManagerDirectoryLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	start := time.Now()
 	released := make(chan struct{})
 	go func() { time.Sleep(150 * time.Millisecond); manager.Close(); close(released) }()
+	start := time.Now()
 	guard, err := acquireMigrationState(context.Background(), directory)
 	if err != nil {
 		t.Fatal(err)
 	}
+	acquireDuration := time.Since(start)
 	defer guard.Close()
 	<-released
-	if time.Since(start) < 100*time.Millisecond {
+	if acquireDuration < 100*time.Millisecond {
 		t.Fatal("migration bypassed a still-running manager")
 	}
 	if other, err := local.TryAcquireExisting(directory); !errors.Is(err, local.ErrBusy) {

@@ -93,6 +93,18 @@ func protect(path string) error {
 func protectCreatedTemp(path string) error {
 	return checkExtendedTrust(path, true, false)
 }
+func CreatePrivateTempDir(parent, prefix string) (string, error) {
+	dir, err := os.MkdirTemp(parent, prefix)
+	if err != nil {
+		return "", err
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		_ = os.Remove(dir)
+		return "", err
+	}
+	return dir, nil
+}
+func renamePrivateFile(source, target string) error { return os.Rename(source, target) }
 func syncInventoryDirectory(path string) error {
 	dir, err := os.Open(path)
 	if err != nil {

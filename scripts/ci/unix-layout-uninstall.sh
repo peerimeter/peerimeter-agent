@@ -260,6 +260,7 @@ echo 'PASS: a loaded pre-start Unix process cannot recreate manager state after 
 program="$base/managed program/bin"
 install_program "$program"
 agent="$program/peerimeter-agent"
+active="$agent"
 new_config="$base/managed configuration"
 new_state="$base/managed state"
 new_runtime="$base/managed runtime files"

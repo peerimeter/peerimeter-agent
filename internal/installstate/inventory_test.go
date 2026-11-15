@@ -6,6 +6,25 @@ import (
 	"testing"
 )
 
+func TestCreatePrivateTempDirProtectsChildren(t *testing.T) {
+	parent := t.TempDir()
+	dir, err := CreatePrivateTempDir(parent, ".private-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	if err := CheckDirectory(dir); err != nil {
+		t.Fatalf("private temporary directory failed trust check: %v", err)
+	}
+	file := filepath.Join(dir, "child")
+	if err := os.WriteFile(file, []byte("private"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckFile(file); err != nil {
+		t.Fatalf("private child inherited an unsafe ACL: %v", err)
+	}
+}
+
 func fixtureInstall(t *testing.T) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "installed agent")

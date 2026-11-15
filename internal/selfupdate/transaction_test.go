@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
@@ -112,6 +113,38 @@ func TestApplyRefusesModifiedInstalledFile(t *testing.T) {
 	defer lock.Close()
 	if _, _, _, err := Apply(inv, files); err == nil {
 		t.Fatal("modified installation was overwritten")
+	}
+}
+
+func TestApplyRefusesWritableProgramDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX directory mode bits are not available on Windows")
+	}
+	dir := t.TempDir()
+	for _, name := range installstate.ProgramNames() {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("original"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := installstate.Register(dir); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := installstate.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0770); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(dir); err != nil || info.Mode().Perm()&0020 == 0 {
+		t.Skip("filesystem does not preserve group-write mode bits")
+	}
+	files := make(map[string][]byte, len(inv.Files))
+	for _, file := range inv.Files {
+		files[file.Name] = []byte("replacement")
+	}
+	if _, _, _, err := Apply(inv, files); err == nil {
+		t.Fatal("updated files in a group-writable program directory")
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 )
@@ -99,6 +100,31 @@ func TestVerifySumAndWindowsArchiveMembers(t *testing.T) {
 	_ = bw.Close()
 	if _, err := unpack("windows", bad.Bytes()); err == nil {
 		t.Fatal("accepted unsafe archive member")
+	}
+	symlinkArchive := new(bytes.Buffer)
+	sw := zip.NewWriter(symlinkArchive)
+	for _, item := range []struct {
+		name string
+		mode os.FileMode
+		body string
+	}{
+		{"peerimeter-agent.exe", os.ModeSymlink | 0777, "target.exe"},
+		{"peerimeter-agent.NOTICES.txt", 0, "notices"},
+		{"wireguard.dll", 0, "dll"},
+	} {
+		header := &zip.FileHeader{Name: item.name}
+		header.SetMode(item.mode)
+		f, err := sw.CreateHeader(header)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = f.Write([]byte(item.body))
+	}
+	if err := sw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := unpack("windows", symlinkArchive.Bytes()); err == nil {
+		t.Fatal("accepted a symlink as a regular Windows package file")
 	}
 }
 

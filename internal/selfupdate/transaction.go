@@ -65,6 +65,10 @@ func Apply(inv installstate.Inventory, packageFiles map[string][]byte) (map[stri
 	}
 	for _, owned := range inv.Files {
 		path := installstate.ResourcePath(inv, owned)
+		if err := installstate.CheckDirectory(filepath.Dir(path)); err != nil {
+			cleanupStages()
+			return nil, nil, nil, fmt.Errorf("inspect installed %s directory: %w", owned.Name, err)
+		}
 		if err := installstate.CheckFile(path); err != nil {
 			cleanupStages()
 			return nil, nil, nil, fmt.Errorf("inspect installed %s: %w", owned.Name, err)
@@ -297,6 +301,9 @@ func validateJournal(inv installstate.Inventory, j journal) error {
 			return errors.New("update recovery journal contains an unknown program path")
 		}
 		seen[f.Name] = true
+		if err := installstate.CheckDirectory(filepath.Dir(f.Path)); err != nil {
+			return fmt.Errorf("unsafe update recovery directory: %w", err)
+		}
 		if filepath.Dir(f.Path) != filepath.Dir(f.Stage) || filepath.Dir(f.Path) != filepath.Dir(f.Backup) || !hasPrefix(filepath.Base(f.Stage), ".peerimeter-update-stage-") || !hasPrefix(filepath.Base(f.Backup), ".peerimeter-update-backup-") {
 			return errors.New("update recovery journal contains unsafe temporary paths")
 		}
