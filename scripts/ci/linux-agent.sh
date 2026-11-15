@@ -5,7 +5,6 @@ umask 077
 [[ $(id -u) -eq 0 ]] || { echo 'Run the Linux integration test as root.' >&2; exit 1; }
 AGENT=$(realpath "${AGENT:-${1:-./peerimeter-agent}}")
 [[ -x "$AGENT" ]] || { echo 'AGENT must name the built executable.' >&2; exit 1; }
-LEGACY_AGENT=$(realpath "${2:?Supply the pinned legacy agent binary as the second argument}")
 for dependency in ip ping python3 timeout systemctl runuser; do command -v "$dependency" >/dev/null; done
 operator=nobody
 [[ $(id -u "$operator") -ne 0 ]]
@@ -358,4 +357,4 @@ echo 'Passed: systemd install, boot enable, start, stop, second start and uninst
 
 # Fresh default/custom installs, live combined-layout migration and complete
 # removal use the actual operator installer and its protected inventory.
-bash "$(dirname "$0")/unix-layout-uninstall.sh" "$AGENT" "$LEGACY_AGENT"
+bash "$(dirname "$0")/unix-layout-uninstall.sh" "$AGENT"

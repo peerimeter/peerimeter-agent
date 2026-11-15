@@ -62,8 +62,13 @@ func prepareUninstall(t *testing.T) (string, installstate.Profile) {
 }
 func snapshotTree(t *testing.T, root string) map[string]string {
 	t.Helper()
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root = canonicalRoot
 	out := map[string]string{}
-	err := filepath.WalkDir(root, func(p string, d os.DirEntry, e error) error {
+	err = filepath.WalkDir(root, func(p string, d os.DirEntry, e error) error {
 		if e != nil {
 			return e
 		}

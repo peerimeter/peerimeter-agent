@@ -4,8 +4,7 @@
 set -Eeuo pipefail
 umask 077
 [[ $(id -u) -eq 0 ]]
-agent_source=${1:?usage: unix-layout-uninstall.sh CURRENT_AGENT LEGACY_AGENT}
-legacy_source=${2:?usage: unix-layout-uninstall.sh CURRENT_AGENT LEGACY_AGENT}
+agent_source=${1:?usage: unix-layout-uninstall.sh CURRENT_AGENT}
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 base=$(mktemp -d /tmp/pm-layout.XXXXXXXX)
 chmod 0711 "$base"
@@ -265,7 +264,7 @@ agent="$program/peerimeter-agent"
 legacy="$base/legacy combined state"
 new_config="$base/migrated configuration"
 new_runtime="$base/migrated runtime files"
-install -m 0755 "$legacy_source" "$program/legacy.new"
+install -m 0755 "$agent_source" "$program/legacy.new"
 mv -f "$program/legacy.new" "$agent"
 active="$agent"
 "$agent" service install --config "$source_config" --state-dir "$legacy" --operator "$operator"

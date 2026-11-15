@@ -42,9 +42,8 @@ var ErrBusy = errors.New("agent coordination lock is busy")
 
 // Guard is an OS-held exclusive lock; the lock automatically releases on crash.
 type Guard struct {
-	f      *os.File
-	legacy *os.File
-	dir    string
+	f   *os.File
+	dir string
 }
 
 func Acquire(dir string) (*Guard, error) {
@@ -66,17 +65,12 @@ func acquire(dir string, prepare func(string) error) (*Guard, error) {
 	if err != nil {
 		return nil, err
 	}
-	legacy, err := compatibilityLock(dir)
-	if err != nil {
-		f.Close()
-		return nil, err
-	}
-	return &Guard{f: f, legacy: legacy, dir: dir}, nil
+	return &Guard{f: f, dir: dir}, nil
 }
 
 // TryAcquireExisting never creates/chmods a path. A nil guard means the state
 // directory is absent, or Windows has no existing coordination file. A live
-// manager holding the current/legacy protocol lock prevents acquisition.
+// manager holding the current protocol lock prevents acquisition.
 func TryAcquireExisting(dir string) (*Guard, error) {
 	if _, err := os.Lstat(dir); os.IsNotExist(err) {
 		return nil, nil
@@ -90,19 +84,10 @@ func TryAcquireExisting(dir string) (*Guard, error) {
 	if f == nil {
 		return nil, nil
 	}
-	legacy, err := compatibilityLock(dir)
-	if err != nil {
-		f.Close()
-		return nil, err
-	}
-	return &Guard{f: f, legacy: legacy, dir: dir}, nil
+	return &Guard{f: f, dir: dir}, nil
 }
 func (g *Guard) Close() error {
-	var legacy error
-	if g.legacy != nil {
-		legacy = g.legacy.Close()
-	}
-	return errors.Join(g.f.Close(), legacy)
+	return g.f.Close()
 }
 
 // PrepareDirectory validates or creates an owner-controlled agent directory.

@@ -32,8 +32,8 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
@@ -80,8 +80,8 @@ jobs:
       AGENT_EXE: peerimeter-agent${{ matrix.os == 'windows-2022' && '.exe' || '' }}
       PROBE_EXE: pmprobe${{ matrix.os == 'windows-2022' && '.exe' || '' }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
@@ -93,12 +93,6 @@ jobs:
           if [ "$RUNNER_OS" != Linux ]; then
             go build -C tests/backendprobe -mod=readonly -o "$RUNNER_TEMP/$PROBE_EXE" .
           fi
-          if [ "$RUNNER_OS" != Windows ]; then
-            legacy_source=$(mktemp -d "$RUNNER_TEMP/legacy-source.XXXXXX")
-            git fetch --depth=1 origin 4246c6bea040bfa41a0bd506f0df501310a20367
-            git archive FETCH_HEAD | tar -x -C "$legacy_source"
-            go build -C "$legacy_source" -mod=readonly -o "$RUNNER_TEMP/legacy-agent" ./cmd/peerimeter-agent
-          fi
       - name: Prepare bundled signed Windows driver
         if: runner.os == 'Windows'
         shell: pwsh
@@ -107,12 +101,12 @@ jobs:
         if: runner.os == 'Linux'
         id: linux
         shell: bash
-        run: sudo bash scripts/ci/linux-agent.sh "$RUNNER_TEMP/$AGENT_EXE" "$RUNNER_TEMP/legacy-agent"
+        run: sudo bash scripts/ci/linux-agent.sh "$RUNNER_TEMP/$AGENT_EXE"
       - name: macOS agent traffic and launchd lifecycle
         if: runner.os == 'macOS'
         id: macos
         shell: bash
-        run: sudo bash scripts/ci/macos-agent.sh "$RUNNER_TEMP/$AGENT_EXE" "$RUNNER_TEMP/$PROBE_EXE" "$RUNNER_TEMP/legacy-agent"
+        run: sudo bash scripts/ci/macos-agent.sh "$RUNNER_TEMP/$AGENT_EXE" "$RUNNER_TEMP/$PROBE_EXE"
       - name: Windows agent traffic and SCM lifecycle
         if: runner.os == 'Windows'
         id: windows
@@ -172,8 +166,8 @@ jobs:
       GOTOOLCHAIN: local
       CGO_ENABLED: '0'
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
@@ -226,12 +220,12 @@ jobs:
       tag: ${{ steps.semver.outputs.next }}
       bump: ${{ steps.semver.outputs.bump }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - id: semver
         name: Calculate next version from Conventional Commits
-        uses: ietf-tools/semver-action@c90370b2958652d71c06a3484129a4d423a6d8a8 # v1.11.0
+        uses: ietf-tools/semver-action@46feaa27e7375da0e3d602721e9fb9573598b880 # v1.12.0
         with:
           token: ${{ github.token }}
           branch: main
@@ -251,10 +245,10 @@ jobs:
       RELEASE_TAG: ${{ needs.version.outputs.tag }}
       GOTOOLCHAIN: local
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false

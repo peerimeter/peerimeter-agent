@@ -49,6 +49,20 @@ func newSelfUpdateFixture(t *testing.T, serviceProfile bool) selfUpdateFixture {
 			t.Fatal(err)
 		}
 	}
+	canonicalize := func(path string) string {
+		canonical, err := installstate.Canonical(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return canonical
+	}
+	f.install = canonicalize(f.install)
+	f.doc = canonicalize(f.doc)
+	f.data = canonicalize(f.data)
+	f.lock = canonicalize(f.lock)
+	f.config = canonicalize(f.config)
+	f.state = canonicalize(f.state)
+	f.runtime = canonicalize(f.runtime)
 	for _, name := range installstate.ProgramNames() {
 		contents := []byte("old " + name)
 		dir := f.install

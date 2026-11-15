@@ -13,9 +13,12 @@ Phase 1 baseline. PR [#37](https://github.com/peerimeter/peerimeter-agent/pull/3
 contains the updater and is assigned to the requester. End-to-end orchestration
 tests now cover release retrieval, inventory-selected replacement, preserved
 profile data and paths, managed-service readiness, rollback, tamper refusal and
-interrupted-update recovery. Local targeted tests pass with `CGO_ENABLED=0`;
-the new tests still need native CI and independent review before this work is
-accepted. No released updater is claimed.
+interrupted-update recovery. Old-binary compatibility was removed from the Unix
+control lock and native integration workflow; the legacy data-layout migration
+is still tested using the current binary. Local unit, vet, build and installed
+binary E2E checks pass with `CGO_ENABLED=0`. macOS CI exposed temporary-path
+canonicalization assumptions in tests, now fixed; native CI and independent
+review must rerun before this work is accepted. No released updater is claimed.
 
 ## Phase checklist
 
