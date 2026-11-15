@@ -81,7 +81,7 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 		return fmt.Errorf("another update or uninstall is already using this installation: %w", err)
 	}
 	defer updateLock.Close()
-	recovered, err := recoverInterruptedUpdate(installDir, inv)
+	recovered, err := recoverInterruptedUpdate(installDir, inv, goos)
 	if err != nil {
 		return err
 	}
@@ -271,7 +271,7 @@ func (s updateInventorySnapshot) matches(inv installstate.Inventory) bool {
 	return s.ID == inv.ID && s.InstallDir == inv.InstallDir && s.DataDir == inv.DataDir && s.DocDir == inv.DocDir && s.LockDir == inv.LockDir && slices.Equal(s.Files, inv.Files) && slices.Equal(s.Profiles, inv.Profiles)
 }
 
-func recoverInterruptedUpdate(installDir string, inv installstate.Inventory) (bool, error) {
+func recoverInterruptedUpdate(installDir string, inv installstate.Inventory, goos string) (bool, error) {
 	_, err := os.Lstat(filepath.Join(inv.LockDir, selfupdate.JournalFilename))
 	if os.IsNotExist(err) {
 		return false, nil
@@ -279,7 +279,7 @@ func recoverInterruptedUpdate(installDir string, inv installstate.Inventory) (bo
 	if err != nil {
 		return false, err
 	}
-	if runtime.GOOS == "windows" {
+	if goos == "windows" {
 		return true, scheduleWindowsRecovery(inv)
 	}
 	var profile *installstate.Profile
