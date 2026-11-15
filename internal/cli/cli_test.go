@@ -133,6 +133,13 @@ func TestErrorRedaction(t *testing.T) {
 	}
 }
 
+func TestSelfUpdateHasExplicitHelp(t *testing.T) {
+	code, out, stderr := invoke(t, "update", "--help")
+	if code != 0 || stderr != "" || !strings.Contains(out, "latest stable release") || !strings.Contains(out, "SHA256SUMS") {
+		t.Fatalf("unexpected update help: %d %q %s", code, out, stderr)
+	}
+}
+
 func TestConfigLoadErrorDiagnostics(t *testing.T) {
 	for _, format := range []string{"console", "text", "json"} {
 		t.Run(format, func(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
+	"github.com/peerimeter/peerimeter-agent/internal/selfupdate"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -113,6 +114,26 @@ func TestDryRunIsReadOnlyAndListsManagedIdentity(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("dry-run omitted installed private key")
+	}
+}
+
+func TestUninstallRefusesPendingSelfUpdateRecovery(t *testing.T) {
+	dir, _ := prepareUninstall(t)
+	inv, err := installstate.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(inv.LockDir, selfupdate.JournalFilename)
+	if err := os.WriteFile(path, []byte("pending"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	err = Execute(context.Background(), Options{InstallDir: dir}, &out)
+	if err == nil || !strings.Contains(err.Error(), "recovered with `peerimeter-agent update`") {
+		t.Fatalf("uninstall did not preserve pending recovery files: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("pending journal was removed: %v", err)
 	}
 }
 func TestFullRemovalPreservesUnrelatedAndSupportsRetry(t *testing.T) {

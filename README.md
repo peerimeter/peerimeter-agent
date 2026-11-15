@@ -136,39 +136,36 @@ a local ZIP with `-Archive` and `-SHA256`. Installers replace program files
 only; they preserve configuration and keys. Installation ancestor owner and
 permission checks are disabled; symbolic links and reparse points remain
 rejected. Key files and managed inventory files retain their private-file checks.
-Automatic self-update remains Phase 7. Recommended design: add an explicit
-`peerimeter-agent update` command; startup should notify users but never replace
-the running agent automatically.
+`peerimeter-agent update` explicitly updates a registered installation to the
+latest stable release. It selects the package for the current OS and CPU, then
+checks the package against the release `SHA256SUMS` file downloaded over
+HTTPS. This is an integrity check using the GitHub release trust channel; it
+does not claim a detached release signature. Startup checks may notify about an
+update, but never replace a running agent.
 
-1. Resolve the latest stable release and select the asset matching the exact OS
-and architecture using the installer naming rules.
-2. Download to a private staging directory beside the installation. Verify the
-asset with `SHA256SUMS` before changing installed files. Since the checksum
-manifest currently shares the HTTPS release trust channel, add a detached
-signature verified by a public key embedded in the agent before treating that
-manifest as authenticated update metadata. The signed manifest must name the
-selected release tag, and the agent must reject it unless that tag matches the
-release being installed; this prevents replay of a valid signature for an older
-release.
-3. Read the protected installation inventory and update only files owned by
-that installation. Preserve configs, keys, service registration and state;
-require the existing system privilege for system-wide installs.
-4. On Linux/macOS, stage on the same filesystem and atomically replace the
-executable while retaining the old binary. On Windows, use a bounded helper
-after the agent/service exits to replace the locked executable and DLL, keeping
-backups of both the old executable and every replaced DLL. Return a protected
-receipt reporting success or remaining work.
-5. Keep a protected update journal and old binary until the new agent starts
-and reports ready through the local control endpoint within a timeout. If it
-exits early or misses the timeout, stop it, restore the old executable and any
-replaced DLLs, then restart the previous version. On the next launch, recover
-any interrupted update from the journal. Delete backups only after readiness is
-recorded; a successful `version` command alone is not a sufficient health
-check. On Windows, retain the existing WireGuardNT hash and Authenticode checks.
+The updater verifies the protected installation inventory and each recorded
+program-file hash before making changes. It replaces only those inventoried
+files, preserving the recorded install, documentation, data and lock
+directories and all configuration, keys, state, runtime paths and service
+profiles. A running foreground profile prevents an update. For managed
+services, it stops the service, updates the program files, starts the service
+and waits for the local status endpoint. If the updated service does not become
+ready, it restores the previous files and inventory hashes and restarts the
+previous service. The update needs the same filesystem and service privileges
+as the existing installation. On Windows, a helper launched from the verified
+new package replaces the running executable after the update command exits;
+the bundled WireGuardNT DLL must remain byte-for-byte identical and retains its
+existing pinned hash and Authenticode checks.
 
-This keeps application explicit, follows installer ownership rules, and makes
-interrupted updates recoverable. Until self-update is implemented, install the
-new release with the documented platform installer.
+The update replaces program files only; it does not migrate or delete
+installation data. Linux and macOS finish the update synchronously. Windows
+reports that the helper has started; the helper completes replacement and
+service readiness checks in the background. Use `peerimeter-agent status` to
+confirm the service is running. The updater records each multi-file replacement
+in the install lock directory and recovers it before a later `update` attempt.
+Uninstall refuses to proceed while recovery is pending.
+Recovery is operator-triggered rather than an automatic boot action, and Phase
+7 remains in progress until the native recovery paths have been verified.
 
 ### Publishing a release
 
@@ -375,10 +372,10 @@ peerimeter-agent status --watch --json
 Cobra provides contextual `--help` and `completion bash|zsh|fish|powershell`.
 Running `peerimeter-agent` without arguments prints the version banner first,
 then the help, and checks GitHub Releases. When a newer stable release is
-available, it shows a boxed update notice with the platform's install command.
-`peerimeter-agent check-update` runs the same check explicitly and supports
-`--json` (`current_version`, `latest_version`, `update_available`, and, when
-available, the release URL and platform install command);
+available, it shows a boxed update notice recommending `peerimeter-agent
+update`. `peerimeter-agent check-update` runs the same check explicitly and
+supports `--json` (`current_version`, `latest_version`, `update_available`, and,
+when available, the release URL and `update_command`);
 `--help` never makes a network request. The automatic check has a short timeout
 and does not prevent help from appearing when GitHub is unavailable.
 Commands live in separate files under `internal/cli` (`root.go`, `run.go`,

@@ -476,6 +476,24 @@ func save(inv Inventory) error {
 	return WritePrivateWithPolicy(filepath.Join(inv.DataDir, Filename), append(data, '\n'), inv.AllowInsecureInstallDir)
 }
 
+// UpdateProgramHashesLocked records hashes for existing inventoried files.
+// The caller must hold Lock(inv.InstallDir), and should call this only after
+// replacing those files. No profile paths or ownership fields are changed.
+func UpdateProgramHashesLocked(inv Inventory, hashes map[string]string) error {
+	if len(hashes) != len(inv.Files) {
+		return errors.New("updated program hashes do not match the installation inventory")
+	}
+	for i := range inv.Files {
+		digest, ok := hashes[inv.Files[i].Name]
+		decoded, err := hex.DecodeString(digest)
+		if !ok || err != nil || len(decoded) != sha256.Size {
+			return errors.New("updated program hash is invalid")
+		}
+		inv.Files[i].SHA256 = strings.ToLower(digest)
+	}
+	return save(inv)
+}
+
 // Lock serializes inventory mutations. Dry-run must never call this function.
 func Lock(dir string) (io.Closer, error) {
 	inv, err := Load(dir)
