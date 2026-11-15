@@ -38,6 +38,7 @@ type removalPlan struct {
 	ParentPID   int                    `json:"parent_pid"`
 	Inventory   string                 `json:"inventory"`
 	Lock        string                 `json:"lock"`
+	UpdateLock  string                 `json:"update_lock,omitempty"`
 	DataLock    string                 `json:"data_lock,omitempty"`
 	Files       []removalFile          `json:"files"`
 	Directories []string               `json:"directories"`
@@ -87,7 +88,7 @@ func resources(p installstate.Profile) []removalFile {
 	return files
 }
 func makePlan(inv installstate.Inventory) removalPlan {
-	p := removalPlan{Version: 1, InstallID: inv.ID, InstallDir: inv.InstallDir, ParentPID: os.Getpid(), Inventory: filepath.Join(inv.DataDir, installstate.Filename), Lock: filepath.Join(inv.LockDir, installstate.LockFilename), Profiles: inv.Profiles}
+	p := removalPlan{Version: 1, InstallID: inv.ID, InstallDir: inv.InstallDir, ParentPID: os.Getpid(), Inventory: filepath.Join(inv.DataDir, installstate.Filename), Lock: filepath.Join(inv.LockDir, installstate.LockFilename), UpdateLock: filepath.Join(inv.LockDir, selfupdate.UpdateLockFilename), Profiles: inv.Profiles}
 	if inv.DataDir != inv.LockDir {
 		p.DataLock = filepath.Join(inv.DataDir, installstate.LockFilename)
 	}
@@ -411,6 +412,7 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 			r.Paths = append(r.Paths, f.Path)
 		}
 		r.Paths = append(r.Paths, plan.Lock, plan.Inventory)
+		r.Paths = append(r.Paths, plan.UpdateLock)
 		if plan.DataLock != "" {
 			r.Paths = append(r.Paths, plan.DataLock)
 		}
@@ -421,6 +423,16 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		}
 		return json.NewEncoder(out).Encode(r)
 	}
+	updateLock, err := selfupdate.LockUpdate(inv)
+	if err != nil {
+		return fmt.Errorf("self-update is using this installation: %w", err)
+	}
+	updateLockHeld := true
+	defer func() {
+		if updateLockHeld {
+			_ = updateLock.Close()
+		}
+	}()
 	lock, err := installstate.Lock(dir)
 	if err != nil {
 		return err
@@ -624,6 +636,15 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		return err
 	} else if removed {
 		removedFiles = append(removedFiles, plan.Inventory)
+	}
+	if err := updateLock.Close(); err != nil {
+		return err
+	}
+	updateLockHeld = false
+	if removed, err := removeTracked(plan.UpdateLock); err != nil {
+		return err
+	} else if removed {
+		removedFiles = append(removedFiles, plan.UpdateLock)
 	}
 	for _, d := range plan.Directories {
 		if err := removeEmptyDirectory(d); err != nil {

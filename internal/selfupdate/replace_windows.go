@@ -41,6 +41,9 @@ func replaceFile(stage, path, backup string) error {
 	if err := source.Close(); err != nil {
 		return err
 	}
+	if err := syncDirectory(filepath.Dir(path)); err != nil {
+		return err
+	}
 	from, err := windows.UTF16PtrFromString(stage)
 	if err != nil {
 		return err

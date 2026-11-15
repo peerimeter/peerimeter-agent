@@ -2,7 +2,7 @@ package cli
 
 import (
 	"encoding/json"
-	"errors"
+	"fmt"
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
 	"github.com/spf13/cobra"
 	"os"
@@ -33,7 +33,7 @@ func newRegisterInstallationCommand(app *application) *cobra.Command {
 			same = strings.EqualFold(actual, requested)
 		}
 		if !same {
-			return errors.New("installation registration must run from the selected installed program directory")
+			return fmt.Errorf("installation registration must run from the selected installed program directory (executable %q, selected %q)", actual, requested)
 		}
 		if err := installstate.RegisterWithDirectories(dir, docDir, dataDir, lockDir, allowInsecureInstallDir); err != nil {
 			return err

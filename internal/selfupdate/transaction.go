@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -13,6 +14,13 @@ import (
 )
 
 const JournalFilename = ".peerimeter-agent.update-journal.json"
+const UpdateLockFilename = ".peerimeter-agent.update.lock"
+
+// LockUpdate owns an update transaction across inventory-lock release windows
+// such as service restart and readiness verification.
+func LockUpdate(inv installstate.Inventory) (io.Closer, error) {
+	return installstate.LockNamed(inv.LockDir, UpdateLockFilename, inv.AllowInsecureInstallDir)
+}
 
 type journal struct {
 	Version   int           `json:"version"`
@@ -30,8 +38,8 @@ type journalFile struct {
 }
 
 // Apply stages every owned program file beside its destination, writes a
-// private recovery journal, then replaces files. The caller must hold the
-// installstate lock until it records the returned hashes.
+// private recovery journal, then replaces files. The caller must hold both
+// the update ownership lock and installstate lock through hash recording.
 func Apply(inv installstate.Inventory, packageFiles map[string][]byte) (map[string]string, func() error, func() error, error) {
 	if len(packageFiles) != len(inv.Files) {
 		return nil, nil, nil, errors.New("release package does not match the installed program file inventory")
@@ -136,7 +144,13 @@ func Apply(inv installstate.Inventory, packageFiles map[string][]byte) (map[stri
 		cleanupStages()
 		return nil, nil, nil, err
 	}
-	rollback := func() error { return recoverJournal(inv, &j, false) }
+	rollback := func() error {
+		current, err := installstate.Load(inv.InstallDir)
+		if err != nil {
+			return err
+		}
+		return recoverJournal(current, &j)
+	}
 	for _, f := range j.Files {
 		if err := replaceFile(f.Stage, f.Path, f.Backup); err != nil {
 			return nil, nil, nil, errors.Join(fmt.Errorf("replace installed %s: %w", f.Name, err), rollback())
@@ -172,8 +186,8 @@ func Apply(inv installstate.Inventory, packageFiles map[string][]byte) (map[stri
 }
 
 // RecoverLocked completes cleanup after a committed update or restores the
-// previous files after an interrupted transaction. The caller holds the
-// installstate lock; profile metadata and paths are never rewritten.
+// previous files after an interrupted transaction. The caller holds both the
+// update ownership lock and installstate lock; profile paths are preserved.
 func RecoverLocked(inv installstate.Inventory) error {
 	path := filepath.Join(inv.LockDir, JournalFilename)
 	if err := installstate.CheckPrivateFile(path); err != nil {
@@ -207,13 +221,13 @@ func RecoverLocked(inv installstate.Inventory) error {
 		}
 		return syncDirectory(inv.LockDir)
 	}
-	if err := recoverJournal(inv, &j, true); err != nil {
+	if err := recoverJournal(inv, &j); err != nil {
 		return err
 	}
 	return nil
 }
 
-func recoverJournal(inv installstate.Inventory, j *journal, saveOldHashes bool) error {
+func recoverJournal(inv installstate.Inventory, j *journal) error {
 	if err := validateJournal(inv, *j); err != nil {
 		return err
 	}
@@ -242,13 +256,16 @@ func recoverJournal(inv installstate.Inventory, j *journal, saveOldHashes bool) 
 	if err := errors.Join(failures...); err != nil {
 		return err
 	}
-	if saveOldHashes {
-		if len(oldHashes) != len(inv.Files) {
-			return errors.New("update recovery journal is incomplete")
-		}
-		if err := installstate.UpdateProgramHashesLocked(inv, oldHashes); err != nil {
+	if len(oldHashes) != len(inv.Files) {
+		return errors.New("update recovery journal is incomplete")
+	}
+	for _, f := range j.Files {
+		if err := syncDirectory(filepath.Dir(f.Path)); err != nil {
 			return err
 		}
+	}
+	if err := installstate.UpdateProgramHashesLocked(inv, oldHashes); err != nil {
+		return err
 	}
 	if err := cleanupJournalFiles(*j); err != nil {
 		return err

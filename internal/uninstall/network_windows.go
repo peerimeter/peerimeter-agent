@@ -191,6 +191,7 @@ try {
     [IO.File]::WriteAllText($Receipt,(@{state='pending';helper_ready=$true;remaining=@()} | ConvertTo-Json),[Text.UTF8Encoding]::new($false))
     $parent = Get-Process -Id $p.parent_pid -ErrorAction SilentlyContinue
     if ($parent -and -not $parent.WaitForExit(30000)) { throw 'Initiating agent did not exit within 30 seconds; files preserved' }
+    Lock-Existing $p.update_lock
     Lock-Existing $p.lock
     if ($p.data_lock) { Lock-Existing $p.data_lock }
     foreach ($profile in $p.profiles) {
@@ -224,6 +225,7 @@ try {
     Remove-Leaf $p.lock
     if ($p.data_lock) { Remove-Leaf $p.data_lock }
     Remove-Leaf $p.inventory
+    if ($p.update_lock) { Remove-Leaf $p.update_lock }
     foreach ($h in $handles) { $h.Dispose() }; $handles.Clear()
     foreach ($dir in $p.directories) {
         if (Test-Path -LiteralPath $dir) {
@@ -236,7 +238,7 @@ try {
 finally {
     foreach ($h in $handles) { $h.Dispose() }
     foreach ($f in $p.files) { if (Exists $f.path) { $remaining += $f.path } }
-    foreach ($f in @($p.inventory,$p.lock,$p.data_lock)) { if ($f -and (Exists $f)) { $remaining += $f } }
+    foreach ($f in @($p.inventory,$p.lock,$p.data_lock,$p.update_lock)) { if ($f -and (Exists $f)) { $remaining += $f } }
     try { Remove-Item -LiteralPath $Plan -Force; Remove-Item -LiteralPath $PSCommandPath -Force; Remove-Item -LiteralPath $work -Force } catch {
         $state = 'failed'; $remaining += $work; $message += ' Temporary helper cleanup was incomplete.'
     }

@@ -101,6 +101,11 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 			}
 		}()
 	}
+	updateLock, err := acquireWindowsUpdateLock(ctx, inv, 45*time.Second)
+	if err != nil {
+		return err
+	}
+	defer updateLock.Close()
 	if !pathWithin(inv.LockDir, transactionDir) {
 		return errors.New("update transaction is outside the recorded lock directory")
 	}
@@ -163,7 +168,6 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 			return errors.New("staged update attempted to replace the pinned WireGuardNT DLL")
 		}
 	}
-	var oldHashes map[string]string
 	var newHashes map[string]string
 	var rollback func() error
 	var commit func() error
@@ -192,10 +196,6 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 	var lastErr error
 	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
-		oldHashes = make(map[string]string, len(inv.Files))
-		for _, f := range inv.Files {
-			oldHashes[f.Name] = f.SHA256
-		}
 		newHashes, rollback, commit, lastErr = selfupdate.Apply(inv, files)
 		if lastErr == nil {
 			if err := installstate.UpdateProgramHashesLocked(inv, newHashes); err != nil {
@@ -224,19 +224,19 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 		return fmt.Errorf("Windows update helper could not replace installed files: %w", lastErr)
 	}
 	if err := lock.Close(); err != nil {
-		return helperRollback(installDir, oldHashes, rollback, profileValue(profile), err)
+		return helperRollback(installDir, rollback, profileValue(profile), err)
 	}
 	if profile != nil {
 		serviceRestartAttempted = true
 		if err := startManagedService(*profile); err != nil {
-			return helperRollback(installDir, oldHashes, rollback, *profile, err)
+			return helperRollback(installDir, rollback, *profile, err)
 		}
 		if err := waitForService(ctx, profile.RuntimeDir); err != nil {
 			_ = service.Manage("stop", service.Config{ConfigDirectory: profile.ConfigDir, StateDirectory: profile.StateDir, RuntimeDirectory: profile.RuntimeDir})
-			return helperRollback(installDir, oldHashes, rollback, *profile, err)
+			return helperRollback(installDir, rollback, *profile, err)
 		}
 	} else if err := verifyUpdatedBinary(ctx, filepath.Join(installDir, "peerimeter-agent.exe"), manifest.Version); err != nil {
-		return helperRollback(installDir, oldHashes, rollback, installstate.Profile{}, err)
+		return helperRollback(installDir, rollback, installstate.Profile{}, err)
 	}
 	if err := commit(); err != nil {
 		return err
@@ -251,21 +251,36 @@ func profileValue(profile *installstate.Profile) installstate.Profile {
 	return *profile
 }
 
-func helperRollback(dir string, old map[string]string, rollback func() error, profile installstate.Profile, cause error) error {
-	err := rollback()
+func helperRollback(dir string, rollback func() error, profile installstate.Profile, cause error) error {
 	lock, lockErr := installstate.Lock(dir)
-	if lockErr == nil {
-		current, loadErr := installstate.Load(dir)
-		if loadErr == nil {
-			loadErr = installstate.UpdateProgramHashesLocked(current, old)
-		}
-		lockErr = errors.Join(loadErr, lock.Close())
+	if lockErr != nil {
+		return errors.Join(cause, fmt.Errorf("automatic rollback was incomplete: %w", lockErr))
 	}
-	err = errors.Join(err, lockErr)
+	err := errors.Join(rollback(), lock.Close())
 	if profile.Service {
 		err = errors.Join(err, startManagedService(profile), waitForService(context.Background(), profile.RuntimeDir))
 	}
 	return errors.Join(cause, err)
+}
+
+func acquireWindowsUpdateLock(ctx context.Context, inv installstate.Inventory, timeout time.Duration) (io.Closer, error) {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		lock, err := selfupdate.LockUpdate(inv)
+		if err == nil {
+			return lock, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-deadline.C:
+			return nil, fmt.Errorf("wait for update ownership lock: %w", err)
+		case <-ticker.C:
+		}
+	}
 }
 
 func knownFileName(inv installstate.Inventory, name string) bool {

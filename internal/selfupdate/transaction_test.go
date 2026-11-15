@@ -34,6 +34,15 @@ func TestApplyUpdatesOnlyInventoryFilesAndCanRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	updateLock, err := LockUpdate(inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer updateLock.Close()
+	lock, err := installstate.Lock(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	hashes, rollback, commit, err := Apply(inv, newFiles)
 	if err != nil {
 		t.Fatal(err)
@@ -64,6 +73,9 @@ func TestApplyUpdatesOnlyInventoryFilesAndCanRollback(t *testing.T) {
 	if err := rollback(); err == nil {
 		t.Fatal("rollback succeeded after committed backups were removed")
 	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestApplyRefusesModifiedInstalledFile(t *testing.T) {
@@ -80,6 +92,11 @@ func TestApplyRefusesModifiedInstalledFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	updateLock, err := LockUpdate(inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer updateLock.Close()
 	path := filepath.Join(dir, installstate.ProgramNames()[0])
 	if err := os.WriteFile(path, []byte("modified"), 0700); err != nil {
 		t.Fatal(err)
@@ -88,6 +105,11 @@ func TestApplyRefusesModifiedInstalledFile(t *testing.T) {
 	for _, f := range inv.Files {
 		files[f.Name] = []byte("replacement")
 	}
+	lock, err := installstate.Lock(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
 	if _, _, _, err := Apply(inv, files); err == nil {
 		t.Fatal("modified installation was overwritten")
 	}
@@ -109,10 +131,23 @@ func TestRecoverLockedRestoresInterruptedUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := Apply(inv, files); err != nil {
+	updateLock, err := LockUpdate(inv)
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer updateLock.Close()
 	lock, err := installstate.Lock(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := Apply(inv, files); err != nil {
+		_ = lock.Close()
+		t.Fatal(err)
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	lock, err = installstate.Lock(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
