@@ -2,6 +2,9 @@
 
 package service
 
-import "os"
+import (
+	"context"
+	"os"
+)
 
-func acquireLegacyManagerLock(string) (*os.File, error) { return nil, nil }
+func acquireLegacyManagerLock(context.Context, string) (*os.File, error) { return nil, nil }

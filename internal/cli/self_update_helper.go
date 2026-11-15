@@ -243,13 +243,11 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 	}
 	defer updateLock.Close()
 	serviceRestartAttempted := false
-	if profile != nil {
-		defer func() {
-			if !serviceRestartAttempted {
-				_ = startManagedService(*profile)
-			}
-		}()
-	}
+	defer func() {
+		if !serviceRestartAttempted && profile != nil {
+			_ = startManagedService(*profile)
+		}
+	}()
 	if !pathWithin(inv.LockDir, transactionDir) {
 		return errors.New("update transaction is outside the recorded lock directory")
 	}

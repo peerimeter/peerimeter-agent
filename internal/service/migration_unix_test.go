@@ -120,7 +120,9 @@ func TestUnixMigrationRefusesLiveLegacyManager(t *testing.T) {
 	if err := unix.Flock(int(legacyLock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		t.Fatal(err)
 	}
-	err = migrate(cfg, func(Config) error { return nil }, func(Config) error { return nil }, func(...string) error { return nil })
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	err = migrateWithContext(ctx, cfg, func(Config) error { return nil }, func(Config) error { return nil }, func(...string) error { return nil })
 	if err == nil || !strings.Contains(err.Error(), "legacy agent is still using persistent state") {
 		t.Fatalf("migration should refuse a live legacy manager, got %v", err)
 	}
@@ -128,6 +130,37 @@ func TestUnixMigrationRefusesLiveLegacyManager(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(cfg.StateDirectory, name)); err != nil {
 			t.Fatalf("migration removed legacy %s while manager lock was held: %v", name, err)
 		}
+	}
+}
+
+func TestUnixMigrationRetriesLegacyManagerLock(t *testing.T) {
+	cfg, _, _ := migrationFixture(t)
+	legacyLock, err := os.OpenFile(filepath.Join(cfg.StateDirectory, "agent.lock"), os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Flock(int(legacyLock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		legacyLock.Close()
+		t.Fatal(err)
+	}
+	released := make(chan struct{})
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		_ = legacyLock.Close()
+		close(released)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	acquired, err := acquireLegacyManagerLock(ctx, cfg.StateDirectory)
+	<-released
+	if err != nil {
+		t.Fatalf("legacy lock retry did not acquire the released lock: %v", err)
+	}
+	if acquired == nil {
+		t.Fatal("migration returned no legacy lock after retry")
+	}
+	if err := acquired.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 func TestUnixMigrationConflictsPreserveWorkingLegacyRegistration(t *testing.T) {
