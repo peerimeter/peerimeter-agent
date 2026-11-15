@@ -127,7 +127,7 @@ func TestSelfUpdateBinaryEndToEnd(t *testing.T) {
 			serverMu.Lock()
 			corruptSums = test.corrupt
 			serverMu.Unlock()
-			cmd := exec.CommandContext(ctx, filepath.Join(install.installDir, executableName()), "update")
+			cmd := exec.CommandContext(ctx, filepath.Join(install.installDir, executableName()), "self-update", "--yes")
 			cmd.Env = withTestEnv(os.Environ(), "SSL_CERT_FILE", caPath)
 			cmd.Env = withTestEnv(cmd.Env, "NO_COLOR", "1")
 			output, updateErr := cmd.CombinedOutput()
@@ -193,7 +193,7 @@ func TestSelfUpdateBinaryEndToEnd(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
-			cmd := exec.CommandContext(ctx, filepath.Join(install.installDir, executableName()), "update")
+			cmd := exec.CommandContext(ctx, filepath.Join(install.installDir, executableName()), "self-update", "--yes")
 			cmd.Env = withTestEnv(os.Environ(), "SSL_CERT_FILE", caPath)
 			cmd.Env = withTestEnv(cmd.Env, "NO_COLOR", "1")
 			output, err := cmd.CombinedOutput()
@@ -236,7 +236,7 @@ func TestSelfUpdateBinaryEndToEnd(t *testing.T) {
 		install := prepareE2EInstallation(t, oldBinary, notices, badRelease)
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, filepath.Join(install.installDir, executableName()), "update")
+		cmd := exec.CommandContext(ctx, filepath.Join(install.installDir, executableName()), "self-update", "--yes")
 		cmd.Env = withTestEnv(os.Environ(), "SSL_CERT_FILE", caPath)
 		cmd.Env = withTestEnv(cmd.Env, "NO_COLOR", "1")
 		output, updateErr := cmd.CombinedOutput()

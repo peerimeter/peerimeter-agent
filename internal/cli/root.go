@@ -19,6 +19,8 @@ import (
 
 type application struct {
 	out        io.Writer
+	promptOut  io.Writer
+	in         io.Reader
 	backend    platform.Backend
 	ran        bool
 	debug      bool
@@ -58,7 +60,7 @@ func Execute(ctx context.Context, args []string, out, errOut io.Writer) int {
 	return execute(ctx, args, out, errOut, platform.Native())
 }
 func execute(ctx context.Context, args []string, out, errOut io.Writer, backend platform.Backend) int {
-	app := &application{out: out, backend: backend}
+	app := &application{out: out, promptOut: errOut, in: os.Stdin, backend: backend}
 	root := newRootCommand(app)
 	root.SetArgs(args)
 	err := root.ExecuteContext(ctx)

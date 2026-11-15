@@ -42,7 +42,7 @@ func TestCheckUpdateJSON(t *testing.T) {
 			if result.CurrentVersion != Version || result.LatestVersion != test.tag || result.UpdateAvailable != test.wantUpdate {
 				t.Fatalf("unexpected update result: %+v", result)
 			}
-			if test.wantUpdate && (result.ReleaseURL != "https://example.test/release" || result.UpdateCommand != "peerimeter-agent update") {
+			if test.wantUpdate && (result.ReleaseURL != "https://example.test/release" || result.UpdateCommand != "peerimeter-agent self-update") {
 				t.Fatalf("update result omitted release/install details: %+v", result)
 			}
 			if !test.wantUpdate && (result.ReleaseURL != "" || result.UpdateCommand != "") {
@@ -62,7 +62,7 @@ func TestCheckUpdateConsoleBoxRecommendsSelfUpdate(t *testing.T) {
 	if err := checkForUpgradeAt(context.Background(), &out, "never", true, false, server.URL, server.Client()); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "Update available") || !strings.Contains(out.String(), "peerimeter-agent update") {
+	if !strings.Contains(out.String(), "Update available") || !strings.Contains(out.String(), "peerimeter-agent self-update") {
 		t.Fatalf("update alert omitted upgrade/install instructions: %s", out.String())
 	}
 }

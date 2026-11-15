@@ -108,6 +108,7 @@ func newSelfUpdateFixture(t *testing.T, serviceProfile bool) selfUpdateFixture {
 
 func (f selfUpdateFixture) deps(tag string, manage updateServiceManager, wait updateServiceWaiter) selfUpdateDeps {
 	return selfUpdateDeps{
+		latest: func(context.Context) (string, error) { return tag, nil },
 		fetch: func(_ context.Context, _ *http.Client, goos, goarch string) (string, map[string][]byte, error) {
 			if goos != "linux" || goarch != runtime.GOARCH {
 				return "", nil, fmt.Errorf("unexpected target %s/%s", goos, goarch)
@@ -126,15 +127,25 @@ func (f selfUpdateFixture) deps(tag string, manage updateServiceManager, wait up
 		},
 		manage: manage,
 		wait:   wait,
+		yes:    true,
 	}
 }
 
 func TestSelfUpdateIntegrationUpdatesOwnedFilesAndPreservesProfileData(t *testing.T) {
 	f := newSelfUpdateFixture(t, false)
 	var output bytes.Buffer
-	err := selfUpdateAt(context.Background(), &output, true, f.install, "v1.0.0", "linux", runtime.GOARCH, f.deps("v1.2.0", nil, nil))
+	deps := f.deps("v1.2.0", nil, nil)
+	confirmCalls := 0
+	deps.confirm = func(string, string) (bool, error) {
+		confirmCalls++
+		return false, nil
+	}
+	err := selfUpdateAt(context.Background(), &output, true, f.install, "v1.0.0", "linux", runtime.GOARCH, deps)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if confirmCalls != 0 {
+		t.Fatal("--yes update requested confirmation")
 	}
 	var result selfUpdateResult
 	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
@@ -171,6 +182,81 @@ func TestSelfUpdateIntegrationUpdatesOwnedFilesAndPreservesProfileData(t *testin
 	}
 	if _, err := os.Stat(filepath.Join(f.lock, selfupdate.JournalFilename)); !os.IsNotExist(err) {
 		t.Fatalf("committed update journal remains: %v", err)
+	}
+}
+
+func TestSelfUpdateDeclinedBeforeFetchingPackage(t *testing.T) {
+	f := newSelfUpdateFixture(t, false)
+	deps := f.deps("v1.2.0", nil, nil)
+	deps.yes = false
+	fetches := 0
+	fetch := deps.fetch
+	deps.fetch = func(ctx context.Context, client *http.Client, goos, goarch string) (string, map[string][]byte, error) {
+		fetches++
+		return fetch(ctx, client, goos, goarch)
+	}
+	var output bytes.Buffer
+	deps.confirm = func(current, latest string) (bool, error) {
+		if current != "v1.0.0" || latest != "v1.2.0" {
+			t.Fatalf("confirmation versions = %s → %s", current, latest)
+		}
+		return false, nil
+	}
+	err := selfUpdateAt(context.Background(), &output, false, f.install, "v1.0.0", "linux", runtime.GOARCH, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fetches != 0 {
+		t.Fatalf("declined update fetched package %d times", fetches)
+	}
+	if !strings.Contains(output.String(), "Current version: v1.0.0") || !strings.Contains(output.String(), "Latest version: v1.2.0") {
+		t.Fatalf("update output omitted compared versions: %s", output.String())
+	}
+	if !strings.Contains(output.String(), "Update cancelled.") {
+		t.Fatalf("declined update was not reported: %s", output.String())
+	}
+}
+
+func TestSelfUpdateAcceptedAfterConfirmation(t *testing.T) {
+	f := newSelfUpdateFixture(t, false)
+	deps := f.deps("v1.2.0", nil, nil)
+	deps.yes = false
+	confirmed := false
+	deps.confirm = func(current, latest string) (bool, error) {
+		confirmed = true
+		if current != "v1.0.0" || latest != "v1.2.0" {
+			t.Fatalf("confirmation versions = %s → %s", current, latest)
+		}
+		return true, nil
+	}
+	var output bytes.Buffer
+	if err := selfUpdateAt(context.Background(), &output, false, f.install, "v1.0.0", "linux", runtime.GOARCH, deps); err != nil {
+		t.Fatal(err)
+	}
+	if !confirmed || !strings.Contains(output.String(), "Current version: v1.0.0") || !strings.Contains(output.String(), "Latest version: v1.2.0") || !strings.Contains(output.String(), "Updated Peerimeter Agent v1.0.0 → v1.2.0.") {
+		t.Fatalf("confirmed update did not show versions and complete: confirmed=%t output=%s", confirmed, output.String())
+	}
+}
+
+func TestConfirmSelfUpdateAcceptsOnlyExplicitYes(t *testing.T) {
+	for _, test := range []struct {
+		answer string
+		want   bool
+	}{
+		{answer: "y\n", want: true},
+		{answer: "YES\n", want: true},
+		{answer: "n\n"},
+		{answer: "\n"},
+		{answer: ""},
+	} {
+		var prompt bytes.Buffer
+		got, err := confirmSelfUpdate(strings.NewReader(test.answer), &prompt, "v1.0.0", "v1.2.0")
+		if err != nil || got != test.want {
+			t.Fatalf("confirm %q = %t, %v; want %t", test.answer, got, err, test.want)
+		}
+		if !strings.Contains(prompt.String(), "v1.0.0 to v1.2.0") {
+			t.Fatalf("confirmation prompt omitted versions: %s", prompt.String())
+		}
 	}
 }
 
@@ -508,12 +594,18 @@ func TestSelfUpdateIntegrationDoesNotFetchWhenCurrentAndRefusesTampering(t *test
 	t.Run("already current", func(t *testing.T) {
 		f := newSelfUpdateFixture(t, false)
 		var output bytes.Buffer
-		err := selfUpdateAt(context.Background(), &output, true, f.install, "v1.2.0", "linux", runtime.GOARCH, f.deps("v1.2.0", nil, nil))
+		deps := f.deps("v1.2.0", nil, nil)
+		deps.yes = false
+		deps.confirm = func(string, string) (bool, error) {
+			t.Fatal("confirmation requested when already current")
+			return false, nil
+		}
+		err := selfUpdateAt(context.Background(), &output, true, f.install, "v1.2.0", "linux", runtime.GOARCH, deps)
 		if err != nil {
 			t.Fatal(err)
 		}
 		var result selfUpdateResult
-		if err := json.Unmarshal(output.Bytes(), &result); err != nil || result.State != "up_to_date" {
+		if err := json.Unmarshal(output.Bytes(), &result); err != nil || result.State != "up_to_date" || result.PreviousVersion != "v1.2.0" || result.UpdatedVersion != "v1.2.0" {
 			t.Fatalf("result=%+v err=%v", result, err)
 		}
 		assertSelfUpdateFiles(t, f, f.old)
