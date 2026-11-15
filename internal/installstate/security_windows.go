@@ -104,6 +104,9 @@ func allowedUntrustedAccess(mask uint32, path string, directory, private bool) b
 func checkTrust(path string, info os.FileInfo, directory bool) error {
 	return checkTrustWithPolicy(path, info, directory, false)
 }
+func checkAncestorDirectoryTrust(path string, info os.FileInfo) error {
+	return checkTrustWithPolicy(path, info, true, false)
+}
 func checkTrustWithPolicy(path string, info os.FileInfo, directory, allowInsecureDirectory bool) error {
 	if !directory {
 		name, err := windows.UTF16PtrFromString(path)

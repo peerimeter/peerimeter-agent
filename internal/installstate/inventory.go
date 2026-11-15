@@ -152,10 +152,17 @@ func CheckDirectoryWithPolicy(path string, allowInsecure bool) error {
 			if !info.IsDir() {
 				return errors.New("installation resource parent is not a directory")
 			}
+			// A trusted leaf can still be renamed by an attacker who controls an
+			// ancestor. Validate every existing directory component, while keeping
+			// the explicit insecure-directory exception scoped to the leaf itself.
+			var trustErr error
 			if p == canonical {
-				if err := checkTrustWithPolicy(p, info, true, allowInsecure); err != nil {
-					return err
-				}
+				trustErr = checkTrustWithPolicy(p, info, true, allowInsecure)
+			} else {
+				trustErr = checkAncestorDirectoryTrust(p, info)
+			}
+			if trustErr != nil {
+				return trustErr
 			}
 		} else if !os.IsNotExist(e) {
 			return errors.New("cannot inspect installation resource parent")
