@@ -181,6 +181,7 @@ func runWindowsRecoveryHelper(ctx context.Context, args []string) error {
 		return err
 	}
 	var recoveryErr error
+	profileCheckFailed := false
 	transactionDeadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(transactionDeadline) {
 		if err := ctx.Err(); err != nil {
@@ -193,6 +194,7 @@ func runWindowsRecoveryHelper(ctx context.Context, args []string) error {
 			break
 		}
 		if recoveryErr = ensureNoActiveUpdateProfiles(current); recoveryErr != nil {
+			profileCheckFailed = true
 			break
 		}
 		recoveryErr = selfupdate.RecoverLocked(current)
@@ -206,6 +208,9 @@ func runWindowsRecoveryHelper(ctx context.Context, args []string) error {
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
+	if profileCheckFailed {
+		return restartServiceAfterRecoveryAbort(ctx, profile, lock, recoveryErr, startManagedService, waitForService)
+	}
 	if err := errors.Join(recoveryErr, lock.Close()); err != nil {
 		return err
 	}
@@ -218,6 +223,18 @@ func runWindowsRecoveryHelper(ctx context.Context, args []string) error {
 		}
 	}
 	return nil
+}
+
+func restartServiceAfterRecoveryAbort(ctx context.Context, profile *installstate.Profile, lock io.Closer, cause error, start func(installstate.Profile) error, wait func(context.Context, string) error) error {
+	closeErr := lock.Close()
+	if profile == nil {
+		return errors.Join(cause, closeErr)
+	}
+	restartErr := start(*profile)
+	if restartErr == nil {
+		restartErr = wait(ctx, profile.RuntimeDir)
+	}
+	return errors.Join(cause, closeErr, restartErr)
 }
 
 func runWindowsUpdateHelper(ctx context.Context, args []string) error {
