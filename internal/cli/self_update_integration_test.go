@@ -571,6 +571,60 @@ func TestSelfUpdateIntegrationRecoversInterruptedTransactionBeforeFetching(t *te
 	assertSelfUpdateFiles(t, f, f.old)
 }
 
+func TestSelfUpdateIntegrationLeavesRecoveryPendingWhileProfileIsActive(t *testing.T) {
+	f := newSelfUpdateFixture(t, false)
+	inv, err := installstate.Load(f.install)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updateLock, err := selfupdate.LockUpdate(inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := installstate.Lock(f.install)
+	if err != nil {
+		_ = updateLock.Close()
+		t.Fatal(err)
+	}
+	if _, _, _, err := selfupdate.Apply(inv, f.files); err != nil {
+		_ = lock.Close()
+		_ = updateLock.Close()
+		t.Fatal(err)
+	}
+	if err := lock.Close(); err != nil {
+		_ = updateLock.Close()
+		t.Fatal(err)
+	}
+	if err := updateLock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	active, err := local.Acquire(f.state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer active.Close()
+	deps := f.deps("v1.2.0", nil, nil)
+	deps.fetch = func(context.Context, *http.Client, string, string) (string, map[string][]byte, error) {
+		t.Fatal("release fetched while an agent profile was active during recovery")
+		return "", nil, nil
+	}
+	var output bytes.Buffer
+	err = selfUpdateAt(context.Background(), &output, true, f.install, "v1.0.0", "linux", runtime.GOARCH, deps)
+	if err == nil || !strings.Contains(err.Error(), "agent profile is active") {
+		t.Fatalf("expected recovery to remain pending while the profile is active, got %v", err)
+	}
+	for name, want := range f.files {
+		path := filepath.Join(f.install, name)
+		if name == "peerimeter-agent.NOTICES.txt" {
+			path = filepath.Join(f.doc, name)
+		}
+		got, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("active profile recovery unexpectedly changed %s: got %q err=%v", name, got, err)
+		}
+	}
+}
+
 func assertSelfUpdateFiles(t *testing.T, f selfUpdateFixture, want map[string][]byte) {
 	t.Helper()
 	for name, contents := range want {

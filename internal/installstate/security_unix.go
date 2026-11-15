@@ -6,13 +6,17 @@ import (
 	"errors"
 	"golang.org/x/sys/unix"
 	"os"
+	"os/user"
 	"runtime"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"syscall"
 )
 
 var runTrustedUID atomic.Int64
+var privatePrimaryGroupOnce sync.Once
+var currentHasPrivatePrimaryGroup bool
 
 // TrustSudoUserForRun allows only a root run process to use resources owned by
 // the invoking sudo user. Other commands never enable this exception.
@@ -53,6 +57,43 @@ func trustedSystemAlias(path string, info os.FileInfo) bool {
 func checkTrust(path string, info os.FileInfo, directory bool) error {
 	return checkTrustWithPolicy(path, info, directory, false)
 }
+
+func hasPrivatePrimaryGroup() bool {
+	privatePrimaryGroupOnce.Do(func() {
+		current, err := user.Current()
+		if err != nil {
+			return
+		}
+		group, err := user.LookupGroupId(current.Gid)
+		if err == nil && group.Name == current.Username {
+			currentHasPrivatePrimaryGroup = true
+		}
+	})
+	return currentHasPrivatePrimaryGroup
+}
+
+func checkAncestorDirectoryTrust(path string, info os.FileInfo) error {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return errors.New("cannot verify installation resource ownership")
+	}
+	uid := uint32(os.Geteuid())
+	androidSystemDir := os.Getenv("ANDROID_ROOT") != "" && st.Uid == 1000 && st.Gid == 1000 && (path == "/data" || path == "/data/data" || path == "/data/user" || path == "/data/user_de")
+	if st.Uid != uid && st.Uid != 0 && !androidSystemDir && !(uid == 0 && trustedRunOwner(st.Uid)) {
+		return errors.New("installation resource parent is owned by another user")
+	}
+	sticky := st.Uid == 0 && info.Mode()&os.ModeSticky != 0
+	if info.Mode().Perm()&0002 != 0 && !sticky {
+		return errors.New("installation resource parent grants other write access")
+	}
+	if info.Mode().Perm()&0020 != 0 && !sticky && !androidSystemDir {
+		if uid == 0 || st.Uid != uid || st.Gid != uint32(os.Getegid()) || !hasPrivatePrimaryGroup() {
+			return errors.New("installation resource parent grants group write access")
+		}
+	}
+	return checkExtendedTrust(path, false, true)
+}
+
 func checkTrustWithPolicy(path string, info os.FileInfo, directory, allowInsecureDirectory bool) error {
 	st, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {

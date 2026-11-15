@@ -3,8 +3,26 @@ package installstate
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
+
+func TestCheckDirectoryRejectsWritableAncestor(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX mode-bit trust check")
+	}
+	parent := filepath.Join(t.TempDir(), "writable-parent")
+	child := filepath.Join(parent, "trusted-child")
+	if err := os.MkdirAll(child, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0707); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckDirectory(child); err == nil {
+		t.Fatal("trusted child directory accepted an attacker-writable ancestor")
+	}
+}
 
 func TestCreatePrivateTempDirProtectsChildren(t *testing.T) {
 	parent := t.TempDir()

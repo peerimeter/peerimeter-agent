@@ -311,6 +311,9 @@ func recoverInterruptedUpdate(installDir string, inv installstate.Inventory, goo
 	}
 	current, err := installstate.Load(installDir)
 	if err == nil {
+		err = ensureNoActiveUpdateProfiles(current)
+	}
+	if err == nil {
 		err = selfupdate.RecoverLocked(current)
 	}
 	err = errors.Join(err, lock.Close())
@@ -447,7 +450,7 @@ func ensureNoActiveUpdateProfiles(inv installstate.Inventory) error {
 		for _, dir := range []string{profile.StateDir, profile.RuntimeDir} {
 			guard, err := local.TryAcquireExisting(dir)
 			if err != nil {
-				return err
+				return fmt.Errorf("cannot safely update while an agent profile is active: %w", err)
 			}
 			if guard != nil {
 				_ = guard.Close()

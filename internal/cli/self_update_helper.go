@@ -130,11 +130,25 @@ func runWindowsRecoveryHelper(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	updateLock, err := acquireWindowsUpdateLock(ctx, inv, 45*time.Second)
+	if err != nil {
+		return err
+	}
+	defer updateLock.Close()
+	inv, err = installstate.Load(installDir)
+	if err != nil {
+		return err
+	}
 	if !pathWithin(inv.LockDir, helperDir) || installstate.CheckDirectory(helperDir) != nil {
 		return errors.New("recovery helper is outside the protected installation lock directory")
 	}
 	defer func() { _ = scheduleWindowsCleanup(helperDir) }()
-	if err := installstate.CheckPrivateFile(filepath.Join(inv.LockDir, selfupdate.JournalFilename)); err != nil {
+	journalPath := filepath.Join(inv.LockDir, selfupdate.JournalFilename)
+	if _, err := os.Lstat(journalPath); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	} else if err := installstate.CheckPrivateFile(journalPath); err != nil {
 		return err
 	}
 	var profile *installstate.Profile
@@ -162,25 +176,9 @@ func runWindowsRecoveryHelper(ctx context.Context, args []string) error {
 			return fmt.Errorf("stop service before update recovery: %w", err)
 		}
 	}
-	var updateLock io.Closer
-	recoveryDeadline := time.Now().Add(45 * time.Second)
-	for time.Now().Before(recoveryDeadline) {
-		updateLock, err = selfupdate.LockUpdate(inv)
-		if err == nil {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(250 * time.Millisecond):
-		}
-	}
-	if updateLock == nil {
-		return fmt.Errorf("wait for interrupted updater to exit: %w", err)
-	}
 	lock, err := installstate.Lock(installDir)
 	if err != nil {
-		return errors.Join(err, updateLock.Close())
+		return err
 	}
 	var recoveryErr error
 	transactionDeadline := time.Now().Add(45 * time.Second)
@@ -194,6 +192,9 @@ func runWindowsRecoveryHelper(ctx context.Context, args []string) error {
 			recoveryErr = loadErr
 			break
 		}
+		if recoveryErr = ensureNoActiveUpdateProfiles(current); recoveryErr != nil {
+			break
+		}
 		recoveryErr = selfupdate.RecoverLocked(current)
 		if recoveryErr == nil {
 			break
@@ -205,7 +206,7 @@ func runWindowsRecoveryHelper(ctx context.Context, args []string) error {
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
-	if err := errors.Join(recoveryErr, lock.Close(), updateLock.Close()); err != nil {
+	if err := errors.Join(recoveryErr, lock.Close()); err != nil {
 		return err
 	}
 	if profile != nil {
@@ -340,6 +341,10 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 		_ = lock.Close()
 		return errors.New("installation is being removed")
 	}
+	if err := ensureNoActiveUpdateProfiles(inv); err != nil {
+		_ = lock.Close()
+		return fmt.Errorf("stop active agent profiles before update recovery: %w", err)
+	}
 	if err := selfupdate.RecoverLocked(inv); err != nil {
 		_ = lock.Close()
 		return err
@@ -364,6 +369,10 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 				return errors.Join(fmt.Errorf("record updated program hashes: %w", err), restoreErr)
 			}
 			break
+		}
+		if recoverErr := ensureNoActiveUpdateProfiles(inv); recoverErr != nil {
+			_ = lock.Close()
+			return errors.Join(lastErr, fmt.Errorf("stop active agent profiles before update recovery: %w", recoverErr))
 		}
 		if recoverErr := selfupdate.RecoverLocked(inv); recoverErr != nil {
 			_ = lock.Close()
