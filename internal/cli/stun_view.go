@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/peerimeter/peerimeter-agent/internal/stunprobe"
 	"golang.org/x/term"
 )
@@ -40,7 +40,7 @@ func (m stunModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case stunTickMsg:
 		m.frame++
 		return m, stunTick
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" || msg.String() == "q" || msg.String() == "esc" {
 			m.done, m.err = true, context.Canceled
 			return m, tea.Quit
@@ -48,11 +48,11 @@ func (m stunModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
-func (m stunModel) View() string {
+func (m stunModel) View() tea.View {
 	if m.done {
-		return ""
+		return tea.NewView("")
 	}
-	return fmt.Sprintf("%c Probing public UDP mapping with STUN... (q to cancel)\n", "|/-\\"[m.frame%4])
+	return tea.NewView(fmt.Sprintf("%c Probing public UDP mapping with STUN... (q to cancel)\n", "|/-\\"[m.frame%4]))
 }
 func runSTUN(ctx context.Context, out io.Writer, port int, server string) (stunprobe.Result, error) {
 	file, ok := out.(*os.File)

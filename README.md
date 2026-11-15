@@ -144,10 +144,11 @@ new version is available, it reports that without prompting. The command selects
 the package for the current OS and CPU, then checks it against the release
 `SHA256SUMS` file downloaded over HTTPS. This is an integrity check using the
 GitHub release trust channel; it does not claim a detached release signature.
-During the update it shows the current operation on stderr: an animated spinner
-in a terminal, or start/completion lines when output is redirected. With
-`--json`, progress stays on stderr and the final result remains on stdout.
-Startup checks may notify about an update, but never replace a running agent.
+During the update it shows the current operation on stderr: an animated
+per-step progress bar in a terminal, or start/completion lines when output is
+redirected. With `--json`, progress stays on stderr and the final result remains
+on stdout. Startup checks may notify about an update, but never replace a running
+agent.
 
 ```sh
 peerimeter-agent self-update       # show versions and ask before upgrading

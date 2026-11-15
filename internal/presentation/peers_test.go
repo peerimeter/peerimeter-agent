@@ -3,12 +3,13 @@ package presentation
 import (
 	"bytes"
 	"errors"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/peerimeter/peerimeter-agent/internal/platform"
 	"math"
 	"strings"
 	"testing"
 	"time"
+
+	"charm.land/lipgloss/v2"
+	"github.com/peerimeter/peerimeter-agent/internal/platform"
 )
 
 func TestPeerListMissingAndClockStates(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
 )
@@ -87,11 +87,11 @@ func TestStatusWatchViewportScrollsToLaterPeers(t *testing.T) {
 			{PublicKey: "peer-f", AllowedIPs: []string{"10.0.0.6/32"}},
 		}},
 	}
-	if view := model.View(); !strings.Contains(view, "Network") || !strings.Contains(view, "q to quit") {
+	if view := model.View().Content; !strings.Contains(view, "Network") || !strings.Contains(view, "q to quit") {
 		t.Fatalf("initial view omitted status summary or footer: %s", view)
 	}
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnd})
-	view := updated.(statusWatchModel).View()
+	updated, _ := model.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	view := updated.(statusWatchModel).View().Content
 	if !strings.Contains(view, "peer-f") || strings.Contains(view, "peer-a") {
 		t.Fatalf("end key did not scroll to the last peer: %s", view)
 	}
