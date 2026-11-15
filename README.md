@@ -136,7 +136,35 @@ a local ZIP with `-Archive` and `-SHA256`. Installers replace program files
 only; they preserve configuration and keys. Installation ancestor owner and
 permission checks are disabled; symbolic links and reparse points remain
 rejected. Key files and managed inventory files retain their private-file checks.
-Automatic self-update remains Phase 7.
+Automatic self-update remains Phase 7. Recommended design: add an explicit
+`peerimeter-agent update` command; startup should notify users but never replace
+the running agent automatically.
+
+1. Resolve the latest stable release and select the asset matching the exact OS
+and architecture using the installer naming rules.
+2. Download to a private staging directory beside the installation. Verify the
+asset with `SHA256SUMS` before changing installed files. Since the checksum
+manifest currently shares the HTTPS release trust channel, add a detached
+signature verified by a public key embedded in the agent before treating that
+manifest as authenticated update metadata.
+3. Read the protected installation inventory and update only files owned by
+that installation. Preserve configs, keys, service registration and state;
+require the existing system privilege for system-wide installs.
+4. On Linux/macOS, stage on the same filesystem and atomically replace the
+executable while retaining the old binary. On Windows, use a bounded helper
+after the agent/service exits to replace the locked executable and DLL, with a
+protected receipt reporting success or remaining work.
+5. Keep a protected update journal and old binary until the new agent starts
+and reports ready through the local control endpoint within a timeout. If it
+exits early or misses the timeout, stop it, restore the old binary and restart
+the previous version. On the next launch, recover any interrupted update from
+the journal. Delete the backup only after readiness is recorded; a successful
+`version` command alone is not a sufficient health check. On Windows, retain
+the existing WireGuardNT hash and Authenticode checks.
+
+This keeps application explicit, follows installer ownership rules, and makes
+interrupted updates recoverable. Until self-update is implemented, install the
+new release with the documented platform installer.
 
 ### Publishing a release
 
