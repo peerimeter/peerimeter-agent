@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const latestReleaseURL = "https://api.github.com/repos/peerimeter/peerimeter-agent/releases/latest"
+var latestReleaseURL = "https://api.github.com/repos/peerimeter/peerimeter-agent/releases/latest"
 
 type latestRelease struct {
 	TagName string `json:"tag_name"`
