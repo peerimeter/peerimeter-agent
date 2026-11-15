@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/peerimeter/peerimeter-agent/internal/local"
-	"golang.org/x/sys/unix"
 	"os"
 	"path/filepath"
 	"testing"
@@ -178,21 +177,18 @@ func TestPreInventoryMigrationPlansBeforeConfigClaim(t *testing.T) {
 	}
 }
 
-func TestMigrationWaitsForLegacyLockAfterSupervisorReturns(t *testing.T) {
+func TestMigrationWaitsForCurrentManagerDirectoryLock(t *testing.T) {
 	directory := t.TempDir()
 	if err := os.Chmod(directory, 0700); err != nil {
 		t.Fatal(err)
 	}
-	file, err := os.OpenFile(filepath.Join(directory, "agent.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	manager, err := local.Acquire(directory)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()
 	released := make(chan struct{})
-	go func() { time.Sleep(150 * time.Millisecond); file.Close(); close(released) }()
+	go func() { time.Sleep(150 * time.Millisecond); manager.Close(); close(released) }()
 	guard, err := acquireMigrationState(context.Background(), directory)
 	if err != nil {
 		t.Fatal(err)
@@ -200,7 +196,7 @@ func TestMigrationWaitsForLegacyLockAfterSupervisorReturns(t *testing.T) {
 	defer guard.Close()
 	<-released
 	if time.Since(start) < 100*time.Millisecond {
-		t.Fatal("migration bypassed a still-held legacy lock")
+		t.Fatal("migration bypassed a still-running manager")
 	}
 	if other, err := local.TryAcquireExisting(directory); !errors.Is(err, local.ErrBusy) {
 		if other != nil {

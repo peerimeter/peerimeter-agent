@@ -240,8 +240,6 @@ func dial(ctx context.Context, dir string) (net.Conn, error) {
 	return winio.DialPipeAccess(ctx, pipeName(dir), pipeClientAccess)
 }
 
-func compatibilityLock(string) (*os.File, error) { return nil, nil }
-
 type hookedPipeListener struct {
 	net.Listener
 	onClose    func() error

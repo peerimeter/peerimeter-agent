@@ -378,8 +378,8 @@ func migrate(cfg Config, unregister func(Config) error, register func(Config) er
 		}
 		return err
 	}
-	// A held directory lock plus a compatibility lock proves no old manager still
-	// owns the legacy lock inode. Persistent network/ownership files are untouched.
+	// The directory lock proves the current manager released the legacy state.
+	// Persistent network/ownership files are untouched.
 	var cleanup []error
 	for _, path := range []string{legacyJSON, legacyKey, filepath.Join(cfg.StateDirectory, "agent.lock")} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {

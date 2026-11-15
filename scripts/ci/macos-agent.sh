@@ -3,8 +3,7 @@
 set -euo pipefail
 test "$(id -u)" -eq 0
 agent_source=${1:?usage: macos-agent.sh AGENT HELPER}
-helper_source=${2:?usage: macos-agent.sh AGENT HELPER LEGACY_AGENT}
-legacy_source=${3:?usage: macos-agent.sh AGENT HELPER LEGACY_AGENT}
+helper_source=${2:?usage: macos-agent.sh AGENT HELPER}
 test ! -e /Library/LaunchDaemons/com.peerimeter.agent.plist
 dir=$(mktemp -d /tmp/pmagent.XXXXXX)
 chmod 700 "$dir"
@@ -209,4 +208,4 @@ if /bin/launchctl print system/com.peerimeter.agent >/dev/null 2>&1; then echo '
 echo 'PASS: launchd install/start/stop/restart/uninstall, protected configuration preserved'
 echo 'PASS: macOS actual agent native tunnel, IPC, reload validation and service lifecycle'
 
-bash "$(dirname "$0")/unix-layout-uninstall.sh" "$agent" "$legacy_source"
+bash "$(dirname "$0")/unix-layout-uninstall.sh" "$agent"
