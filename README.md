@@ -152,15 +152,16 @@ that installation. Preserve configs, keys, service registration and state;
 require the existing system privilege for system-wide installs.
 4. On Linux/macOS, stage on the same filesystem and atomically replace the
 executable while retaining the old binary. On Windows, use a bounded helper
-after the agent/service exits to replace the locked executable and DLL, with a
-protected receipt reporting success or remaining work.
+after the agent/service exits to replace the locked executable and DLL, keeping
+backups of both the old executable and every replaced DLL. Return a protected
+receipt reporting success or remaining work.
 5. Keep a protected update journal and old binary until the new agent starts
 and reports ready through the local control endpoint within a timeout. If it
-exits early or misses the timeout, stop it, restore the old binary and restart
-the previous version. On the next launch, recover any interrupted update from
-the journal. Delete the backup only after readiness is recorded; a successful
-`version` command alone is not a sufficient health check. On Windows, retain
-the existing WireGuardNT hash and Authenticode checks.
+exits early or misses the timeout, stop it, restore the old executable and any
+replaced DLLs, then restart the previous version. On the next launch, recover
+any interrupted update from the journal. Delete backups only after readiness is
+recorded; a successful `version` command alone is not a sufficient health
+check. On Windows, retain the existing WireGuardNT hash and Authenticode checks.
 
 This keeps application explicit, follows installer ownership rules, and makes
 interrupted updates recoverable. Until self-update is implemented, install the
