@@ -6,6 +6,17 @@
 review at `091bd40d115c7371e1c0f4cd0f18fb8f3ab71ca2`. ⬜ Phase 2 has not started.
 Exact native evidence, review outcome and limitations are recorded below.
 
+## Current focus — Phase 7 self-update brought forward
+
+The Phase 7 self-update is now the active implementation alongside the completed
+Phase 1 baseline. PR [#37](https://github.com/peerimeter/peerimeter-agent/pull/37)
+contains the updater and is assigned to the requester. End-to-end orchestration
+tests now cover release retrieval, inventory-selected replacement, preserved
+profile data and paths, managed-service readiness, rollback, tamper refusal and
+interrupted-update recovery. Local targeted tests pass with `CGO_ENABLED=0`;
+the new tests still need native CI and independent review before this work is
+accepted. No released updater is claimed.
+
 ## Phase checklist
 
 **Phase status:** ✅ Complete · 🔄 In progress · ⬜ Not started · ⛔ Blocked.
@@ -66,7 +77,8 @@ uses two agents in isolated namespaces; macOS/Windows use a native agent and an
 independent userspace peer. Linux amd64, macOS arm64 and Windows amd64 are native
 verified; other packaged architectures are cross-build only. One named native
 service is currently supported per machine. Address changes on macOS/Windows
-require explicit stop/start. Self-update remains Phase 7.
+require explicit stop/start. Phase 7 self-update work has been brought forward;
+the implementation and test review are still in progress.
 
 No public agent release has been published. Native installer tests exercise
 latest/pinned URL resolution through explicit fixtures and install/execute real
@@ -77,7 +89,8 @@ release or Phase 2 when requested. The service repository remains unstarted.
 
 No relay or desktop UI. No static-mode API/MQTT/STUN dependency. See README for
 the exact interface-name algorithm and trusted-parent key storage requirement.
-Go 1.27.4 is pinned by project requirement. Self-update belongs to Phase 7.
+Go 1.27.4 is pinned by project requirement. Self-update belongs to Phase 7 and
+is being implemented ahead of the earlier phase sequence.
 
 ## Native evidence — 2026-11-11, commit ebb4a1f880e39e2ca1003d9551c185a76ee81069
 
@@ -365,7 +378,14 @@ and reran Go lint, tests and build.
   inventoried-file replacement and rollback, and inventory-profile
   preservation. Targeted local checks passed:
   `CGO_ENABLED=0 go test ./internal/selfupdate ./internal/installstate ./internal/cli`.
+- Added update-flow integration tests for an HTTPS release server, successful
+  inventory-aware update with separate docs/data/lock directories, managed
+  service restart, readiness-failure rollback, up-to-date and tampered-file
+  handling, and recovery before retry. Current targeted validation passed:
+  `CGO_ENABLED=0 go test ./internal/cli ./internal/selfupdate`.
 - Full `make lint`, `make test`, and `make build` passed locally. Native
-  Windows/macOS update runs and interrupted-update recovery on those operating
-  systems are not yet verified. Phase 7 remains in progress pending those checks
-  and review.
+  update execution through the service manager and recovery after a real OS
+  interruption are not yet verified. At PR head `9dc63d4`, native build/test,
+  package and WireGuard integration jobs passed on Linux, macOS and Windows;
+  the newly added integration tests are not included in that run. Phase 7
+  remains in progress pending CI on the new test commit and independent review.
