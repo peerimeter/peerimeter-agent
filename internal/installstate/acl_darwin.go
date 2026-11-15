@@ -57,3 +57,5 @@ func checkExtendedTrust(path string, private, directory bool) error {
 	}
 	return nil
 }
+
+func checkAncestorACL(path string) error { return checkExtendedTrust(path, false, true) }
