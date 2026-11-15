@@ -84,16 +84,7 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	var profile *installstate.Profile
-	for i := range inv.Profiles {
-		if inv.Profiles[i].Service {
-			if profile != nil {
-				return errors.New("multiple service profiles are unsupported")
-			}
-			p := inv.Profiles[i]
-			profile = &p
-		}
-	}
+	profile, _ := serviceProfileForHelper(inv.Profiles, nil)
 	serviceRestartAttempted := false
 	if profile != nil {
 		defer func() {
@@ -123,8 +114,21 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 		return err
 	}
 	var manifest helperManifest
-	if json.Unmarshal(data, &manifest) != nil || manifest.InstallID != inv.ID || !manifest.Snapshot.matches(inv) {
+	if json.Unmarshal(data, &manifest) != nil {
 		return errors.New("update helper manifest is invalid")
+	}
+	if manifest.InstallID != inv.ID || manifest.Snapshot.ID != inv.ID || manifest.Snapshot.InstallDir != inv.InstallDir || manifest.Snapshot.LockDir != inv.LockDir {
+		return errors.New("update helper manifest is invalid")
+	}
+	// The service was stopped using the profile set recorded before the release
+	// fetch. Prefer that profile for cleanup if another service profile was
+	// registered while the helper was being staged.
+	profile, multipleServiceProfiles := serviceProfileForHelper(inv.Profiles, manifest.Snapshot.Profiles)
+	if !manifest.Snapshot.matches(inv) {
+		return errors.New("update helper manifest is invalid")
+	}
+	if multipleServiceProfiles {
+		return errors.New("multiple service profiles are unsupported")
 	}
 	if _, ok := parseReleaseVersion(manifest.Version); !ok {
 		return errors.New("update helper version is invalid")
@@ -249,6 +253,29 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 		return err
 	}
 	return nil
+}
+
+func serviceProfileForHelper(current, beforeUpdate []installstate.Profile) (*installstate.Profile, bool) {
+	profile := func(profiles []installstate.Profile) *installstate.Profile {
+		for i := range profiles {
+			if profiles[i].Service {
+				selected := profiles[i]
+				return &selected
+			}
+		}
+		return nil
+	}
+	selected := profile(beforeUpdate)
+	if selected == nil {
+		selected = profile(current)
+	}
+	serviceCount := 0
+	for _, p := range current {
+		if p.Service {
+			serviceCount++
+		}
+	}
+	return selected, serviceCount > 1
 }
 
 func profileValue(profile *installstate.Profile) installstate.Profile {

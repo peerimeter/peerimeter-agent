@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
+	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/selfupdate"
 	"github.com/peerimeter/peerimeter-agent/internal/service"
 )
@@ -248,6 +249,42 @@ func TestSelfUpdateIntegrationRefusesProfileChangesDuringReleaseFetch(t *testing
 		t.Fatalf("service actions after profile change: %v", actions)
 	}
 	assertSelfUpdateFiles(t, f, f.old)
+}
+
+func TestSelfUpdateIntegrationRefusesProfileStartingDuringReleaseFetch(t *testing.T) {
+	f := newSelfUpdateFixture(t, false)
+	deps := f.deps("v1.2.0", nil, nil)
+	fetchCalled := false
+	deps.fetch = func(_ context.Context, _ *http.Client, _, _ string) (string, map[string][]byte, error) {
+		fetchCalled = true
+		// staticCommand holds the persistent state guard while the backend starts,
+		// before it owns the runtime guard. Simulate that startup window.
+		guard, err := local.Acquire(f.state)
+		if err != nil {
+			return "", nil, err
+		}
+		t.Cleanup(func() { _ = guard.Close() })
+		return "v1.2.0", f.files, nil
+	}
+	var output bytes.Buffer
+	err := selfUpdateAt(context.Background(), &output, true, f.install, "v1.0.0", "linux", runtime.GOARCH, deps)
+	if err == nil || !strings.Contains(err.Error(), "agent process started while the release was being fetched") {
+		t.Fatalf("expected update to refuse a starting profile (fetch called: %v), got %v", fetchCalled, err)
+	}
+	assertSelfUpdateFiles(t, f, f.old)
+}
+
+func TestWindowsUpdateHelperRetainsOriginalServiceProfileForCleanup(t *testing.T) {
+	original := installstate.Profile{ID: "original-service", Service: true, StateDir: "old-state", RuntimeDir: "old-runtime"}
+	added := installstate.Profile{ID: "new-service", Service: true, StateDir: "new-state", RuntimeDir: "new-runtime"}
+	profile, multiple := serviceProfileForHelper([]installstate.Profile{original, added}, []installstate.Profile{original})
+	if profile == nil || profile.ID != original.ID || profile.StateDir != original.StateDir || !multiple {
+		t.Fatalf("helper cleanup profile = %#v, want original stopped service %#v", profile, original)
+	}
+	profile, multiple = serviceProfileForHelper([]installstate.Profile{added}, nil)
+	if profile == nil || profile.ID != added.ID || multiple {
+		t.Fatalf("helper fallback profile = %#v, multiple = %v", profile, multiple)
+	}
 }
 
 func TestSelfUpdateIntegrationDoesNotRollbackUntilUpdatedServiceStops(t *testing.T) {
