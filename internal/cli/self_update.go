@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,6 +47,27 @@ func selfUpdate(ctx context.Context, out io.Writer, jsonOutput bool) error {
 	if err != nil {
 		return err
 	}
+	return selfUpdateAt(ctx, out, jsonOutput, installDir, Version, runtime.GOOS, runtime.GOARCH, selfUpdateDeps{
+		fetch: selfupdate.Fetch, verify: verifyUpdatedBinary, manage: service.Manage, wait: waitForService,
+	})
+}
+
+type updateFetcher func(context.Context, *http.Client, string, string) (string, map[string][]byte, error)
+type updateBinaryVerifier func(context.Context, string, string) error
+type updateServiceManager func(string, service.Config) error
+type updateServiceWaiter func(context.Context, string) error
+
+type selfUpdateDeps struct {
+	fetch  updateFetcher
+	verify updateBinaryVerifier
+	manage updateServiceManager
+	wait   updateServiceWaiter
+}
+
+// selfUpdateAt keeps release retrieval and binary execution injectable so the
+// complete inventory-to-replacement flow can be exercised without network or
+// service side effects.
+func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDir, currentVersion, goos, goarch string, deps selfUpdateDeps) error {
 	inv, err := installstate.Load(installDir)
 	if err != nil {
 		return fmt.Errorf("self-update requires a valid installation inventory: %w", err)
@@ -67,24 +89,24 @@ func selfUpdate(ctx context.Context, out io.Writer, jsonOutput bool) error {
 	if err := verifyInstalledFiles(inv); err != nil {
 		return err
 	}
-	tag, files, err := selfupdate.Fetch(ctx, nil, runtime.GOOS, runtime.GOARCH)
+	tag, files, err := deps.fetch(ctx, nil, goos, goarch)
 	if err != nil {
 		return err
 	}
 	latest, ok := parseReleaseVersion(tag)
-	current, currentOK := parseReleaseVersion(Version)
+	current, currentOK := parseReleaseVersion(currentVersion)
 	if !ok || !currentOK {
-		return fmt.Errorf("cannot compare agent version %q with release %q", Version, tag)
+		return fmt.Errorf("cannot compare agent version %q with release %q", currentVersion, tag)
 	}
 	if compareVersion(latest, current) <= 0 {
-		return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "up_to_date", PreviousVersion: Version, UpdatedVersion: tag})
+		return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "up_to_date", PreviousVersion: currentVersion, UpdatedVersion: tag})
 	}
 	for _, owned := range inv.Files {
 		if _, ok := files[owned.Name]; !ok {
 			return fmt.Errorf("release package is missing inventoried program file %q", owned.Name)
 		}
 	}
-	if runtime.GOOS == "windows" {
+	if goos == "windows" {
 		// WireGuardNT is an independently pinned, Authenticode-verified runtime
 		// dependency. Do not change it as part of an agent-only update.
 		for _, owned := range inv.Files {
@@ -100,6 +122,21 @@ func selfUpdate(ctx context.Context, out io.Writer, jsonOutput bool) error {
 		}
 	}
 	var managedService *installstate.Profile
+	serviceConfig := func(p *installstate.Profile) service.Config {
+		return service.Config{ConfigDirectory: p.ConfigDir, StateDirectory: p.StateDir, RuntimeDirectory: p.RuntimeDir}
+	}
+	restartAfterFailure := func(profile *installstate.Profile, cause error) error {
+		if profile == nil {
+			return cause
+		}
+		if err := deps.manage("start", serviceConfig(profile)); err != nil {
+			return errors.Join(cause, fmt.Errorf("restart installed service after update failure: %w", err))
+		}
+		if err := deps.wait(context.Background(), profile.RuntimeDir); err != nil {
+			return errors.Join(cause, fmt.Errorf("verify service after update failure: %w", err))
+		}
+		return cause
+	}
 	for i := range inv.Profiles {
 		p := &inv.Profiles[i]
 		if p.Service {
@@ -118,29 +155,29 @@ func selfUpdate(ctx context.Context, out io.Writer, jsonOutput bool) error {
 		}
 	}
 	if managedService != nil {
-		if err := service.Manage("stop", service.Config{ConfigDirectory: managedService.ConfigDir, StateDirectory: managedService.StateDir, RuntimeDirectory: managedService.RuntimeDir}); err != nil {
-			return restartServiceAfterFailure(managedService, fmt.Errorf("stop installed service before update: %w", err))
+		if err := deps.manage("stop", serviceConfig(managedService)); err != nil {
+			return restartAfterFailure(managedService, fmt.Errorf("stop installed service before update: %w", err))
 		}
 	}
-	if runtime.GOOS == "windows" {
+	if goos == "windows" {
 		return scheduleWindowsUpdate(inv, files, tag, managedService, out, jsonOutput)
 	}
 	lock, err := installstate.Lock(installDir)
 	if err != nil {
-		return restartServiceAfterFailure(managedService, err)
+		return restartAfterFailure(managedService, err)
 	}
 	inv, err = installstate.Load(installDir)
 	if err != nil {
 		_ = lock.Close()
-		return restartServiceAfterFailure(managedService, err)
+		return restartAfterFailure(managedService, err)
 	}
 	if inv.Removing {
 		_ = lock.Close()
-		return restartServiceAfterFailure(managedService, errors.New("this installation is being removed"))
+		return restartAfterFailure(managedService, errors.New("this installation is being removed"))
 	}
 	if err := verifyInstalledFiles(inv); err != nil {
 		_ = lock.Close()
-		return restartServiceAfterFailure(managedService, err)
+		return restartAfterFailure(managedService, err)
 	}
 	oldHashes := make(map[string]string, len(inv.Files))
 	for _, f := range inv.Files {
@@ -149,27 +186,27 @@ func selfUpdate(ctx context.Context, out io.Writer, jsonOutput bool) error {
 	newHashes, rollback, commit, err := selfupdate.Apply(inv, files)
 	if err != nil {
 		_ = lock.Close()
-		return restartServiceAfterFailure(managedService, err)
+		return restartAfterFailure(managedService, err)
 	}
 	if err := installstate.UpdateProgramHashesLocked(inv, newHashes); err != nil {
 		restoreErr := rollback()
 		_ = lock.Close()
 		cause := errors.Join(fmt.Errorf("record updated program hashes: %w", err), restoreErr)
-		return restartServiceAfterFailure(managedService, cause)
+		return restartAfterFailure(managedService, cause)
 	}
 	if err := lock.Close(); err != nil {
-		return rollbackInstalledUpdate(installDir, oldHashes, inv, rollback, profileValue(managedService), err)
+		return rollbackInstalledUpdate(installDir, oldHashes, inv, rollback, profileValue(managedService), err, deps.manage, deps.wait)
 	}
 	if managedService != nil {
-		if err := startManagedService(*managedService); err != nil {
-			return rollbackInstalledUpdate(installDir, oldHashes, inv, rollback, *managedService, fmt.Errorf("restart updated service: %w", err))
+		if err := deps.manage("start", serviceConfig(managedService)); err != nil {
+			return rollbackInstalledUpdate(installDir, oldHashes, inv, rollback, *managedService, fmt.Errorf("restart updated service: %w", err), deps.manage, deps.wait)
 		}
-		if err := waitForService(ctx, managedService.RuntimeDir); err != nil {
-			_ = service.Manage("stop", service.Config{ConfigDirectory: managedService.ConfigDir, StateDirectory: managedService.StateDir, RuntimeDirectory: managedService.RuntimeDir})
-			return rollbackInstalledUpdate(installDir, oldHashes, inv, rollback, *managedService, fmt.Errorf("updated service did not become ready: %w", err))
+		if err := deps.wait(ctx, managedService.RuntimeDir); err != nil {
+			_ = deps.manage("stop", serviceConfig(managedService))
+			return rollbackInstalledUpdate(installDir, oldHashes, inv, rollback, *managedService, fmt.Errorf("updated service did not become ready: %w", err), deps.manage, deps.wait)
 		}
-	} else if err := verifyUpdatedBinary(ctx, filepath.Join(installDir, binaryName()), tag); err != nil {
-		return rollbackInstalledUpdate(installDir, oldHashes, inv, rollback, installstate.Profile{}, err)
+	} else if err := deps.verify(ctx, filepath.Join(installDir, binaryNameFor(goos)), tag); err != nil {
+		return rollbackInstalledUpdate(installDir, oldHashes, inv, rollback, installstate.Profile{}, err, deps.manage, deps.wait)
 	}
 	if err := commit(); err != nil {
 		return fmt.Errorf("update succeeded but backup cleanup needs attention: %w", err)
@@ -178,7 +215,7 @@ func selfUpdate(ctx context.Context, out io.Writer, jsonOutput bool) error {
 	for _, f := range inv.Files {
 		filesUpdated = append(filesUpdated, f.Name)
 	}
-	return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "updated", PreviousVersion: Version, UpdatedVersion: tag, Files: filesUpdated})
+	return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "updated", PreviousVersion: currentVersion, UpdatedVersion: tag, Files: filesUpdated})
 }
 
 func recoverInterruptedUpdate(installDir string, inv installstate.Inventory) (bool, error) {
@@ -241,7 +278,11 @@ func newUpdateHelperCommand(app *application) *cobra.Command {
 }
 
 func binaryName() string {
-	if runtime.GOOS == "windows" {
+	return binaryNameFor(runtime.GOOS)
+}
+
+func binaryNameFor(goos string) string {
+	if goos == "windows" {
 		return "peerimeter-agent.exe"
 	}
 	return "peerimeter-agent"
@@ -311,7 +352,7 @@ func verifyUpdatedBinary(ctx context.Context, path, expectedVersion string) erro
 	return nil
 }
 
-func rollbackInstalledUpdate(dir string, oldHashes map[string]string, inv installstate.Inventory, rollback func() error, p installstate.Profile, cause error) error {
+func rollbackInstalledUpdate(dir string, oldHashes map[string]string, inv installstate.Inventory, rollback func() error, p installstate.Profile, cause error, manage updateServiceManager, wait updateServiceWaiter) error {
 	rollbackErr := rollback()
 	lock, err := installstate.Lock(dir)
 	if err != nil {
@@ -324,7 +365,7 @@ func rollbackInstalledUpdate(dir string, oldHashes map[string]string, inv instal
 		rollbackErr = errors.Join(rollbackErr, loadErr, lock.Close())
 	}
 	if p.Service {
-		rollbackErr = errors.Join(rollbackErr, startManagedService(p), waitForService(context.Background(), p.RuntimeDir))
+		rollbackErr = errors.Join(rollbackErr, manage("start", service.Config{ConfigDirectory: p.ConfigDir, StateDirectory: p.StateDir, RuntimeDirectory: p.RuntimeDir}), wait(context.Background(), p.RuntimeDir))
 	}
 	if rollbackErr != nil {
 		return errors.Join(cause, fmt.Errorf("automatic rollback was incomplete: %w", rollbackErr))

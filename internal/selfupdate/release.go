@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -29,13 +30,24 @@ type release struct {
 // entry from the release's SHA256SUMS file. The manifest and package share the
 // HTTPS GitHub release trust channel; no detached signature is implied.
 func Fetch(ctx context.Context, client *http.Client, goos, goarch string) (string, map[string][]byte, error) {
+	return fetchAt(ctx, client, goos, goarch, latestURL, "https://github.com/peerimeter/peerimeter-agent/releases/download/")
+}
+
+func fetchAt(ctx context.Context, client *http.Client, goos, goarch, latestEndpoint, releaseBase string) (string, map[string][]byte, error) {
 	if client == nil {
 		client = http.DefaultClient
+	}
+	baseURL, err := url.Parse(releaseBase)
+	if err != nil || baseURL.Scheme != "https" || baseURL.Host == "" || baseURL.User != nil || baseURL.RawQuery != "" || baseURL.Fragment != "" {
+		return "", nil, errors.New("release base URL must be an HTTPS origin or path")
+	}
+	if !strings.HasSuffix(baseURL.Path, "/") {
+		baseURL.Path += "/"
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	var latest release
-	if err := getJSON(ctx, client, latestURL, &latest); err != nil {
+	if err := getJSON(ctx, client, latestEndpoint, &latest); err != nil {
 		return "", nil, err
 	}
 	if !releaseTag.MatchString(latest.TagName) {
@@ -51,8 +63,9 @@ func Fetch(ctx context.Context, client *http.Client, goos, goarch string) (strin
 		return "", nil, fmt.Errorf("self-update does not support %s/%s", goos, goarch)
 	}
 	asset := "peerimeter-agent-" + goos + "-" + arch
-	base := "https://github.com/peerimeter/peerimeter-agent/releases/download/" + latest.TagName + "/"
-	manifest, err := getBytes(ctx, client, base+"SHA256SUMS", 2<<20)
+	base := *baseURL
+	base.Path += latest.TagName + "/"
+	manifest, err := getBytes(ctx, client, base.ResolveReference(&url.URL{Path: "SHA256SUMS"}).String(), 2<<20)
 	if err != nil {
 		return "", nil, fmt.Errorf("download release checksums: %w", err)
 	}
@@ -60,11 +73,12 @@ func Fetch(ctx context.Context, client *http.Client, goos, goarch string) (strin
 	if err != nil {
 		return "", nil, err
 	}
-	archive, err := getBytes(ctx, client, base+asset+assetExtension(goos), maxAssetSize)
+	archiveName := asset + assetExtension(goos)
+	archive, err := getBytes(ctx, client, base.ResolveReference(&url.URL{Path: archiveName}).String(), maxAssetSize)
 	if err != nil {
 		return "", nil, fmt.Errorf("download release package: %w", err)
 	}
-	if err := verifySum(sums, asset+assetExtension(goos), archive); err != nil {
+	if err := verifySum(sums, archiveName, archive); err != nil {
 		return "", nil, err
 	}
 	files, err := unpack(goos, archive)
@@ -73,7 +87,7 @@ func Fetch(ctx context.Context, client *http.Client, goos, goarch string) (strin
 	}
 	if goos != "windows" {
 		noticesName := asset + ".NOTICES.txt"
-		notices, err := getBytes(ctx, client, base+noticesName, 8<<20)
+		notices, err := getBytes(ctx, client, base.ResolveReference(&url.URL{Path: noticesName}).String(), 8<<20)
 		if err != nil {
 			return "", nil, fmt.Errorf("download release notices: %w", err)
 		}
