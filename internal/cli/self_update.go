@@ -75,6 +75,11 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	if inv.Removing {
 		return errors.New("this installation is being removed")
 	}
+	updateLock, err := selfupdate.LockUpdate(inv)
+	if err != nil {
+		return fmt.Errorf("another update or uninstall is already using this installation: %w", err)
+	}
+	defer updateLock.Close()
 	recovered, err := recoverInterruptedUpdate(installDir, inv)
 	if err != nil {
 		return err
@@ -179,10 +184,6 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 		_ = lock.Close()
 		return restartAfterFailure(managedService, err)
 	}
-	oldHashes := make(map[string]string, len(inv.Files))
-	for _, f := range inv.Files {
-		oldHashes[f.Name] = f.SHA256
-	}
 	newHashes, rollback, commit, err := selfupdate.Apply(inv, files)
 	if err != nil {
 		_ = lock.Close()
@@ -195,18 +196,18 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 		return restartAfterFailure(managedService, cause)
 	}
 	if err := lock.Close(); err != nil {
-		return rollbackInstalledUpdate(installDir, oldHashes, inv, rollback, profileValue(managedService), err, deps.manage, deps.wait)
+		return rollbackInstalledUpdate(installDir, rollback, profileValue(managedService), err, deps.manage, deps.wait)
 	}
 	if managedService != nil {
 		if err := deps.manage("start", serviceConfig(managedService)); err != nil {
-			return rollbackInstalledUpdate(installDir, oldHashes, inv, rollback, *managedService, fmt.Errorf("restart updated service: %w", err), deps.manage, deps.wait)
+			return rollbackInstalledUpdate(installDir, rollback, *managedService, fmt.Errorf("restart updated service: %w", err), deps.manage, deps.wait)
 		}
 		if err := deps.wait(ctx, managedService.RuntimeDir); err != nil {
 			_ = deps.manage("stop", serviceConfig(managedService))
-			return rollbackInstalledUpdate(installDir, oldHashes, inv, rollback, *managedService, fmt.Errorf("updated service did not become ready: %w", err), deps.manage, deps.wait)
+			return rollbackInstalledUpdate(installDir, rollback, *managedService, fmt.Errorf("updated service did not become ready: %w", err), deps.manage, deps.wait)
 		}
 	} else if err := deps.verify(ctx, filepath.Join(installDir, binaryNameFor(goos)), tag); err != nil {
-		return rollbackInstalledUpdate(installDir, oldHashes, inv, rollback, installstate.Profile{}, err, deps.manage, deps.wait)
+		return rollbackInstalledUpdate(installDir, rollback, installstate.Profile{}, err, deps.manage, deps.wait)
 	}
 	if err := commit(); err != nil {
 		return fmt.Errorf("update succeeded but backup cleanup needs attention: %w", err)
@@ -275,10 +276,6 @@ func newUpdateHelperCommand(app *application) *cobra.Command {
 			return runWindowsUpdateHelper(cmd.Context(), args)
 		},
 	}
-}
-
-func binaryName() string {
-	return binaryNameFor(runtime.GOOS)
 }
 
 func binaryNameFor(goos string) string {
@@ -352,18 +349,12 @@ func verifyUpdatedBinary(ctx context.Context, path, expectedVersion string) erro
 	return nil
 }
 
-func rollbackInstalledUpdate(dir string, oldHashes map[string]string, inv installstate.Inventory, rollback func() error, p installstate.Profile, cause error, manage updateServiceManager, wait updateServiceWaiter) error {
-	rollbackErr := rollback()
+func rollbackInstalledUpdate(dir string, rollback func() error, p installstate.Profile, cause error, manage updateServiceManager, wait updateServiceWaiter) error {
 	lock, err := installstate.Lock(dir)
 	if err != nil {
-		rollbackErr = errors.Join(rollbackErr, err)
-	} else {
-		current, loadErr := installstate.Load(dir)
-		if loadErr == nil {
-			loadErr = installstate.UpdateProgramHashesLocked(current, oldHashes)
-		}
-		rollbackErr = errors.Join(rollbackErr, loadErr, lock.Close())
+		return errors.Join(cause, fmt.Errorf("automatic rollback was incomplete: %w", err))
 	}
+	rollbackErr := errors.Join(rollback(), lock.Close())
 	if p.Service {
 		rollbackErr = errors.Join(rollbackErr, manage("start", service.Config{ConfigDirectory: p.ConfigDir, StateDirectory: p.StateDir, RuntimeDirectory: p.RuntimeDir}), wait(context.Background(), p.RuntimeDir))
 	}

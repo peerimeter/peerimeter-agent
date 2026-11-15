@@ -58,6 +58,10 @@ func replaceFile(stage, path, backup string) error {
 	if err := destination.Close(); err != nil {
 		return err
 	}
+	// Persist the backup directory entry before replacing the only installed copy.
+	if err := syncDirectory(filepath.Dir(path)); err != nil {
+		return err
+	}
 	if err := os.Rename(stage, path); err != nil {
 		return err
 	}

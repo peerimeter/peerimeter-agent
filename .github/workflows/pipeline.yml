@@ -49,6 +49,10 @@ jobs:
           go vet ./...
           go test -race ./...
           go build -o "$AGENT_EXE" ./cmd/peerimeter-agent
+      - name: Self-update installed-binary E2E
+        env:
+          PEERIMETER_SELF_UPDATE_E2E: '1'
+        run: go test ./internal/cli -run '^TestSelfUpdateBinaryEndToEnd$' -count=1
       - name: Offline CLI smoke tests
         id: smoke
         run: |

@@ -207,6 +207,15 @@ func TestSelfUpdateIntegrationRestartsManagedServiceAfterReplacement(t *testing.
 	var waitedFor []string
 	wait := func(_ context.Context, runtimeDir string) error {
 		waitedFor = append(waitedFor, runtimeDir)
+		inv, err := installstate.Load(f.install)
+		if err != nil {
+			return err
+		}
+		concurrent, err := selfupdate.LockUpdate(inv)
+		if err == nil {
+			_ = concurrent.Close()
+			return errors.New("another update acquired ownership before readiness verification completed")
+		}
 		return nil
 	}
 	var output bytes.Buffer
@@ -216,6 +225,17 @@ func TestSelfUpdateIntegrationRestartsManagedServiceAfterReplacement(t *testing.
 	}
 	if !reflect.DeepEqual(actions, []string{"stop", "start"}) || !reflect.DeepEqual(waitedFor, []string{f.runtime}) {
 		t.Fatalf("managed service lifecycle: actions=%v waits=%v", actions, waitedFor)
+	}
+	inv, err := installstate.Load(f.install)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updateLock, err := selfupdate.LockUpdate(inv)
+	if err != nil {
+		t.Fatalf("update ownership lock was not released after commit: %v", err)
+	}
+	if err := updateLock.Close(); err != nil {
+		t.Fatal(err)
 	}
 	var result selfUpdateResult
 	if err := json.Unmarshal(output.Bytes(), &result); err != nil || result.State != "updated" {
@@ -286,7 +306,25 @@ func TestSelfUpdateIntegrationRecoversInterruptedTransactionBeforeFetching(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
+	updateLock, err := selfupdate.LockUpdate(inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := installstate.Lock(f.install)
+	if err != nil {
+		_ = updateLock.Close()
+		t.Fatal(err)
+	}
 	if _, _, _, err := selfupdate.Apply(inv, f.files); err != nil {
+		_ = lock.Close()
+		_ = updateLock.Close()
+		t.Fatal(err)
+	}
+	if err := lock.Close(); err != nil {
+		_ = updateLock.Close()
+		t.Fatal(err)
+	}
+	if err := updateLock.Close(); err != nil {
 		t.Fatal(err)
 	}
 	deps := f.deps("v1.2.0", nil, nil)

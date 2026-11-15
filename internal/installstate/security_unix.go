@@ -93,6 +93,14 @@ func protect(path string) error {
 func protectCreatedTemp(path string) error {
 	return checkExtendedTrust(path, true, false)
 }
+func syncInventoryDirectory(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
+}
 func lockInventory(path string) (*os.File, error) {
 	fd, err := unix.Open(path, unix.O_RDWR|unix.O_CREAT|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0600)
 	if err != nil {

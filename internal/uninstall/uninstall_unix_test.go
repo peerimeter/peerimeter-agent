@@ -136,6 +136,26 @@ func TestUninstallRefusesPendingSelfUpdateRecovery(t *testing.T) {
 		t.Fatalf("pending journal was removed: %v", err)
 	}
 }
+
+func TestUninstallRefusesActiveSelfUpdate(t *testing.T) {
+	dir, _ := prepareUninstall(t)
+	inv, err := installstate.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updateLock, err := selfupdate.LockUpdate(inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer updateLock.Close()
+	if err := Execute(context.Background(), Options{InstallDir: dir}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "self-update is using this installation") {
+		t.Fatalf("uninstall did not respect active update ownership: %v", err)
+	}
+	current, err := installstate.Load(dir)
+	if err != nil || current.Removing {
+		t.Fatalf("busy updater caused installation removal: inv=%+v err=%v", current, err)
+	}
+}
 func TestFullRemovalPreservesUnrelatedAndSupportsRetry(t *testing.T) {
 	dir, p := prepareUninstall(t)
 	var untouched []string
@@ -198,6 +218,11 @@ func TestLivePersistentGuardPreventsDeletion(t *testing.T) {
 	}
 	defer guard.Close()
 	before := snapshotTree(t, filepath.Dir(dir))
+	inv, err := installstate.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updateLockPath := filepath.Join(inv.LockDir, selfupdate.UpdateLockFilename)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	if err := Execute(ctx, Options{InstallDir: dir}, &bytes.Buffer{}); err == nil {
@@ -206,6 +231,8 @@ func TestLivePersistentGuardPreventsDeletion(t *testing.T) {
 	after := snapshotTree(t, filepath.Dir(dir))
 	delete(before, filepath.Join(dir, installstate.Filename))
 	delete(after, filepath.Join(dir, installstate.Filename))
+	delete(before, updateLockPath)
+	delete(after, updateLockPath)
 	delete(before, dir)
 	delete(after, dir)
 	if !reflect.DeepEqual(before, after) {

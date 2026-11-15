@@ -491,7 +491,10 @@ func UpdateProgramHashesLocked(inv Inventory, hashes map[string]string) error {
 		}
 		inv.Files[i].SHA256 = strings.ToLower(digest)
 	}
-	return save(inv)
+	if err := save(inv); err != nil {
+		return err
+	}
+	return syncInventoryDirectory(inv.DataDir)
 }
 
 // Lock serializes inventory mutations. Dry-run must never call this function.
@@ -532,6 +535,18 @@ func LockWithPolicy(dir string, allowInsecure bool) (io.Closer, error) {
 		return nil, err
 	}
 	return lockInventory(filepath.Join(dir, LockFilename))
+}
+
+// LockNamed serializes an operation with its own lock file in a trusted
+// directory, without blocking service startup on the inventory lock.
+func LockNamed(dir, name string, allowInsecure bool) (io.Closer, error) {
+	if name == "" || name == "." || name == ".." || filepath.Base(name) != name || strings.ContainsAny(name, "\\/\x00\r\n") {
+		return nil, errors.New("invalid installation lock name")
+	}
+	if err := CheckDirectoryWithPolicy(dir, allowInsecure); err != nil {
+		return nil, err
+	}
+	return lockInventory(filepath.Join(dir, name))
 }
 
 // Register is called by the verified installer after program files are in place.
