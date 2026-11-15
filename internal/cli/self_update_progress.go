@@ -22,15 +22,16 @@ type selfUpdateProgress struct {
 
 type selfUpdateProgressStart struct{ message string }
 type selfUpdateProgressFinish struct{ err error }
-type selfUpdateProgressTick struct{}
+type selfUpdateProgressTick struct{ generation uint64 }
 type selfUpdateProgressClose struct{}
 
 type selfUpdateProgressModel struct {
-	bar     progress.Model
-	message string
-	active  bool
-	err     error
-	percent float64
+	bar        progress.Model
+	message    string
+	active     bool
+	err        error
+	percent    float64
+	generation uint64
 }
 
 func newSelfUpdateProgress(out io.Writer) *selfUpdateProgress {
@@ -73,17 +74,19 @@ func (p *selfUpdateProgress) getProgram() *tea.Program {
 			progress.WithoutPercentage(),
 			progress.WithDefaultBlend(),
 		)}
-		p.program = tea.NewProgram(model, tea.WithInput(nil), tea.WithOutput(p.out))
-		p.stopped = make(chan struct{})
+		program := tea.NewProgram(model, tea.WithInput(nil), tea.WithOutput(p.out))
+		stopped := make(chan struct{})
+		p.program = program
+		p.stopped = stopped
 		go func() {
-			_, _ = p.program.Run()
-			close(p.stopped)
+			_, _ = program.Run()
+			close(stopped)
 		}()
 	}
 	return p.program
 }
 
-func (p *selfUpdateProgress) close() {
+func (p *selfUpdateProgress) stop() {
 	if p == nil || !p.tty {
 		return
 	}
@@ -95,6 +98,12 @@ func (p *selfUpdateProgress) close() {
 	}
 	program.Send(selfUpdateProgressClose{})
 	<-stopped
+	p.mu.Lock()
+	if p.program == program {
+		p.program = nil
+		p.stopped = nil
+	}
+	p.mu.Unlock()
 }
 
 func (m selfUpdateProgressModel) Init() tea.Cmd { return nil }
@@ -103,17 +112,19 @@ func (m selfUpdateProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case selfUpdateProgressStart:
 		m.message, m.active, m.err, m.percent = msg.message, true, nil, 0
-		return m, tea.Batch(m.bar.SetPercent(0), selfUpdateProgressTickCmd())
+		m.generation++
+		return m, tea.Batch(m.bar.SetPercent(0), selfUpdateProgressTickCmd(m.generation))
 	case selfUpdateProgressFinish:
 		m.active, m.err, m.percent = false, msg.err, 1
+		m.generation++
 		return m, m.bar.SetPercent(1)
 	case selfUpdateProgressTick:
-		if m.active {
+		if m.active && msg.generation == m.generation {
 			m.percent += 0.06
 			if m.percent > 0.9 {
 				m.percent = 0.06
 			}
-			return m, tea.Batch(m.bar.SetPercent(m.percent), selfUpdateProgressTickCmd())
+			return m, tea.Batch(m.bar.SetPercent(m.percent), selfUpdateProgressTickCmd(m.generation))
 		}
 	case progress.FrameMsg:
 		var cmd tea.Cmd
@@ -132,11 +143,13 @@ func (m selfUpdateProgressModel) View() tea.View {
 	} else if m.err != nil {
 		icon = "✗"
 	}
-	return tea.NewView(fmt.Sprintf("%s %s\n%s", icon, m.message, m.bar.View()))
+	v := tea.NewView(fmt.Sprintf("%s %s\n%s", icon, m.message, m.bar.View()))
+	v.DisableBracketedPasteMode = true
+	return v
 }
 
-func selfUpdateProgressTickCmd() tea.Cmd {
-	return tea.Tick(140*time.Millisecond, func(time.Time) tea.Msg { return selfUpdateProgressTick{} })
+func selfUpdateProgressTickCmd(generation uint64) tea.Cmd {
+	return tea.Tick(140*time.Millisecond, func(time.Time) tea.Msg { return selfUpdateProgressTick{generation: generation} })
 }
 
 func runSelfUpdateStep[T any](progress *selfUpdateProgress, message string, action func() (T, error)) (T, error) {
