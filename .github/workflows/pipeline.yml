@@ -36,7 +36,7 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
-          cache: false
+          cache-dependency-path: go.sum
       - name: Format, vet, tests and build
         id: tests
         run: |
@@ -84,7 +84,7 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
-          cache: false
+          cache-dependency-path: go.sum
       - name: Build actual agent and reference peer
         shell: bash
         run: |
@@ -170,7 +170,7 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
-          cache: false
+          cache-dependency-path: go.sum
       - name: Build package with licenses and bundled Windows driver
         shell: bash
         run: python scripts/package.py --os '${{ matrix.os }}' --arch '${{ matrix.arch }}' --version "$RELEASE_VERSION"
@@ -265,7 +265,7 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
-          cache: false
+          cache-dependency-path: go.sum
       - name: Create local release tag for GoReleaser
         run: git tag "$RELEASE_TAG" "$GITHUB_SHA"
       - name: Build and publish with GoReleaser
