@@ -4,7 +4,6 @@ package service
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -19,6 +18,7 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/paths"
 	"github.com/peerimeter/peerimeter-agent/internal/secret"
+	"gopkg.in/yaml.v3"
 )
 
 type Config struct{ ConfigPath, ConfigDirectory, StateDirectory, RuntimeDirectory, Operator string }
@@ -30,7 +30,7 @@ func normalized(cfg Config) (Config, error) {
 	}
 	cfg.ConfigDirectory, cfg.StateDirectory, cfg.RuntimeDirectory = layout.ConfigDir, layout.StateDir, layout.RuntimeDir
 	if cfg.ConfigPath == "" {
-		cfg.ConfigPath = filepath.Join(cfg.ConfigDirectory, "service.json")
+		cfg.ConfigPath = filepath.Join(cfg.ConfigDirectory, "service.yaml")
 	}
 	return cfg, nil
 }
@@ -60,7 +60,7 @@ func Manage(action string, cfg Config) error {
 			return migrate(cfg, func(legacy Config) error { return RemoveOwned(context.Background(), currentExecutable(), legacy) }, func(next Config) error { return registerMigratedService(next) }, nativeSecureFiles)
 		}
 		if runtime.GOOS != "windows" && cfg.ConfigDirectory != cfg.StateDirectory {
-			if _, err := os.Lstat(filepath.Join(cfg.StateDirectory, "service.json")); err == nil {
+			if _, err := os.Lstat(filepath.Join(cfg.StateDirectory, "service.yaml")); err == nil {
 				return errors.New("legacy combined service layout requires explicit service migrate before installation")
 			} else if !os.IsNotExist(err) {
 				return err
@@ -138,7 +138,7 @@ func provision(cfg *Config, secure func(...string) error) (copied bool, resultEr
 	} else {
 		return false, fmt.Errorf("cannot inspect service configuration directory %s: %w", directory, err)
 	}
-	destination := filepath.Join(directory, "service.json")
+	destination := filepath.Join(directory, "service.yaml")
 	keyPath := filepath.Join(directory, "service.key")
 	if _, err := os.Lstat(destination); err == nil {
 		if err := installstate.CheckPrivateFile(destination); err != nil {
@@ -173,16 +173,16 @@ func provision(cfg *Config, secure func(...string) error) (copied bool, resultEr
 		return false, err
 	}
 	success := false
-	jsonCreated := false
+	configCreated := false
 	defer func() {
 		if !success {
 			owned := *cfg
 			owned.ConfigPath = destination
-			resultError = errors.Join(resultError, rollbackSnapshotFiles(owned, jsonCreated))
+			resultError = errors.Join(resultError, rollbackSnapshotFiles(owned, configCreated))
 		}
 	}()
 	desired.Interface.PrivateKeyFile = keyPath
-	data, err := json.MarshalIndent(desired, "", "  ")
+	data, err := yaml.Marshal(desired)
 	if err != nil {
 		return false, errors.New("cannot encode protected service configuration")
 	}
@@ -190,7 +190,7 @@ func provision(cfg *Config, secure func(...string) error) (copied bool, resultEr
 	if err != nil {
 		return false, errors.New("cannot create protected service configuration")
 	}
-	jsonCreated = true
+	configCreated = true
 	if _, err = f.Write(append(data, '\n')); err != nil {
 		f.Close()
 		return false, errors.New("cannot write protected service configuration")
@@ -284,15 +284,15 @@ func migrateWithContext(ctx context.Context, cfg Config, unregister func(Config)
 		return err
 	}
 	defer startup.Close()
-	legacyJSON := filepath.Join(cfg.StateDirectory, "service.json")
+	legacyConfig := filepath.Join(cfg.StateDirectory, "service.yaml")
 	legacyKey := filepath.Join(cfg.StateDirectory, "service.key")
 	if snapshotDirectory(cfg) == cfg.StateDirectory || cfg.RuntimeDirectory == cfg.StateDirectory {
 		return errors.New("migration requires separate config, persistent state and runtime directories")
 	}
-	if err := validateLegacySnapshot(legacyJSON); err != nil {
+	if err := validateLegacySnapshot(legacyConfig); err != nil {
 		return err
 	}
-	legacy, err := config.Load(legacyJSON)
+	legacy, err := config.Load(legacyConfig)
 	if err != nil {
 		return err
 	}
@@ -311,7 +311,7 @@ func migrateWithContext(ctx context.Context, cfg Config, unregister func(Config)
 	if err := validateConfigOwnership(cfg); err != nil {
 		return err
 	}
-	for _, name := range []string{"service.json", "service.key"} {
+	for _, name := range []string{"service.yaml", "service.key"} {
 		if _, err := os.Lstat(filepath.Join(snapshotDirectory(cfg), name)); err == nil {
 			return errors.New("migration destination already contains service configuration or keys; refusing to overwrite")
 		} else if !os.IsNotExist(err) {
@@ -320,7 +320,7 @@ func migrateWithContext(ctx context.Context, cfg Config, unregister func(Config)
 	}
 	old := cfg
 	old.ConfigDirectory = cfg.StateDirectory
-	old.ConfigPath = legacyJSON
+	old.ConfigPath = legacyConfig
 	old.RuntimeDirectory = cfg.StateDirectory
 	if err := validateConfigOwnership(old); err != nil {
 		return err
@@ -366,7 +366,7 @@ func migrateWithContext(ctx context.Context, cfg Config, unregister func(Config)
 	if err := planAndClaimLegacy(lease, old); err != nil {
 		return err
 	}
-	cfg.ConfigPath = legacyJSON
+	cfg.ConfigPath = legacyConfig
 	created, err := provision(&cfg, secure)
 	if err != nil {
 		return err
@@ -392,7 +392,7 @@ func migrateWithContext(ctx context.Context, cfg Config, unregister func(Config)
 	// The directory lock proves the current manager released the legacy state.
 	// Persistent network/ownership files are untouched.
 	var cleanup []error
-	for _, path := range []string{legacyJSON, legacyKey, filepath.Join(cfg.StateDirectory, "agent.lock")} {
+	for _, path := range []string{legacyConfig, legacyKey, filepath.Join(cfg.StateDirectory, "agent.lock")} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			cleanup = append(cleanup, err)
 		}

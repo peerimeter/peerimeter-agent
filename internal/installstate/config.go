@@ -52,7 +52,7 @@ func claimConfig(inv Inventory, p Profile) error {
 	if err := ValidateConfigClaim(inv.InstallDir, p.StateDir, p.ConfigDir); err != nil {
 		return err
 	}
-	for _, name := range []string{"service.json", "service.key"} {
+	for _, name := range []string{"service.yaml", "service.key"} {
 		if err := CheckFile(filepath.Join(p.ConfigDir, name)); err != nil {
 			return errors.New("protected configuration snapshots must be provisioned before claiming ownership")
 		}
@@ -149,7 +149,7 @@ func ReleaseConfig(dir, stateDir, configDir string) error {
 		if !owned {
 			return nil
 		}
-		for _, name := range []string{"service.json", "service.key"} {
+		for _, name := range []string{"service.yaml", "service.key"} {
 			if _, e := os.Lstat(filepath.Join(configDir, name)); !os.IsNotExist(e) {
 				return errors.New("legacy configuration snapshots remain; ownership marker was preserved")
 			}

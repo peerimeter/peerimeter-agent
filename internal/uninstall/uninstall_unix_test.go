@@ -45,7 +45,7 @@ func prepareUninstall(t *testing.T) (string, installstate.Profile) {
 	if err := installstate.Register(dir); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{filepath.Join(p.ConfigDir, "service.json"), filepath.Join(p.ConfigDir, "service.key"), filepath.Join(p.StateDir, "network.json")} {
+	for _, path := range []string{filepath.Join(p.ConfigDir, "service.yaml"), filepath.Join(p.ConfigDir, "service.key"), filepath.Join(p.StateDir, "network.json")} {
 		if err := os.WriteFile(path, []byte("private fixture"), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -201,7 +201,7 @@ func TestFullRemovalPreservesUnrelatedAndSupportsRetry(t *testing.T) {
 			t.Fatal("unrelated custom-parent content was removed")
 		}
 	}
-	for _, path := range []string{filepath.Join(p.ConfigDir, "service.key"), filepath.Join(p.ConfigDir, "service.json"), filepath.Join(p.StateDir, "network.json"), filepath.Join(p.StateDir, installstate.MarkerFilename), filepath.Join(dir, installstate.Filename)} {
+	for _, path := range []string{filepath.Join(p.ConfigDir, "service.key"), filepath.Join(p.ConfigDir, "service.yaml"), filepath.Join(p.StateDir, "network.json"), filepath.Join(p.StateDir, installstate.MarkerFilename), filepath.Join(dir, installstate.Filename)} {
 		if _, e := os.Lstat(path); !os.IsNotExist(e) {
 			t.Fatalf("owned file remained: %s", path)
 		}
@@ -401,7 +401,7 @@ func TestUntrackedNativeRegistrationBlocksProgramAndIdentityDeletion(t *testing.
 	if calls != 1 || bytes.Contains(out.Bytes(), []byte(`"state":"removed"`)) {
 		t.Fatal("untracked service was ignored or removal was falsely reported")
 	}
-	for _, path := range []string{filepath.Join(dir, "peerimeter-agent"), filepath.Join(dir, "peerimeter-agent.NOTICES.txt"), filepath.Join(p.ConfigDir, "service.json"), filepath.Join(p.ConfigDir, "service.key"), filepath.Join(p.StateDir, "network.json")} {
+	for _, path := range []string{filepath.Join(dir, "peerimeter-agent"), filepath.Join(dir, "peerimeter-agent.NOTICES.txt"), filepath.Join(p.ConfigDir, "service.yaml"), filepath.Join(p.ConfigDir, "service.key"), filepath.Join(p.StateDir, "network.json")} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("registration guard deleted preserved resource %s", path)
 		}

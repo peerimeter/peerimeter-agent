@@ -28,11 +28,11 @@ func newRunCommand(app *application) *cobra.Command {
 			return err
 		}
 		if path == "" {
-			path = filepath.Join(layout.ConfigDir, "service.json")
+			path = filepath.Join(layout.ConfigDir, "service.yaml")
 		}
 		return staticCommand(cmd.Context(), cmd.Name(), path, override, layout, operator, app.out, app.backend)
 	})}
-	cmd.Flags().StringVar(&path, "config", "", "Direct static JSON path (overrides installed config-dir/service.json)")
+	cmd.Flags().StringVar(&path, "config", "", "Direct static YAML path (overrides installed config-dir/service.yaml)")
 	cmd.Flags().StringVar(&override, "interface", "", "Linux-only initial local interface name override")
 	cmd.Flags().StringVar(&operator, "operator", "", "Authorized local username/UID or Windows account/SID")
 	directoryFlags(cmd, &options)

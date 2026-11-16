@@ -1,7 +1,7 @@
 # Peerimeter Agent
 
 An offline-first, headless WireGuard mesh agent for Linux, macOS and Windows.
-Static mode configures peers with local JSON and runs direct WireGuard
+Static mode configures peers with local YAML and runs direct WireGuard
 connections without an API server, enrollment, MQTT or STUN. No relay or
 desktop application.
 
@@ -41,8 +41,8 @@ export GOTOOLCHAIN=go1.27.4
 go test ./...
 go build -o bin/peerimeter-agent ./cmd/peerimeter-agent
 ./bin/peerimeter-agent generate-example --directory ./local-example
-./bin/peerimeter-agent validate-config --config ./local-example/peer-a.json
-sudo ./bin/peerimeter-agent run --config /absolute/path/to/peer.json
+./bin/peerimeter-agent validate-config --config ./local-example/peer-a.yaml
+sudo ./bin/peerimeter-agent run --config /absolute/path/to/peer.yaml
 ```
 
 Keys must belong to the effective runtime user. For a foreground root process,
@@ -198,7 +198,7 @@ normal CI.
 ## Offline configuration
 
 See the [version 1 schema](schemas/static-v1.schema.json) and [paired
-examples](examples/README.md). Unknown/duplicate JSON members, invalid keys,
+examples](examples/README.md). Unknown or duplicate YAML fields, invalid keys,
 conflicting addresses/routes and endpoints captured by tunnel routes are
 rejected before changing OS state. Endpoints are numeric IPv4:port or
 `[IPv6]:port`; validation never performs DNS lookups. Private keys live in
@@ -214,7 +214,7 @@ Parent directories must be trusted.
 ## Service configuration API
 
 The optional `config pull` and `config push` commands exchange version 1 network
-or node JSON with `peerimeter-service`. They do not change the static runtime or
+or node YAML with `peerimeter-service`. They do not change the static runtime or
 persist credentials. Each request needs the network ID and, for node config,
 the node ID. The Base64URL join token carries the HTTPS API URL and an
 `enrollment_token`; in the current service this value is the shared static API
@@ -226,11 +226,11 @@ When using the service's `/api/v1/join-bundle` response, save the value of its
 
 ```sh
 peerimeter-agent config pull --token-file /secure/join-token.txt \
-  --kind network --network-id mesh-a --file ./network.json
+  --kind network --network-id mesh-a --file ./network.yaml
 peerimeter-agent config pull --token-file /secure/join-token.txt \
-  --kind node --network-id mesh-a --node-id node-1 --file ./node.json
+  --kind node --network-id mesh-a --node-id node-1 --file ./node.yaml
 peerimeter-agent config push --token-file /secure/join-token.txt \
-  --kind network --network-id mesh-a --file ./network.json
+  --kind network --network-id mesh-a --file ./network.yaml
 ```
 
 On Linux and macOS, protect the token file with owner-only permissions (for
@@ -242,10 +242,10 @@ multi-network runtime management are not implemented yet.
 ## Foreground and local control
 
 ```sh
-sudo peerimeter-agent run --config /absolute/path/to/peer.json
+sudo peerimeter-agent run --config /absolute/path/to/peer.yaml
 sudo peerimeter-agent status
 sudo peerimeter-agent status --watch
-sudo peerimeter-agent sync       # validate and reapply the original JSON file
+sudo peerimeter-agent sync       # validate and reapply the original YAML file
 sudo peerimeter-agent stop       # graceful tunnel/route cleanup
 ```
 
@@ -288,8 +288,8 @@ control access.
 Overrides must be absolute. Unix directories are separate; on Windows an
 explicit `--state-dir` also supplies the default config/runtime location unless
 overridden. `run --config <file>` uses the original file directly and never
-relocates it; without `--config`, the installed `config-dir/service.json` is
-used. Relative key references remain relative to the original JSON file.
+relocates it; without `--config`, the installed `config-dir/service.yaml` is
+used. Relative key references remain relative to the original YAML file.
 
 Control commands use the selected `--runtime-dir`; custom runtime paths must be
 supplied consistently. Persistent state locks prevent two managers for one state
@@ -311,7 +311,7 @@ first five bytes (trim trailing hyphen), `-`, and the first six hex digits of
 SHA-256 of the immutable network ID. An empty slug uses `pm-<hash>`. Explicit
 names allow ASCII letters/digits/`._-`, up to 15 bytes, excluding `.` and `..`.
 
-`run --interface wg-prod` overrides JSON `interface.name` at initial setup. The
+`run --interface wg-prod` overrides YAML `interface.name` at initial setup. The
 resolved selection persists and survives display-name changes. Implicit renames
 and unrelated existing interfaces are rejected. Overrides are Linux-only; macOS
 allocates an actual utun and Windows uses a stable network-derived alias.
@@ -322,7 +322,7 @@ Install the executable in a protected stable directory first. System service
 installation requires administrator/root privileges and absolute paths:
 
 ```sh
-sudo peerimeter-agent service install --config /absolute/path/to/peer.json --operator alice
+sudo peerimeter-agent service install --config /absolute/path/to/peer.yaml --operator alice
 sudo peerimeter-agent service start
 sudo peerimeter-agent status
 sudo peerimeter-agent service stop
@@ -331,7 +331,7 @@ sudo peerimeter-agent service uninstall
 
 Windows uses the same subcommands in an elevated terminal. Replace `alice` with
 an existing authorized local account. Installation snapshots the validated
-config/key into protected `service.json` and `service.key` under the
+config/key into protected `service.yaml` and `service.key` under the
 configuration directory; the original files stay unchanged. Edit the protected
 installed config and use `sync` for later updates.
 
@@ -437,18 +437,18 @@ console output or `json` for structured JSON logs. Console mode respects
 `NO_COLOR` and does not emit ANSI codes when output is piped:
 
 ```sh
-PEERIMETER_LOG_FORMAT=json peerimeter-agent run --config ./peer.json
-PEERIMETER_LOG_FORMAT=text peerimeter-agent run --config ./peer.json
+PEERIMETER_LOG_FORMAT=json peerimeter-agent run --config ./peer.yaml
+PEERIMETER_LOG_FORMAT=text peerimeter-agent run --config ./peer.yaml
 ```
 
 In PowerShell, set it for the current session with
 `$env:PEERIMETER_LOG_FORMAT = 'json'` or `'text'` before starting the agent.
 
 Static config loading errors include the file path and underlying operating system
-or JSON decoding error. Add `--debug` to include the captured source stack trace:
+or YAML decoding error. Add `--debug` to include the captured source stack trace:
 
 ```sh
-peerimeter-agent validate-config --config ./peer-a.json --debug
+peerimeter-agent validate-config --config ./peer-a.yaml --debug
 ```
 
 Stack traces are omitted by default. Config values and private key contents remain
@@ -504,7 +504,8 @@ configuration validation, service actions, sync, stop and uninstall. Use `--json
 when a script needs the machine-readable result. For `run`, `--json` selects
 newline-delimited structured JSON runtime logs on stderr; it does not change the
 agent's normal stdout output. `PEERIMETER_LOG_FORMAT` controls diagnostic logs
-unless `--json` is supplied. Config files and the local control protocol remain JSON.
+unless `--json` is supplied. Config files use YAML; the local control protocol
+remains JSON.
 
 STUN uses a Bubble Tea progress indicator in an interactive terminal and prints
 a table containing the STUN server, local address and mapped address on completion.

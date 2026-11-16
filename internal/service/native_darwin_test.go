@@ -13,7 +13,7 @@ import (
 
 func TestDarwinPlistPreservesArgumentsAndRestartPolicy(t *testing.T) {
 	executable := "/Library/Peerimeter & Tools/peerimeter-agent"
-	cfg := Config{ConfigPath: "/var/lib/peerimeter/<private>/service.json", StateDirectory: "/var/lib/peerimeter/state with spaces"}
+	cfg := Config{ConfigPath: "/var/lib/peerimeter/<private>/service.yaml", StateDirectory: "/var/lib/peerimeter/state with spaces"}
 	data, err := darwinPlist(executable, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestDarwinPlistRejectsControlCharacters(t *testing.T) {
 
 func TestDarwinReadOnlyRegistrationMatchesExactExecutable(t *testing.T) {
 	executable := "/opt/Peerimeter Agent/bin/peerimeter-agent"
-	plist, err := darwinPlist(executable, Config{ConfigPath: "/etc/peerimeter/service.json", StateDirectory: "/Library/Application Support/Peerimeter", RuntimeDirectory: "/var/run/peerimeter-agent"})
+	plist, err := darwinPlist(executable, Config{ConfigPath: "/etc/peerimeter/service.yaml", StateDirectory: "/Library/Application Support/Peerimeter", RuntimeDirectory: "/var/run/peerimeter-agent"})
 	if err != nil {
 		t.Fatal(err)
 	}

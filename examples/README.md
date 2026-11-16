@@ -3,12 +3,12 @@
 [Agent documentation](../README.md) · [Configuration
 schema](../schemas/static-v1.schema.json)
 
-These JSON files demonstrate the version 1 contract:
+These YAML files demonstrate the version 1 contract:
 
 | File | Describes |
 | --- | --- |
-| [peer-a.json](peer-a.json) | The first local interface and its remote peer |
-| [peer-b.json](peer-b.json) | The matching second interface and its remote peer |
+| [peer-a.yaml](peer-a.yaml) | The first local interface and its remote peer |
+| [peer-b.yaml](peer-b.yaml) | The matching second interface and its remote peer |
 
 They contain public example keys and references to **absent private key files**.
 They are templates; they cannot establish a tunnel as checked in.
@@ -20,8 +20,8 @@ protected private keys:
 
 ```sh
 go run ./cmd/peerimeter-agent generate-example --directory ./local-example
-go run ./cmd/peerimeter-agent validate-config --config ./local-example/peer-a.json
-go run ./cmd/peerimeter-agent validate-config --config ./local-example/peer-b.json
+go run ./cmd/peerimeter-agent validate-config --config ./local-example/peer-a.yaml
+go run ./cmd/peerimeter-agent validate-config --config ./local-example/peer-b.yaml
 ```
 
 **Do not commit `local-example` or its private keys.**
@@ -32,7 +32,7 @@ For a three-device full mesh, generate three configs and private keys:
 peerimeter-agent generate-example --directory ./three-peers --peers 3
 ```
 
-The files are `peer-a`, `peer-b`, and `peer-c`; each JSON lists the other two
+The files are `peer-a`, `peer-b`, and `peer-c`; each YAML file lists the other two
 peers. The supported count is 2–253, with `peer-27` and higher after `peer-z`.
 By default, endpoints are loopback examples and must be replaced with the
 reachable numeric IP and UDP port of each device before deployment.

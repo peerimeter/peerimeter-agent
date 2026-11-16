@@ -368,7 +368,7 @@ func TestConfigOwnershipCannotBeClaimedByPlannedForeignProfile(t *testing.T) {
 	a, b := fixtureInstall(t), fixtureInstall(t)
 	pa, pb := fixtureProfile(t), fixtureProfile(t)
 	pb.ConfigDir = pa.ConfigDir
-	for _, name := range []string{"service.json", "service.key"} {
+	for _, name := range []string{"service.yaml", "service.key"} {
 		if err := os.WriteFile(filepath.Join(pa.ConfigDir, name), []byte("private installed snapshot"), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -409,7 +409,7 @@ func TestMigrationClaimTracksProvisionalConfigWithoutChangingActivePaths(t *test
 	before, _ := Load(dir)
 	next := fixtureProfile(t)
 	next.StateDir = old.StateDir
-	for _, name := range []string{"service.json", "service.key"} {
+	for _, name := range []string{"service.yaml", "service.key"} {
 		if err := os.WriteFile(filepath.Join(next.ConfigDir, name), []byte("private migrated snapshot"), 0600); err != nil {
 			t.Fatal(err)
 		}

@@ -8,10 +8,11 @@ import (
 	"os"
 	"strings"
 
+	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"golang.org/x/term"
 )
 
-const FormatEnv = "PEERIMETER_LOG_FORMAT"
+const FormatEnv = config.LogFormatEnv
 
 // NewHandler selects console, plain text, or JSON logging. Console output colors
 // log levels only when writing to a terminal and honors NO_COLOR.

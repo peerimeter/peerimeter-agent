@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/diagnostic"
 	"github.com/peerimeter/peerimeter-agent/internal/logging"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
@@ -58,9 +59,25 @@ func noArguments(_ *cobra.Command, args []string) error {
 	return nil
 }
 func Execute(ctx context.Context, args []string, out, errOut io.Writer) int {
-	return execute(ctx, args, out, errOut, platform.Native())
+	settings, err := config.LoadEnvironment()
+	if err != nil {
+		_, _ = io.WriteString(errOut, err.Error()+"\n")
+		return 2
+	}
+	return ExecuteWithEnvironment(ctx, args, out, errOut, settings)
+}
+func ExecuteWithEnvironment(ctx context.Context, args []string, out, errOut io.Writer, settings config.Environment) int {
+	return executeWithEnvironment(ctx, args, out, errOut, platform.Native(), settings)
 }
 func execute(ctx context.Context, args []string, out, errOut io.Writer, backend platform.Backend) int {
+	settings, err := config.LoadEnvironment()
+	if err != nil {
+		_, _ = io.WriteString(errOut, err.Error()+"\n")
+		return 2
+	}
+	return executeWithEnvironment(ctx, args, out, errOut, backend, settings)
+}
+func executeWithEnvironment(ctx context.Context, args []string, out, errOut io.Writer, backend platform.Backend, settings config.Environment) int {
 	app := &application{out: out, promptOut: errOut, in: os.Stdin, backend: backend}
 	root := newRootCommand(app)
 	root.SetArgs(args)
@@ -71,7 +88,7 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer, backend 
 	if !app.ran {
 		err = errors.New("invalid command or arguments; use --help")
 	}
-	format := os.Getenv(logging.FormatEnv)
+	format := settings.LogFormat
 	if app.jsonOutput {
 		format = "json"
 	}
@@ -102,7 +119,7 @@ func newRootCommand(app *application) *cobra.Command {
 		Long: `Cross-platform WireGuard agent.
 
 Static WireGuard operation works without a Peerimeter service. The config
-subcommands can optionally pull or push network and node JSON over HTTPS.
+subcommands can optionally pull or push network and node YAML over HTTPS.
 
 Environment variables:
   PEERIMETER_LOG_FORMAT  Log format: console (default), text, or json.

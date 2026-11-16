@@ -197,7 +197,7 @@ func RemoveOwned(ctx context.Context, expectedExe string, cfg Config) error {
 	}
 	expectedConfig := cfg.ConfigPath
 	if expectedConfig == "" {
-		expectedConfig = filepath.Join(snapshotDirectory(cfg), "service.json")
+		expectedConfig = filepath.Join(snapshotDirectory(cfg), "service.yaml")
 	}
 	prefix := "ExecStart=" + linuxSystemdQuote(expectedExe) + " run --config " + linuxSystemdQuote(expectedConfig) + " --state-dir " + linuxSystemdQuote(cfg.StateDirectory)
 	found := false

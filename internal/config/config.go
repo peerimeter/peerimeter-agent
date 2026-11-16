@@ -5,7 +5,6 @@ package config
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,7 +14,8 @@ import (
 	"runtime"
 	"strings"
 	"unicode"
-	"unicode/utf8"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/peerimeter/peerimeter-agent/internal/diagnostic"
 )
@@ -25,27 +25,27 @@ const MaxSize = 1 << 20
 // Config is the version 1 static configuration. Keep credentials in a separate
 // protected file; they must never be embedded in this structure.
 type Config struct {
-	Version   int       `json:"version"`
-	Mode      string    `json:"mode"`
-	Network   Network   `json:"network"`
-	Interface Interface `json:"interface"`
-	Peers     []Peer    `json:"peers"`
+	Version   int       `json:"version" yaml:"version"`
+	Mode      string    `json:"mode" yaml:"mode"`
+	Network   Network   `json:"network" yaml:"network"`
+	Interface Interface `json:"interface" yaml:"interface"`
+	Peers     []Peer    `json:"peers" yaml:"peers"`
 }
 type Network struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID   string `json:"id" yaml:"id"`
+	Name string `json:"name" yaml:"name"`
 }
 type Interface struct {
-	PrivateKeyFile string   `json:"private_key_file"`
-	Address        []string `json:"address"`
-	ListenPort     int      `json:"listen_port"`
-	Name           string   `json:"name,omitempty"`
+	PrivateKeyFile string   `json:"private_key_file" yaml:"private_key_file"`
+	Address        []string `json:"address" yaml:"address"`
+	ListenPort     int      `json:"listen_port" yaml:"listen_port"`
+	Name           string   `json:"name,omitempty" yaml:"name,omitempty"`
 }
 type Peer struct {
-	PublicKey                  string   `json:"public_key"`
-	AllowedIPs                 []string `json:"allowed_ips"`
-	Endpoint                   string   `json:"endpoint"`
-	PersistentKeepaliveSeconds int      `json:"persistent_keepalive_seconds,omitempty"`
+	PublicKey                  string   `json:"public_key" yaml:"public_key"`
+	AllowedIPs                 []string `json:"allowed_ips" yaml:"allowed_ips"`
+	Endpoint                   string   `json:"endpoint" yaml:"endpoint"`
+	PersistentKeepaliveSeconds int      `json:"persistent_keepalive_seconds,omitempty" yaml:"persistent_keepalive_seconds,omitempty"`
 }
 
 // Load strictly decodes and validates a config for this OS. Relative key paths
@@ -64,16 +64,17 @@ func Load(path string) (Config, error) {
 	if len(data) > MaxSize {
 		return cfg, diagnostic.Wrap(errors.New("static config exceeds 1 MiB"))
 	}
-	if err := checkJSON(data); err != nil {
+	if err := checkYAML(data); err != nil {
 		return cfg, diagnostic.Wrap(err)
 	}
-	if err := checkShape(data); err != nil {
-		return cfg, diagnostic.Wrap(err)
-	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
 	if err := dec.Decode(&cfg); err != nil {
-		return Config{}, diagnostic.Wrap(fmt.Errorf("decode static config %q (check field names and value types): %w", path, err))
+		return Config{}, diagnostic.Wrap(fmt.Errorf("decode static YAML config %q (check field names and value types): %w", path, err))
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		return Config{}, diagnostic.Wrap(errors.New("static config must contain exactly one YAML document"))
 	}
 	if err := Validate(cfg, runtime.GOOS); err != nil {
 		return Config{}, diagnostic.Wrap(err)
@@ -225,123 +226,49 @@ func identifier(s string) bool {
 }
 func interfaceName(s string) bool { return len(s) <= 15 && identifier(s) }
 
-// checkJSON rejects duplicate members, trailing values, nulls and excessive
-// nesting before decoding structs. Error text intentionally excludes input data.
-func checkJSON(data []byte) error {
-	if !utf8.Valid(data) {
-		return errors.New("static config must contain valid UTF-8")
+func checkYAML(data []byte) error {
+	bad := errors.New("static config contains invalid YAML structure")
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	var document yaml.Node
+	if err := decoder.Decode(&document); err != nil {
+		return errors.New("static config contains invalid YAML")
 	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	var value func(int) error
-	value = func(depth int) error {
-		if depth > 32 {
-			return errors.New("static config exceeds maximum JSON nesting")
+	if len(document.Content) != 1 || document.Content[0].Kind != yaml.MappingNode {
+		return bad
+	}
+	var walk func(*yaml.Node, int, string) error
+	walk = func(node *yaml.Node, depth int, path string) error {
+		if depth > 32 || node.Kind == yaml.AliasNode || node.Tag == "!!null" {
+			return bad
 		}
-		tok, err := dec.Token()
-		if err != nil || tok == nil {
-			return errors.New("static config contains invalid JSON or null")
-		}
-		delim, ok := tok.(json.Delim)
-		if !ok {
-			return nil
-		}
-		switch delim {
-		case '{':
-			seen := map[string]bool{}
-			for dec.More() {
-				key, err := dec.Token()
-				if err != nil {
-					return errors.New("static config contains invalid JSON")
+		switch node.Kind {
+		case yaml.MappingNode:
+			seen := make(map[string]bool, len(node.Content)/2)
+			for i := 0; i+1 < len(node.Content); i += 2 {
+				key, value := node.Content[i], node.Content[i+1]
+				if key.Kind != yaml.ScalarNode || key.Tag != "!!str" || seen[key.Value] || key.Value == "<<" {
+					return bad
 				}
-				name, ok := key.(string)
-				if !ok || seen[name] {
-					return errors.New("static config contains duplicate or invalid JSON members")
+				seen[key.Value] = true
+				childPath := key.Value
+				if path != "" {
+					childPath = path + "." + key.Value
 				}
-				seen[name] = true
-				if err := value(depth + 1); err != nil {
+				if childPath == "interface.name" && (value.Kind != yaml.ScalarNode || value.Tag != "!!str" || value.Value == "") {
+					return errors.New("static config contains an invalid interface.name")
+				}
+				if err := walk(value, depth+1, childPath); err != nil {
 					return err
 				}
 			}
-			end, err := dec.Token()
-			if err != nil || end != json.Delim('}') {
-				return errors.New("static config contains invalid JSON")
-			}
-		case '[':
-			for dec.More() {
-				if err := value(depth + 1); err != nil {
+		case yaml.SequenceNode:
+			for _, child := range node.Content {
+				if err := walk(child, depth+1, path); err != nil {
 					return err
 				}
 			}
-			end, err := dec.Token()
-			if err != nil || end != json.Delim(']') {
-				return errors.New("static config contains invalid JSON")
-			}
-		default:
-			return errors.New("static config contains invalid JSON")
 		}
 		return nil
 	}
-	if err := value(0); err != nil {
-		return err
-	}
-	if _, err := dec.Token(); err != io.EOF {
-		return errors.New("static config must contain exactly one JSON value")
-	}
-	return nil
-}
-
-// checkShape makes member spelling case-sensitive and distinguishes required
-// members from zero values, unlike encoding/json's default struct matching.
-func checkShape(data []byte) error {
-	bad := errors.New("static config contains unknown or missing fields")
-	object := func(data []byte, required, optional []string) (map[string]json.RawMessage, error) {
-		var m map[string]json.RawMessage
-		if json.Unmarshal(data, &m) != nil || m == nil {
-			return nil, bad
-		}
-		allowed := map[string]bool{}
-		for _, k := range required {
-			allowed[k] = true
-			if _, ok := m[k]; !ok {
-				return nil, bad
-			}
-		}
-		for _, k := range optional {
-			allowed[k] = true
-		}
-		for k := range m {
-			if !allowed[k] {
-				return nil, bad
-			}
-		}
-		return m, nil
-	}
-	root, err := object(data, []string{"version", "mode", "network", "interface", "peers"}, nil)
-	if err != nil {
-		return err
-	}
-	if _, err = object(root["network"], []string{"id", "name"}, nil); err != nil {
-		return err
-	}
-	iface, err := object(root["interface"], []string{"private_key_file", "address", "listen_port"}, []string{"name"})
-	if err != nil {
-		return err
-	}
-	if raw, ok := iface["name"]; ok {
-		var name string
-		if json.Unmarshal(raw, &name) != nil || name == "" {
-			return bad
-		}
-	}
-	var peers []json.RawMessage
-	if json.Unmarshal(root["peers"], &peers) != nil {
-		return bad
-	}
-	for _, p := range peers {
-		if _, err = object(p, []string{"public_key", "allowed_ips", "endpoint"}, []string{"persistent_keepalive_seconds"}); err != nil {
-			return err
-		}
-	}
-	return nil
+	return walk(document.Content[0], 0, "")
 }
