@@ -386,6 +386,22 @@ func TestSelfUpdateIntegrationRefusesProfileStartingDuringReleaseFetch(t *testin
 	assertSelfUpdateFiles(t, f, f.old)
 }
 
+func TestSelfUpdateProfileLockErrorDistinguishesPermissionErrors(t *testing.T) {
+	permissionErr := errors.New("permission denied")
+	err := selfUpdateProfileLockError(permissionErr)
+	if !strings.Contains(err.Error(), "cannot verify whether an agent profile is stopped") || !errors.Is(err, permissionErr) {
+		t.Fatalf("profile permission error was reported as a process conflict or lost its cause: %v", err)
+	}
+	if strings.Contains(err.Error(), "agent process started") {
+		t.Fatalf("permission error was misreported as an agent process conflict: %v", err)
+	}
+
+	busyErr := selfUpdateProfileLockError(local.ErrBusy)
+	if !strings.Contains(busyErr.Error(), "agent process started while the release was being fetched") || !errors.Is(busyErr, local.ErrBusy) {
+		t.Fatalf("busy profile lock did not retain conflict details: %v", busyErr)
+	}
+}
+
 func TestWindowsUpdateHelperRetainsOriginalServiceProfileForCleanup(t *testing.T) {
 	original := installstate.Profile{ID: "original-service", Service: true, StateDir: "old-state", RuntimeDir: "old-runtime"}
 	added := installstate.Profile{ID: "new-service", Service: true, StateDir: "new-state", RuntimeDir: "new-runtime"}
