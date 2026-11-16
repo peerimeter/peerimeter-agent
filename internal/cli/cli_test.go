@@ -169,10 +169,21 @@ func TestHelpAllListsHiddenCommands(t *testing.T) {
 			t.Errorf("default help unexpectedly lists hidden command %q", command)
 		}
 	}
-	for _, directory := range []string{"install:", "config:", "data:", "runtime:"} {
-		if !strings.Contains(out, directory) {
-			t.Errorf("root help missing %q directory path: %s", directory, out)
+	for _, item := range []string{"Environment", "Directories", "PEERIMETER_LOG_FORMAT", "NO_COLOR", "install", "config", "data", "runtime", "DIRECTORY", "PATH"} {
+		if !strings.Contains(out, item) {
+			t.Errorf("root help missing info table item %q: %s", item, out)
 		}
+	}
+	if code, info, infoErr := invoke(t, "info"); code != 0 || infoErr != "" || !strings.Contains(info, "╭") || !strings.Contains(info, "PEERIMETER_LOG_FORMAT") || !strings.Contains(info, "DIRECTORY") || !strings.Contains(info, "runtime") {
+		t.Fatalf("info command did not render environment and directory tables: %d %q %s", code, info, infoErr)
+	}
+	code, infoJSON, infoErr := invoke(t, "info", "--json")
+	var infoData struct {
+		Environment [][]string `json:"environment"`
+		Directories [][]string `json:"directories"`
+	}
+	if code != 0 || infoErr != "" || json.Unmarshal([]byte(infoJSON), &infoData) != nil || len(infoData.Environment) == 0 || len(infoData.Directories) < 4 {
+		t.Fatalf("info --json omitted environment or directory data: %d %q %s", code, infoJSON, infoErr)
 	}
 	if code, joinHelp, joinErr := invoke(t, "join", "--help"); code != 0 || joinErr != "" || !strings.Contains(joinHelp, "stdin") || !strings.Contains(joinHelp, "hostname") {
 		t.Fatalf("join help missing stdin/hostname behavior: %d %q %s", code, joinHelp, joinErr)
