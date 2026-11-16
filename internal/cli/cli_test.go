@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
@@ -12,6 +13,7 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/stunprobe"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -169,9 +171,27 @@ func TestHelpAllListsHiddenCommands(t *testing.T) {
 			t.Errorf("default help unexpectedly lists hidden command %q", command)
 		}
 	}
-	for _, item := range []string{"Environment", "Directories", "PEERIMETER_LOG_FORMAT", "NO_COLOR", "install", "config", "data", "runtime", "DIRECTORY", "PATH"} {
-		if !strings.Contains(out, item) {
-			t.Errorf("root help missing info table item %q: %s", item, out)
+	for _, item := range []string{"Environment", "Directories", "PEERIMETER_LOG_FORMAT", "DIRECTORY"} {
+		if strings.Contains(out, item) {
+			t.Errorf("root help unexpectedly includes info table item %q: %s", item, out)
+		}
+	}
+	previousLatestReleaseURL := latestReleaseURL
+	latestReleaseServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintln(w, `{"tag_name":"not-a-version"}`)
+	}))
+	latestReleaseURL = latestReleaseServer.URL
+	t.Cleanup(func() {
+		latestReleaseURL = previousLatestReleaseURL
+		latestReleaseServer.Close()
+	})
+	if code, noArgs, noArgsErr := invoke(t); code != 0 || noArgsErr != "" {
+		t.Fatalf("argument-free command failed: %d %q %s", code, noArgs, noArgsErr)
+	} else {
+		for _, item := range []string{"Environment", "Directories", "PEERIMETER_LOG_FORMAT", "NO_COLOR", "DIRECTORY"} {
+			if !strings.Contains(noArgs, item) {
+				t.Errorf("argument-free command missing info table item %q: %s", item, noArgs)
+			}
 		}
 	}
 	if code, info, infoErr := invoke(t, "info"); code != 0 || infoErr != "" || !strings.Contains(info, "╭") || !strings.Contains(info, "PEERIMETER_LOG_FORMAT") || !strings.Contains(info, "DIRECTORY") || !strings.Contains(info, "runtime") {
