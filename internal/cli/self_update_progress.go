@@ -100,7 +100,7 @@ func (p *selfUpdateProgress) getProgram() *tea.Program {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.program == nil {
-		model := selfUpdateProgressModel{bar: newSelfUpdateProgressBar(p.color), spinner: spinner.New(spinner.WithSpinner(spinner.Dot))}
+		model := selfUpdateProgressModel{bar: newSelfUpdateProgressBar(p.color), spinner: spinner.New(spinner.WithSpinner(spinner.Line))}
 		program := tea.NewProgram(model, tea.WithInput(nil), tea.WithOutput(p.out))
 		stopped := make(chan struct{})
 		p.program = program
