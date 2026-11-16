@@ -1,5 +1,5 @@
-// Package secret handles protected local WireGuard key files. Callers must not
-// log keys or serialize them into general configuration or diagnostic output.
+// Package secret handles protected local secrets, including WireGuard keys.
+// Callers must not log secrets or serialize them into general diagnostics.
 package secret
 
 import (
