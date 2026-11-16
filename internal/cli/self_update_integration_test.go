@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/peerimeter/peerimeter-agent/internal/diagnostic"
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/selfupdate"
@@ -373,8 +374,14 @@ func TestSelfUpdateIntegrationRefusesProfileStartingDuringReleaseFetch(t *testin
 	}
 	var output bytes.Buffer
 	err := selfUpdateAt(context.Background(), &output, true, f.install, "v1.0.0", "linux", runtime.GOARCH, deps)
-	if err == nil || !strings.Contains(err.Error(), "agent process started while the release was being fetched") {
+	if err == nil || !strings.Contains(err.Error(), "agent process started while the release was being fetched") || !errors.Is(err, local.ErrBusy) {
 		t.Fatalf("expected update to refuse a starting profile (fetch called: %v), got %v", fetchCalled, err)
+	}
+	if !strings.Contains(err.Error(), "another agent already owns this state directory") {
+		t.Fatalf("expected the underlying lock error to be retained, got %v", err)
+	}
+	if trace, ok := diagnostic.StackTrace(err); !ok || !strings.Contains(trace, "selfUpdateAt") {
+		t.Fatalf("expected self-update error stack trace, got %q", trace)
 	}
 	assertSelfUpdateFiles(t, f, f.old)
 }
