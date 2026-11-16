@@ -160,7 +160,11 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 		return fmt.Errorf("cannot compare agent version %q with release %q", currentVersion, latestTag)
 	}
 	upToDate := compareVersion(latest, current) <= 0
-	deps.progress.stop()
+	if upToDate {
+		deps.progress.stop(selfUpdateProgressUpToDate)
+	} else {
+		deps.progress.stop(selfUpdateProgressUpdateAvailable)
+	}
 	if !jsonOutput {
 		if _, err := fmt.Fprintf(out, "Current version: %s\nLatest version: %s\n", currentVersion, latestTag); err != nil {
 			return err
@@ -369,7 +373,7 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	for _, f := range inv.Files {
 		filesUpdated = append(filesUpdated, f.Name)
 	}
-	deps.progress.stop()
+	deps.progress.stop(selfUpdateProgressUpdateSucceeded)
 	return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "updated", PreviousVersion: currentVersion, UpdatedVersion: tag, Files: filesUpdated})
 }
 
