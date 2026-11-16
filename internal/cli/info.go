@@ -49,6 +49,12 @@ func directoryRows() [][]string {
 }
 
 func writeInfoTables(out io.Writer, color bool, width int) error {
+	if _, err := fmt.Fprintln(out, "Version"); err != nil {
+		return err
+	}
+	if err := presentation.Table(out, []string{"FIELD", "VALUE"}, versionRows(), color, width); err != nil {
+		return err
+	}
 	if _, err := fmt.Fprintln(out, "Environment"); err != nil {
 		return err
 	}
@@ -64,14 +70,15 @@ func writeInfoTables(out io.Writer, color bool, width int) error {
 func newInfoCommand(app *application) *cobra.Command {
 	return &cobra.Command{
 		Use:   "info",
-		Short: "Show environment variables and resolved directories",
+		Short: "Show version, environment variables and resolved directories",
 		Args:  noArguments,
 		RunE: app.handle(func(cmd *cobra.Command) error {
 			if app.jsonOutput {
 				return json.NewEncoder(app.out).Encode(struct {
+					Version     [][]string `json:"version"`
 					Environment [][]string `json:"environment"`
 					Directories [][]string `json:"directories"`
-				}{Environment: environmentRows, Directories: directoryRows()})
+				}{Version: versionRows(), Environment: environmentRows, Directories: directoryRows()})
 			}
 			return writeInfoTables(app.out, shouldColor(app.out, app.color), outputWidth(app.out))
 		}),
