@@ -3,14 +3,19 @@ package agent
 import (
 	"context"
 	"errors"
-	"github.com/peerimeter/peerimeter-agent/internal/platform"
+	"os"
 	"testing"
+	"time"
+
+	"github.com/peerimeter/peerimeter-agent/internal/config"
+	"github.com/peerimeter/peerimeter-agent/internal/platform"
 )
 
 type fake struct {
 	started            chan struct{}
 	closed             bool
 	startErr, closeErr error
+	refreshDone        <-chan struct{}
 }
 
 func (f *fake) Start(context.Context, platform.Desired) (platform.Session, error) {
@@ -27,8 +32,52 @@ func (f *fake) Close(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return errors.New("cleanup context already canceled")
 	}
+	if f.refreshDone != nil {
+		select {
+		case <-f.refreshDone:
+		default:
+			return errors.New("cleanup ran before refresh worker stopped")
+		}
+	}
 	f.closed = true
 	return f.closeErr
+}
+
+func TestManagedRefreshStopsBeforeSessionCleanup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	refreshStarted := make(chan struct{})
+	refreshDone := make(chan struct{})
+	f := &fake{started: make(chan struct{}), refreshDone: refreshDone}
+	dir, err := os.MkdirTemp("/tmp", "pm-agent-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	result := make(chan error, 1)
+	go func() {
+		result <- RunManagedWithRefresh(ctx, f, platform.Desired{Config: config.Config{Network: config.Network{ID: "net-a"}}}, dir, func(refreshCtx context.Context) (platform.Desired, error) {
+			close(refreshStarted)
+			<-refreshCtx.Done()
+			close(refreshDone)
+			return platform.Desired{}, refreshCtx.Err()
+		}, "", "instance", nil, nil, time.Millisecond)
+	}()
+	<-f.started
+	select {
+	case <-refreshStarted:
+	case err := <-result:
+		t.Fatalf("managed run ended before refresh started: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("refresh worker did not start")
+	}
+	cancel()
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	if !f.closed {
+		t.Fatal("session was not closed")
+	}
 }
 func TestCancellationCleansWithLiveContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

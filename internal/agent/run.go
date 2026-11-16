@@ -32,12 +32,12 @@ func Run(ctx context.Context, backend platform.Backend, desired platform.Desired
 // RunManaged exposes only protected local control after the native tunnel starts.
 // Reload validation happens before the backend touches OS state.
 func RunManaged(ctx context.Context, backend platform.Backend, desired platform.Desired, dir string, reload func() (platform.Desired, error), operator, instanceID string, beforeServe, onClose func() error) (result error) {
-	return RunManagedWithRefresh(ctx, backend, desired, dir, reload, operator, instanceID, beforeServe, onClose, 0)
+	return RunManagedWithRefresh(ctx, backend, desired, dir, func(context.Context) (platform.Desired, error) { return reload() }, operator, instanceID, beforeServe, onClose, 0)
 }
 
 // RunManagedWithRefresh periodically obtains desired state from reload while
 // preserving the same local authenticated control surface as static mode.
-func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desired platform.Desired, dir string, reload func() (platform.Desired, error), operator, instanceID string, beforeServe, onClose func() error, interval time.Duration) (result error) {
+func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desired platform.Desired, dir string, reload func(context.Context) (platform.Desired, error), operator, instanceID string, beforeServe, onClose func() error, interval time.Duration) (result error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	session, err := backend.Start(ctx, desired)
@@ -54,7 +54,7 @@ func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desire
 	reconcile := func(ctx context.Context) error {
 		mu.Lock()
 		defer mu.Unlock()
-		next, err := reload()
+		next, err := reload(ctx)
 		if err != nil {
 			return err
 		}
@@ -80,8 +80,12 @@ func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desire
 		return err
 	}
 	defer func() { result = errors.Join(result, closeControl()) }()
+	var workers sync.WaitGroup
+	defer workers.Wait()
 	if interval > 0 {
+		workers.Add(1)
 		go func() {
+			defer workers.Done()
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
 			for {

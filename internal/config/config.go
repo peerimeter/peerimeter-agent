@@ -125,7 +125,7 @@ func Validate(cfg Config, targetOS string) error {
 	}
 	if cfg.Network.CIDR != "" {
 		prefix, err := netip.ParsePrefix(cfg.Network.CIDR)
-		if err != nil || !prefix.Addr().Is4() || prefix != prefix.Masked() || prefix.Bits() < 8 || prefix.Bits() > 30 || !prefix.Addr().IsPrivate() {
+		if err != nil || !prefix.Addr().Is4() || prefix != prefix.Masked() || prefix.Bits() < 8 || prefix.Bits() > 30 || !privateIPv4Prefix(prefix) {
 			return invalid("network.cidr must be a canonical private IPv4 prefix between /8 and /30")
 		}
 	}
@@ -223,6 +223,16 @@ func Validate(cfg Config, targetOS string) error {
 		}
 	}
 	return nil
+}
+
+func privateIPv4Prefix(prefix netip.Prefix) bool {
+	for _, raw := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} {
+		block, _ := netip.ParsePrefix(raw)
+		if block.Contains(prefix.Addr()) && prefix.Bits() >= block.Bits() {
+			return true
+		}
+	}
+	return false
 }
 func usable(a netip.Addr) bool { return a.IsValid() && a.IsGlobalUnicast() && a.Zone() == "" }
 func allZero(b []byte) bool {

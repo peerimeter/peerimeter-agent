@@ -35,6 +35,7 @@ func TestValidate(t *testing.T) {
 		{"network CIDR noncanonical", func(c *Config) { c.Network.CIDR = "10.90.0.1/24" }},
 		{"network CIDR public", func(c *Config) { c.Network.CIDR = "8.8.8.0/24" }},
 		{"network CIDR broad", func(c *Config) { c.Network.CIDR = "10.0.0.0/7" }},
+		{"network CIDR crosses private boundary", func(c *Config) { c.Network.CIDR = "192.168.0.0/15" }},
 		{"network CIDR too small", func(c *Config) { c.Network.CIDR = "10.90.0.0/31" }},
 		{"network CIDR IPv6", func(c *Config) { c.Network.CIDR = "fd00::/64" }},
 		{"key reference", func(c *Config) { c.Interface.PrivateKeyFile = "" }},
