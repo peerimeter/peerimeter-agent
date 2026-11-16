@@ -129,16 +129,44 @@ Environment variables:
 	root.PersistentFlags().BoolVar(&app.debug, "debug", false, "include captured stack trace when an error occurs")
 	root.SetErr(io.Discard)
 	root.SetFlagErrorFunc(func(*cobra.Command, error) error { return errors.New("invalid command flags; use --help") })
-	root.SetHelpCommand(&cobra.Command{Use: "help [command]", Short: "Show command help", RunE: func(_ *cobra.Command, args []string) error {
+	var showHidden bool
+	helpCommand := &cobra.Command{Use: "help [command]", Short: "Show command help", RunE: func(_ *cobra.Command, args []string) error {
 		app.ran = true
+		if showHidden && len(args) == 0 {
+			restore := showHiddenCommands(root)
+			defer restore()
+			return root.Help()
+		}
 		target, remaining, err := root.Find(args)
 		if err != nil || len(remaining) != 0 {
 			return errors.New("unknown help topic; use --help")
 		}
 		return target.Help()
-	}})
+	}}
+	helpCommand.Flags().BoolVar(&showHidden, "all", false, "List all commands, including hidden commands")
+	root.SetHelpCommand(helpCommand)
 	root.AddCommand(newVersionCommand(app), newUpdateCommand(app), newSelfUpdateCommand(app), newUpdateHelperCommand(app), newUpdateRecoveryHelperCommand(app), newGenerateExampleCommand(app), newRunCommand(app), newValidateConfigCommand(app), newStatusCommand(app), newWGCommand(app), newSyncCommand(app), newStopCommand(app), newServiceCommand(app), newUninstallCommand(app), newRegisterInstallationCommand(app), newStunCommand(app))
 	return root
+}
+
+func showHiddenCommands(root *cobra.Command) func() {
+	var hidden []*cobra.Command
+	var visit func(*cobra.Command)
+	visit = func(parent *cobra.Command) {
+		for _, command := range parent.Commands() {
+			if command.Hidden {
+				hidden = append(hidden, command)
+				command.Hidden = false
+			}
+			visit(command)
+		}
+	}
+	visit(root)
+	return func() {
+		for _, command := range hidden {
+			command.Hidden = true
+		}
+	}
 }
 
 func outputWidth(out io.Writer) int {
