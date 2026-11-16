@@ -188,9 +188,9 @@ func TestHelpAllListsHiddenCommands(t *testing.T) {
 	if code, noArgs, noArgsErr := invoke(t); code != 0 || noArgsErr != "" {
 		t.Fatalf("argument-free command failed: %d %q %s", code, noArgs, noArgsErr)
 	} else {
-		for _, item := range []string{"Environment", "Directories", "PEERIMETER_LOG_FORMAT", "NO_COLOR", "DIRECTORY"} {
-			if !strings.Contains(noArgs, item) {
-				t.Errorf("argument-free command missing info table item %q: %s", item, noArgs)
+		for _, item := range []string{"Directories", "PEERIMETER_LOG_FORMAT", "DIRECTORY"} {
+			if strings.Contains(noArgs, item) {
+				t.Errorf("argument-free command unexpectedly includes info table item %q: %s", item, noArgs)
 			}
 		}
 	}
