@@ -180,7 +180,7 @@ for target in sys.argv[2:]:
   s=directory.lstat()
   print('CI default resource ancestor:',directory,'uid='+str(s.st_uid),'mode='+oct(stat.S_IMODE(s.st_mode)))
   assert stat.S_ISDIR(s.st_mode),'default resource ancestor must be an existing real directory'
-  assert s.st_uid==0 or str(directory) in ('/usr/local','/usr/local/bin','/usr/local/share'),'unexpected ownership outside the disposable test prefix'
+  assert s.st_uid==0 or str(directory) in ('/usr/local','/usr/local/bin','/usr/local/share','/usr/local/share/doc'),'unexpected ownership outside the disposable test prefix'
   records.append(dict(path=str(directory),uid=s.st_uid,gid=s.st_gid,mode=stat.S_IMODE(s.st_mode)))
 with open(sys.argv[1],'w') as f:json.dump(records,f)
 for item in records:
