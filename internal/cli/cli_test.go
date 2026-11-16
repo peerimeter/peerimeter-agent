@@ -144,17 +144,23 @@ func TestSelfUpdateHasExplicitHelp(t *testing.T) {
 }
 
 func TestHelpAllListsHiddenCommands(t *testing.T) {
-	code, out, stderr := invoke(t, "help", "--all")
-	if code != 0 || stderr != "" {
-		t.Fatalf("help --all failed: %d %q %s", code, out, stderr)
-	}
-	for _, command := range []string{"__update-helper", "__recover-helper", "register-installation"} {
-		if !strings.Contains(out, command) {
-			t.Errorf("help --all output does not list %q: %s", command, out)
+	for _, args := range [][]string{{"help", "--all"}, {"--help", "--all"}} {
+		code, out, stderr := invoke(t, args...)
+		if code != 0 || stderr != "" {
+			t.Fatalf("%v failed: %d %q %s", args, code, out, stderr)
+		}
+		for _, description := range []string{
+			"Complete a Windows self-update file replacement",
+			"Recover an interrupted Windows self-update",
+			"Register an installed program and its resource directories",
+		} {
+			if !strings.Contains(out, description) {
+				t.Errorf("%v output does not include %q: %s", args, description, out)
+			}
 		}
 	}
 
-	code, out, stderr = invoke(t, "--help")
+	code, out, stderr := invoke(t, "--help")
 	if code != 0 || stderr != "" {
 		t.Fatalf("default help failed: %d %q %s", code, out, stderr)
 	}
