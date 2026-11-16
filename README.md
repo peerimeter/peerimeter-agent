@@ -1,8 +1,9 @@
 # Peerimeter Agent
 
 An offline-first, headless WireGuard mesh agent for Linux, macOS and Windows.
-Configure peers with local JSON and run direct WireGuard connections without an
-API server, enrollment, MQTT or STUN. No relay or desktop application.
+Static mode configures peers with local JSON and runs direct WireGuard
+connections without an API server, enrollment, MQTT or STUN. No relay or
+desktop application.
 
 [Install](#release-installation) · [Build](#quick-start-from-source) ·
 [Configure](#offline-configuration) · [Commands](#foreground-and-local-control)
@@ -209,6 +210,34 @@ are rejected too; remove them with `chmod -N`. Windows key files require an
 allowlisted owner/DACL; only the current user, SYSTEM and Administrators may
 have access. Symlinks/reparse points and broadly readable keys are rejected.
 Parent directories must be trusted.
+
+## Service configuration API
+
+The optional `config pull` and `config push` commands exchange version 1 network
+or node JSON with `peerimeter-service`. They do not change the static runtime or
+persist credentials. Each request needs the network ID and, for node config,
+the node ID. The Base64URL join token carries the HTTPS API URL and an
+`enrollment_token`; in the current service this value is the shared static API
+key, which grants read/write access to every stored network and node. Anyone
+holding the token has that access. Prefer a protected token file; direct
+`--token` values can appear in shell history or process listings.
+When using the service's `/api/v1/join-bundle` response, save the value of its
+`token` field, without the surrounding response JSON.
+
+```sh
+peerimeter-agent config pull --token-file /secure/join-token.txt \
+  --kind network --network-id mesh-a --file ./network.json
+peerimeter-agent config pull --token-file /secure/join-token.txt \
+  --kind node --network-id mesh-a --node-id node-1 --file ./node.json
+peerimeter-agent config push --token-file /secure/join-token.txt \
+  --kind network --network-id mesh-a --file ./network.json
+```
+
+On Linux and macOS, protect the token file with owner-only permissions (for
+example, `chmod 600`). On Windows, allow access only to the current user,
+SYSTEM and Administrators. A static `run --config` remains independent of the
+service API. Automatic join, credential persistence, daemon reconciliation and
+multi-network runtime management are not implemented yet.
 
 ## Foreground and local control
 

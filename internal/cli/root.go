@@ -1,5 +1,6 @@
-// Package cli exposes the offline agent command tree. Each command lives in its
-// own source file; command factories keep flags isolated between invocations.
+// Package cli exposes the static agent and optional service API command tree.
+// Each command lives in its own source file; command factories keep flags
+// isolated between invocations.
 package cli
 
 import (
@@ -97,8 +98,11 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer, backend 
 func newRootCommand(app *application) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "peerimeter-agent",
-		Short: "Offline cross-platform WireGuard agent",
-		Long: `Offline cross-platform WireGuard agent.
+		Short: "Cross-platform WireGuard agent with offline and service API modes",
+		Long: `Cross-platform WireGuard agent.
+
+Static WireGuard operation works without a Peerimeter service. The config
+subcommands can optionally pull or push network and node JSON over HTTPS.
 
 Environment variables:
   PEERIMETER_LOG_FORMAT  Log format: console (default), text, or json.
@@ -154,7 +158,7 @@ Environment variables:
 	}}
 	helpCommand.Flags().BoolVar(&showHidden, "all", false, "List all commands, including hidden commands")
 	root.SetHelpCommand(helpCommand)
-	root.AddCommand(newVersionCommand(app), newUpdateCommand(app), newSelfUpdateCommand(app), newUpdateHelperCommand(app), newUpdateRecoveryHelperCommand(app), newGenerateExampleCommand(app), newRunCommand(app), newValidateConfigCommand(app), newStatusCommand(app), newWGCommand(app), newSyncCommand(app), newStopCommand(app), newServiceCommand(app), newUninstallCommand(app), newRegisterInstallationCommand(app), newStunCommand(app))
+	root.AddCommand(newVersionCommand(app), newUpdateCommand(app), newSelfUpdateCommand(app), newUpdateHelperCommand(app), newUpdateRecoveryHelperCommand(app), newGenerateExampleCommand(app), newConfigAPICommand(app), newRunCommand(app), newValidateConfigCommand(app), newStatusCommand(app), newWGCommand(app), newSyncCommand(app), newStopCommand(app), newServiceCommand(app), newUninstallCommand(app), newRegisterInstallationCommand(app), newStunCommand(app))
 	return root
 }
 
