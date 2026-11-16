@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"charm.land/bubbles/v2/progress"
+	"charm.land/lipgloss/v2"
 )
 
 func TestSelfUpdateProgressReportsStartedAndFinishedSteps(t *testing.T) {
@@ -76,7 +77,8 @@ func TestSelfUpdateProgressUsesSpinnerOnlyForReleaseCheck(t *testing.T) {
 	model := selfUpdateProgressModel{bar: progress.New(progress.WithWidth(32))}
 	updated, cmd := model.Update(selfUpdateProgressStart{message: "Checking the latest stable release"})
 	model = updated.(selfUpdateProgressModel)
-	if !model.spinnerOnly || !model.active || cmd == nil || !strings.Contains(model.View().Content, model.spinner.View()) {
+	view := model.View().Content
+	if !model.spinnerOnly || !model.active || cmd == nil || !strings.Contains(view, "Checking the latest stable release") || !strings.Contains(view, model.spinner.View()) || strings.Contains(view, "\n") {
 		t.Fatalf("release check should show an active spinner: %+v %q", model, model.View().Content)
 	}
 	updated, cmd = model.Update(model.spinner.Tick())
@@ -89,6 +91,16 @@ func TestSelfUpdateProgressUsesSpinnerOnlyForReleaseCheck(t *testing.T) {
 	model = updated.(selfUpdateProgressModel)
 	if model.spinnerOnly || !strings.Contains(model.View().Content, "\n") {
 		t.Fatalf("update step should retain its progress bar: %q", model.View().Content)
+	}
+}
+
+func TestSelfUpdateProgressHonorsDisabledColor(t *testing.T) {
+	bar := newSelfUpdateProgressBar(false)
+	if _, ok := bar.FullColor.(lipgloss.NoColor); !ok {
+		t.Fatalf("disabled color mode uses %T for the filled progress bar", bar.FullColor)
+	}
+	if _, ok := bar.EmptyColor.(lipgloss.NoColor); !ok {
+		t.Fatalf("disabled color mode uses %T for the empty progress bar", bar.EmptyColor)
 	}
 }
 

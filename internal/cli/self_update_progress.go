@@ -100,11 +100,7 @@ func (p *selfUpdateProgress) getProgram() *tea.Program {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.program == nil {
-		model := selfUpdateProgressModel{bar: progress.New(
-			progress.WithWidth(32),
-			progress.WithoutPercentage(),
-			progress.WithDefaultBlend(),
-		), spinner: spinner.New(spinner.WithSpinner(spinner.Dot))}
+		model := selfUpdateProgressModel{bar: newSelfUpdateProgressBar(p.color), spinner: spinner.New(spinner.WithSpinner(spinner.Dot))}
 		program := tea.NewProgram(model, tea.WithInput(nil), tea.WithOutput(p.out))
 		stopped := make(chan struct{})
 		p.program = program
@@ -115,6 +111,22 @@ func (p *selfUpdateProgress) getProgram() *tea.Program {
 		}()
 	}
 	return p.program
+}
+
+func newSelfUpdateProgressBar(color bool) progress.Model {
+	options := []progress.Option{
+		progress.WithWidth(32),
+		progress.WithoutPercentage(),
+	}
+	if color {
+		options = append(options, progress.WithDefaultBlend())
+	}
+	bar := progress.New(options...)
+	if !color {
+		bar.FullColor = lipgloss.NoColor{}
+		bar.EmptyColor = lipgloss.NoColor{}
+	}
+	return bar
 }
 
 func (p *selfUpdateProgress) stop(outcome ...selfUpdateProgressOutcome) {
