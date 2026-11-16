@@ -12,29 +12,29 @@ import (
 )
 
 func TestDecodeJoinToken(t *testing.T) {
-	wire, _ := json.Marshal(JoinBundle{Version: 1, APIURL: "https://api.example/prefix/", EnrollmentToken: "secret-key"})
+	wire, _ := json.Marshal(JoinBundle{Version: 1, APIURL: "https://api.example/prefix/", NetworkID: "mesh-a", EnrollmentToken: "secret-key"})
 	bundle, err := DecodeJoinToken(base64.RawURLEncoding.EncodeToString(wire))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bundle.APIURL != "https://api.example/prefix" || bundle.EnrollmentToken != "secret-key" {
+	if bundle.APIURL != "https://api.example/prefix" || bundle.NetworkID != "mesh-a" || bundle.EnrollmentToken != "secret-key" {
 		t.Fatalf("unexpected bundle: %+v", bundle)
 	}
 }
 
 func TestDecodeJoinTokenRejectsInvalidBundles(t *testing.T) {
 	for _, wire := range []string{
-		`{"version":2,"api_url":"https://api.example","enrollment_token":"key"}`,
-		`{"version":1,"api_url":"http://api.example","enrollment_token":"key"}`,
-		`{"version":1,"api_url":"https://user:pass@api.example","enrollment_token":"key"}`,
-		`{"version":1,"api_url":"https://api.example?key=secret","enrollment_token":"key"}`,
-		`{"version":1,"api_url":"https://api.example?","enrollment_token":"key"}`,
-		`{"version":1,"api_url":"https://api.example/#","enrollment_token":"key"}`,
-		`{"version":1,"api_url":"https://api.example:99999","enrollment_token":"key"}`,
-		`{"version":1,"api_url":"https://api.example","enrollment_token":""}`,
-		`{"version":1,"api_url":"https://api.example","enrollment_token":"bad token"}`,
-		`{"version":1,"api_url":"https://api.example","enrollment_token":"key","extra":true}`,
-		`{"version":1,"api_url":"https://api.example","enrollment_token":"key"} {}`,
+		`{"version":2,"api_url":"https://api.example","network_id":"mesh-a","enrollment_token":"key"}`,
+		`{"version":1,"api_url":"http://api.example","network_id":"mesh-a","enrollment_token":"key"}`,
+		`{"version":1,"api_url":"https://user:pass@api.example","network_id":"mesh-a","enrollment_token":"key"}`,
+		`{"version":1,"api_url":"https://api.example?key=secret","network_id":"mesh-a","enrollment_token":"key"}`,
+		`{"version":1,"api_url":"https://api.example?","network_id":"mesh-a","enrollment_token":"key"}`,
+		`{"version":1,"api_url":"https://api.example/#","network_id":"mesh-a","enrollment_token":"key"}`,
+		`{"version":1,"api_url":"https://api.example:99999","network_id":"mesh-a","enrollment_token":"key"}`,
+		`{"version":1,"api_url":"https://api.example","network_id":"mesh-a","enrollment_token":""}`,
+		`{"version":1,"api_url":"https://api.example","network_id":"mesh-a","enrollment_token":"bad token"}`,
+		`{"version":1,"api_url":"https://api.example","network_id":"mesh-a","enrollment_token":"key","extra":true}`,
+		`{"version":1,"api_url":"https://api.example","network_id":"mesh-a","enrollment_token":"key"} {}`,
 	} {
 		token := base64.RawURLEncoding.EncodeToString([]byte(wire))
 		if _, err := DecodeJoinToken(token); err == nil {

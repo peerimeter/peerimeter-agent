@@ -222,10 +222,11 @@ persist credentials. Each request needs the network ID and, for node config,
 the node ID. The Base64URL join token carries the HTTPS API URL and an
 `enrollment_token`; in the current service this value is the shared static API
 key, which grants read/write access to every stored network and node. Anyone
-holding the token has that access. Prefer a protected token file; direct
-`--token` values can appear in shell history or process listings.
-When using the service's `/api/v1/join-bundle` response, save the value of its
-`token` field, without the surrounding response JSON.
+holding the token has that access. The join bundle carries the selected network
+ID, but its shared API credential still has access to all networks. When
+using `/api/v1/join-bundle?network_id=mesh-a`, pass its `token` field without
+the surrounding response JSON to `join` on stdin. The hostname is the default
+node ID.
 
 ```sh
 peerimeter-agent config pull --token-file /secure/join-token.txt \
@@ -241,7 +242,7 @@ example, `chmod 600`). On Windows, allow access only to the current user,
 SYSTEM and Administrators. To join a network created in the service API, run:
 
 ```sh
-sudo peerimeter-agent join --token-file /secure/join-token.txt --network-id mesh-a
+cat /secure/join-token.txt | sudo peerimeter-agent join
 ```
 
 `join` generates a local WireGuard key if needed, registers its public key and

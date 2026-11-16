@@ -3,10 +3,10 @@ package cli
 import (
 	"context"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -59,28 +59,21 @@ func eligiblePeerEntries(underlay []string, peers map[string]json.RawMessage) ([
 }
 
 func newJoinCommand(app *application) *cobra.Command {
-	var token, tokenFile, networkID, nodeID, operator string
+	var networkID, nodeID, operator string
 	var listenPort int
 	var dirs paths.Options
 	cmd := &cobra.Command{Use: "join", Short: "Register this agent and connect it to a service-managed network", Args: noArguments, RunE: app.handle(func(cmd *cobra.Command) error {
-		if (token == "") == (tokenFile == "") {
-			return errors.New("provide exactly one of --token or --token-file")
+		data, err := io.ReadAll(io.LimitReader(app.in, 16<<10+1))
+		if err != nil || len(data) > 16<<10 {
+			return errors.New("could not read join token from stdin or token is too large")
 		}
-		if tokenFile != "" {
-			value, err := secret.ReadProtectedText(tokenFile, 16<<10)
-			if err != nil {
-				return err
-			}
-			token = strings.TrimSpace(value)
-		}
+		token := strings.TrimSpace(string(data))
 		bundle, err := serviceapi.DecodeJoinToken(token)
 		if err != nil {
 			return err
 		}
 		client := serviceapi.New(bundle)
-		if networkID == "" {
-			return errors.New("--network-id is required")
-		}
+		networkID = bundle.NetworkID
 		if listenPort < 1 || listenPort > 65535 {
 			return errors.New("--listen-port must be between 1 and 65535")
 		}
@@ -121,7 +114,10 @@ func newJoinCommand(app *application) *cobra.Command {
 		}
 		publicText := base64.StdEncoding.EncodeToString(public[:])
 		if nodeID == "" {
-			nodeID = hex.EncodeToString(public[:])
+			nodeID, err = os.Hostname()
+			if err != nil || strings.TrimSpace(nodeID) == "" {
+				return errors.New("cannot determine hostname for default node ID")
+			}
 		}
 		underlay, err := discovery.PrimaryUnderlay(cmd.Context())
 		if err != nil {
@@ -189,10 +185,8 @@ func newJoinCommand(app *application) *cobra.Command {
 		}
 		return staticCommandWithRefresh(cmd.Context(), "run", configPath, "", layout, operator, app.out, app.backend, loadConfig, 15*time.Second)
 	})}
-	cmd.Flags().StringVar(&token, "token", "", "Base64URL JSON join bundle (visible in process listings; prefer --token-file)")
-	cmd.Flags().StringVar(&tokenFile, "token-file", "", "Protected file containing the join bundle")
-	cmd.Flags().StringVar(&networkID, "network-id", "", "Service network ID to join")
-	cmd.Flags().StringVar(&nodeID, "node-id", "", "Optional stable node ID; defaults to a key-derived ID")
+	cmd.Long = "Register this agent using a network-scoped Base64URL token read from stdin. The network ID comes from the token; the node ID defaults to the machine hostname."
+	cmd.Flags().StringVar(&nodeID, "node-id", "", "Optional stable node ID (defaults to hostname)")
 	cmd.Flags().IntVar(&listenPort, "listen-port", 51820, "WireGuard UDP listen port")
 	cmd.Flags().StringVar(&operator, "operator", "", "Authorized local username/UID or Windows account/SID")
 	directoryFlags(cmd, &dirs)

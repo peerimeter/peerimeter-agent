@@ -25,6 +25,7 @@ const maxBundleSize = 8 << 10
 type JoinBundle struct {
 	Version         int    `json:"version"`
 	APIURL          string `json:"api_url"`
+	NetworkID       string `json:"network_id"`
 	EnrollmentToken string `json:"enrollment_token"`
 }
 
@@ -72,8 +73,8 @@ func DecodeJoinToken(token string) (JoinBundle, error) {
 	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
 		return JoinBundle{}, errors.New("join token must contain exactly one JSON object")
 	}
-	if bundle.Version != 1 || !validAPIToken(bundle.EnrollmentToken) {
-		return JoinBundle{}, errors.New("join token has an unsupported version or missing API token")
+	if bundle.Version != 1 || !validAPIToken(bundle.EnrollmentToken) || !validNetworkID(bundle.NetworkID) {
+		return JoinBundle{}, errors.New("join token has an unsupported version or missing API token or network ID")
 	}
 	u, err := url.Parse(bundle.APIURL)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(bundle.APIURL, "#") || u.Opaque != "" {
@@ -87,6 +88,18 @@ func DecodeJoinToken(token string) (JoinBundle, error) {
 	}
 	bundle.APIURL = strings.TrimRight(bundle.APIURL, "/")
 	return bundle, nil
+}
+
+func validNetworkID(value string) bool {
+	if value == "" || len(value) > 128 || value == "." || value == ".." {
+		return false
+	}
+	for _, r := range value {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '.' || r == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func validAPIToken(token string) bool {
