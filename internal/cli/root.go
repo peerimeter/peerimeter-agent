@@ -132,9 +132,6 @@ Use "peerimeter-agent info" to view environment variables and resolved directori
 			if err := cmd.Help(); err != nil {
 				return err
 			}
-			if err := writeInfoTables(app.out, shouldColor(app.out, app.color), outputWidth(app.out)); err != nil {
-				return err
-			}
 			return checkForUpgrade(cmd.Context(), app.out, app.color, false, false)
 		}),
 	}
