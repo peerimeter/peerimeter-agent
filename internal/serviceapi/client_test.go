@@ -104,7 +104,7 @@ func TestGetNetworkValidatesNetworkCIDRResource(t *testing.T) {
 		t.Fatalf("network=%+v err=%v", got, err)
 	}
 
-	for _, cidr := range []string{"10.90.0.1/24", "8.8.8.0/24", "10.90.0.0/31", "bad"} {
+	for _, cidr := range []string{"10.90.0.1/24", "8.8.8.0/24", "192.168.0.0/15", "10.90.0.0/31", "bad"} {
 		if validNetworkResource(NetworkResource{Version: 1, ID: "net-a", Name: "mesh", CIDR: cidr}) {
 			t.Errorf("accepted invalid service network CIDR %q", cidr)
 		}

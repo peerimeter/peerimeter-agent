@@ -24,7 +24,7 @@ func staticCommand(ctx context.Context, commandName, path, override string, layo
 	return staticCommandWithRefresh(ctx, commandName, path, override, layout, operator, out, backend, nil, 0)
 }
 
-func staticCommandWithRefresh(ctx context.Context, commandName, path, override string, layout paths.Layout, operator string, out io.Writer, backend platform.Backend, remoteReload func() (config.Config, error), refresh time.Duration) error {
+func staticCommandWithRefresh(ctx context.Context, commandName, path, override string, layout paths.Layout, operator string, out io.Writer, backend platform.Backend, remoteReload func(context.Context) (config.Config, error), refresh time.Duration) error {
 	if commandName == "run" {
 		installstate.TrustSudoUserForRun()
 		secret.TrustSudoUserForRun()
@@ -102,11 +102,11 @@ func staticCommandWithRefresh(ctx context.Context, commandName, path, override s
 		return err
 	}
 	desired := platform.Desired{Config: cfg, InterfaceName: name, PrivateKey: private, OwnershipToken: token}
-	reload := func() (platform.Desired, error) {
+	reload := func(ctx context.Context) (platform.Desired, error) {
 		var next config.Config
 		var err error
 		if remoteReload != nil {
-			next, err = remoteReload()
+			next, err = remoteReload(ctx)
 		} else {
 			next, err = config.Load(path)
 		}

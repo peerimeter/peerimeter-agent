@@ -58,7 +58,7 @@ func PrimaryUnderlay(ctx context.Context) (Underlay, error) {
 					continue
 				}
 				result = append(result, prefix.String())
-				if prefix.Contains(source) {
+				if ownsSourceAddress(prefix, source) {
 					containsSource = true
 				}
 			}
@@ -69,6 +69,10 @@ func PrimaryUnderlay(ctx context.Context) (Underlay, error) {
 		}
 	}
 	return Underlay{}, fmt.Errorf("default route uses no eligible physical interface")
+}
+
+func ownsSourceAddress(prefix netip.Prefix, source netip.Addr) bool {
+	return prefix.Addr().Unmap() == source.Unmap()
 }
 
 func interfacePrefix(raw net.Addr) (netip.Prefix, bool) {
@@ -116,6 +120,22 @@ func SelectEndpoint(local, peer []string, peerPort int, publicEndpoint string) (
 		return endpoint.String(), true
 	}
 	return "", false
+}
+
+// EndpointConflictsWithRoutes reports whether the endpoint address would be
+// routed through any WireGuard AllowedIPs prefix.
+func EndpointConflictsWithRoutes(endpoint string, routes []string) bool {
+	address, err := netip.ParseAddrPort(endpoint)
+	if err != nil {
+		return false
+	}
+	for _, raw := range routes {
+		prefix, err := netip.ParsePrefix(raw)
+		if err == nil && prefix.Contains(address.Addr()) {
+			return true
+		}
+	}
+	return false
 }
 
 func virtualName(name string) bool {

@@ -35,6 +35,16 @@ func TestInterfacePrefixAndAddressEligibility(t *testing.T) {
 	}
 }
 
+func TestRouteSourceMustBelongToInterfaceAddress(t *testing.T) {
+	prefix := netip.MustParsePrefix("192.168.20.10/24")
+	if !ownsSourceAddress(prefix, netip.MustParseAddr("192.168.20.10")) {
+		t.Fatal("interface's configured address was not matched")
+	}
+	if ownsSourceAddress(prefix, netip.MustParseAddr("192.168.20.15")) {
+		t.Fatal("another address in the same subnet was incorrectly matched")
+	}
+}
+
 func TestSelectEndpointUsesSharedLANPrefixThenPublicFallback(t *testing.T) {
 	endpoint, ok := SelectEndpoint([]string{"192.168.20.15/24"}, []string{"192.168.20.28/24"}, 51821, "203.0.113.8:51821")
 	if !ok || endpoint != "192.168.20.28:51821" {
@@ -46,5 +56,14 @@ func TestSelectEndpointUsesSharedLANPrefixThenPublicFallback(t *testing.T) {
 	}
 	if endpoint, ok = SelectEndpoint([]string{"192.168.20.15/24"}, []string{"192.168.40.28/24"}, 51821, ""); ok || endpoint != "" {
 		t.Fatalf("accepted missing endpoint = %q, %t", endpoint, ok)
+	}
+}
+
+func TestEndpointConflictsWithTunnelRoute(t *testing.T) {
+	if !EndpointConflictsWithRoutes("192.168.1.20:51820", []string{"192.168.1.20/32"}) {
+		t.Fatal("endpoint matching a tunnel route was not rejected")
+	}
+	if EndpointConflictsWithRoutes("192.168.1.21:51820", []string{"192.168.1.20/32"}) {
+		t.Fatal("unrelated endpoint was marked as conflicting")
 	}
 }

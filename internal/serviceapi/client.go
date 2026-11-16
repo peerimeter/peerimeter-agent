@@ -149,7 +149,17 @@ func (c *Client) GetNetwork(ctx context.Context, networkID string) (NetworkResou
 
 func validNetworkResource(n NetworkResource) bool {
 	prefix, err := netip.ParsePrefix(n.CIDR)
-	return n.Version == 1 && validID(n.ID) && strings.TrimSpace(n.Name) != "" && len(n.Name) <= 128 && err == nil && prefix.Addr().Is4() && prefix == prefix.Masked() && prefix.Bits() >= 8 && prefix.Bits() <= 30 && prefix.Addr().IsPrivate()
+	return n.Version == 1 && validID(n.ID) && strings.TrimSpace(n.Name) != "" && len(n.Name) <= 128 && err == nil && prefix.Addr().Is4() && prefix == prefix.Masked() && prefix.Bits() >= 8 && prefix.Bits() <= 30 && privateIPv4Prefix(prefix)
+}
+
+func privateIPv4Prefix(prefix netip.Prefix) bool {
+	for _, raw := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} {
+		block, _ := netip.ParsePrefix(raw)
+		if block.Contains(prefix.Addr()) && prefix.Bits() >= block.Bits() {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) PushNetwork(ctx context.Context, networkID string, config []byte) error {

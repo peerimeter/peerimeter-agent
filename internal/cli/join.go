@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -122,20 +123,37 @@ func newJoinCommand(app *application) *cobra.Command {
 			return errors.New("service assigned a tunnel address outside the network CIDR")
 		}
 		configPath := filepath.Join(layout.ConfigDir, networkID+".yaml")
-		loadConfig := func() (config.Config, error) {
-			peers, err := client.PullPeers(cmd.Context(), networkID, nodeID)
+		loadConfig := func(ctx context.Context) (config.Config, error) {
+			peers, err := client.PullPeers(ctx, networkID, nodeID)
 			if err != nil {
 				return config.Config{}, err
 			}
 			desired := config.Config{Version: 1, Mode: "static", Network: config.Network{ID: network.ID, Name: network.Name, CIDR: network.CIDR}, Interface: config.Interface{PrivateKeyFile: keyPath, Address: []string{address.String() + "/32"}, ListenPort: listenPort}}
+			type peerEntry struct {
+				id   string
+				peer registeredPeer
+			}
+			entries := make([]peerEntry, 0, len(peers.Peers))
+			routes := make([]string, 0, len(peers.Peers))
 			for peerID, raw := range peers.Peers {
 				var peer registeredPeer
 				if err := json.Unmarshal(raw, &peer); err != nil || peer.Version != 1 || peer.NodeID != peerID {
 					continue
 				}
+				entries = append(entries, peerEntry{id: peerID, peer: peer})
+				routes = append(routes, peer.TunnelAddress+"/32")
+			}
+			for _, entry := range entries {
+				peer := entry.peer
 				endpoint, ok := discovery.SelectEndpoint(underlay.Addresses, peer.LocalAddresses, peer.ListenPort, peer.PublicEndpoint)
 				if !ok || peer.PublicKey == "" || peer.TunnelAddress == "" {
 					continue
+				}
+				if discovery.EndpointConflictsWithRoutes(endpoint, routes) {
+					endpoint = peer.PublicEndpoint
+					if endpoint == "" || discovery.EndpointConflictsWithRoutes(endpoint, routes) {
+						continue
+					}
 				}
 				desired.Peers = append(desired.Peers, config.Peer{PublicKey: peer.PublicKey, AllowedIPs: []string{peer.TunnelAddress + "/32"}, Endpoint: endpoint, PersistentKeepaliveSeconds: 25})
 			}
@@ -143,12 +161,15 @@ func newJoinCommand(app *application) *cobra.Command {
 			if err != nil {
 				return config.Config{}, err
 			}
+			if err := config.Validate(desired, runtime.GOOS); err != nil {
+				return config.Config{}, err
+			}
 			if err := writeConfigFile(configPath, encoded); err != nil {
 				return config.Config{}, errors.New("cannot securely update managed network configuration")
 			}
 			return desired, nil
 		}
-		initial, err := loadConfig()
+		initial, err := loadConfig(cmd.Context())
 		if err != nil {
 			return err
 		}
