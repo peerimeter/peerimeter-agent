@@ -127,9 +127,18 @@ Environment variables:
 	root.PersistentFlags().StringVar(&app.color, "color", "auto", "Color mode: auto, always or never (auto respects NO_COLOR)")
 	root.PersistentFlags().BoolVar(&app.jsonOutput, "json", false, "Use JSON output and structured logs where supported")
 	root.PersistentFlags().BoolVar(&app.debug, "debug", false, "include captured stack trace when an error occurs")
+	var showHidden bool
+	root.Flags().BoolVar(&showHidden, "all", false, "List all commands, including hidden commands")
+	defaultHelp := root.HelpFunc()
+	root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		if cmd == root && showHidden {
+			restore := showHiddenCommands(root)
+			defer restore()
+		}
+		defaultHelp(cmd, args)
+	})
 	root.SetErr(io.Discard)
 	root.SetFlagErrorFunc(func(*cobra.Command, error) error { return errors.New("invalid command flags; use --help") })
-	var showHidden bool
 	helpCommand := &cobra.Command{Use: "help [command]", Short: "Show command help", RunE: func(_ *cobra.Command, args []string) error {
 		app.ran = true
 		if showHidden && len(args) == 0 {

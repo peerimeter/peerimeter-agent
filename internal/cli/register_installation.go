@@ -14,7 +14,7 @@ import (
 func newRegisterInstallationCommand(app *application) *cobra.Command {
 	var dir string
 	var docDir, dataDir, lockDir string
-	cmd := &cobra.Command{Use: "register-installation", Hidden: true, Args: noArguments, RunE: app.handleResponse(func(*cobra.Command) error {
+	cmd := &cobra.Command{Use: "register-installation", Short: "Register an installed program and its resource directories", Hidden: true, Args: noArguments, RunE: app.handleResponse(func(*cobra.Command) error {
 		exe, err := os.Executable()
 		if err != nil {
 			return err

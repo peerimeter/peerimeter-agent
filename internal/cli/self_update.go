@@ -445,6 +445,7 @@ func recoverInterruptedUpdate(installDir string, inv installstate.Inventory, goo
 func newUpdateHelperCommand(app *application) *cobra.Command {
 	return &cobra.Command{
 		Use:    "__update-helper <install-dir> <transaction-dir>",
+		Short:  "Complete a Windows self-update file replacement",
 		Hidden: true,
 		Args:   cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -460,6 +461,7 @@ func newUpdateHelperCommand(app *application) *cobra.Command {
 func newUpdateRecoveryHelperCommand(app *application) *cobra.Command {
 	return &cobra.Command{
 		Use:    "__recover-helper <install-dir> <helper-dir>",
+		Short:  "Recover an interrupted Windows self-update",
 		Hidden: true,
 		Args:   cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
