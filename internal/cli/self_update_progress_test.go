@@ -77,7 +77,7 @@ func TestSelfUpdateProgressCompletionColorsAreDistinct(t *testing.T) {
 func TestSelfUpdateProgressUsesSpinnerOnlyForReleaseCheck(t *testing.T) {
 	model := selfUpdateProgressModel{
 		bar:     progress.New(progress.WithWidth(32)),
-		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
+		spinner: spinner.New(spinner.WithSpinner(spinner.Line)),
 	}
 	updated, cmd := model.Update(selfUpdateProgressStart{message: "Checking the latest stable release"})
 	model = updated.(selfUpdateProgressModel)
