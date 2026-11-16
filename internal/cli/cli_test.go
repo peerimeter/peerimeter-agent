@@ -185,7 +185,7 @@ func TestHelpAllListsHiddenCommands(t *testing.T) {
 		latestReleaseURL = previousLatestReleaseURL
 		latestReleaseServer.Close()
 	})
-	if code, noArgs, noArgsErr := invoke(t); code != 0 || noArgsErr != "" {
+	if code, noArgs, noArgsErr := invoke(t, []string{}...); code != 0 || noArgsErr != "" {
 		t.Fatalf("argument-free command failed: %d %q %s", code, noArgs, noArgsErr)
 	} else {
 		for _, item := range []string{"Directories", "PEERIMETER_LOG_FORMAT", "DIRECTORY"} {
