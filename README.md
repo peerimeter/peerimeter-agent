@@ -1,6 +1,6 @@
 # Peerimeter Agent
 
-An offline-first, headless WireGuard mesh agent for Linux, macOS and Windows.
+A headless WireGuard mesh agent for Linux, macOS and Windows, with optional service API integration for sharing network and node configuration.
 Static mode configures peers with local YAML and runs direct WireGuard
 connections without an API server, enrollment, MQTT or STUN. No relay or
 desktop application.
@@ -14,7 +14,7 @@ desktop application.
 
 **✅ Phase 0 complete · ✅ Phase 1 complete · ✅ Phase 2 self-update complete**
 
-The offline agent, directory separation, migration, services, installers and full
+The standalone agent, directory separation, migration, services, installers and full
 uninstall passed native tests and independent review.
 Linux/macOS/Windows agent links, local control, native services and installers
 are verified for the CI architectures below. Exact code SHAs, run links and
