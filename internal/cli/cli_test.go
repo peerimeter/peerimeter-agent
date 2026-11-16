@@ -185,7 +185,7 @@ func TestHelpAllListsHiddenCommands(t *testing.T) {
 	if code != 0 || infoErr != "" || json.Unmarshal([]byte(infoJSON), &infoData) != nil || len(infoData.Environment) == 0 || len(infoData.Directories) < 4 {
 		t.Fatalf("info --json omitted environment or directory data: %d %q %s", code, infoJSON, infoErr)
 	}
-	if code, joinHelp, joinErr := invoke(t, "join", "--help"); code != 0 || joinErr != "" || !strings.Contains(joinHelp, "stdin") || !strings.Contains(joinHelp, "hostname") {
+	if code, joinHelp, joinErr := invoke(t, "join", "--help"); code != 0 || joinErr != "" || !strings.Contains(joinHelp, "stdin") || !strings.Contains(joinHelp, "hostname") || !strings.Contains(joinHelp, "--allow-insecure-http") {
 		t.Fatalf("join help missing stdin/hostname behavior: %d %q %s", code, joinHelp, joinErr)
 	}
 }

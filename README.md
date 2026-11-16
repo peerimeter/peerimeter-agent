@@ -144,8 +144,9 @@ new version is available, it reports that without prompting. The command selects
 the package for the current OS and CPU, then checks it against the release
 `SHA256SUMS` file downloaded over HTTPS. This is an integrity check using the
 GitHub release trust channel; it does not claim a detached release signature.
-The initial latest-release check uses a TUI spinner in a terminal. Update steps
-show a progress bar; redirected output uses start/completion lines. With
+The initial latest-release check uses a TUI spinner in a terminal. A progress
+bar advances across update steps without resetting; redirected output uses
+start/completion lines. With
 `--json`, progress stays on stderr and the final result remains on stdout.
 Startup checks may notify about an update, but never replace a running agent.
 
@@ -257,6 +258,12 @@ and node ID are reused. The shared token remains stored after the foreground
 process stops. Removing the protected `state-dir/managed/<network-id>.token`
 file only deletes the local credential; the service-side node record remains.
 There is not yet a `leave` command or server-side node revocation API.
+
+Join tokens require HTTPS by default, while HTTP URLs on `localhost` or a
+loopback IP are allowed automatically for local development. For a non-local
+service using plain HTTP, pass `--allow-insecure-http` to `join`. This sends the
+shared enrollment token without TLS and should only be used on a trusted
+network.
 
 The service still uses one shared API key, so the join token grants access to
 all networks and node registrations. STUN is probed on the configured WireGuard

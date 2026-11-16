@@ -57,6 +57,13 @@ type RegisteredNode struct {
 
 // DecodeJoinToken validates and decodes an unpadded Base64URL join token.
 func DecodeJoinToken(token string) (JoinBundle, error) {
+	return DecodeJoinTokenWithInsecureHTTP(token, false)
+}
+
+// DecodeJoinTokenWithInsecureHTTP optionally permits plain HTTP API URLs for
+// explicitly configured local or development services. HTTPS remains required
+// unless allowInsecureHTTP is true.
+func DecodeJoinTokenWithInsecureHTTP(token string, allowInsecureHTTP bool) (JoinBundle, error) {
 	var bundle JoinBundle
 	if len(token) == 0 || len(token) > maxBundleSize*2 {
 		return bundle, errors.New("join token is empty or too large")
@@ -77,8 +84,13 @@ func DecodeJoinToken(token string) (JoinBundle, error) {
 		return JoinBundle{}, errors.New("join token has an unsupported version or missing API token or network ID")
 	}
 	u, err := url.Parse(bundle.APIURL)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(bundle.APIURL, "#") || u.Opaque != "" {
-		return JoinBundle{}, errors.New("join token api_url must be an absolute HTTPS URL without credentials, query or fragment")
+	if err != nil {
+		return JoinBundle{}, errors.New("join token api_url is invalid")
+	}
+	localHTTP := u.Scheme == "http" && isLoopbackHost(u.Hostname())
+	allowedScheme := u.Scheme == "https" || localHTTP || (allowInsecureHTTP && u.Scheme == "http")
+	if !allowedScheme || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(bundle.APIURL, "#") || u.Opaque != "" {
+		return JoinBundle{}, errors.New("join token api_url must be an absolute HTTPS URL, or HTTP to localhost (or HTTP with --allow-insecure-http), without credentials, query or fragment")
 	}
 	if port := u.Port(); port != "" {
 		portNumber, err := strconv.Atoi(port)
@@ -88,6 +100,15 @@ func DecodeJoinToken(token string) (JoinBundle, error) {
 	}
 	bundle.APIURL = strings.TrimRight(bundle.APIURL, "/")
 	return bundle, nil
+}
+
+func isLoopbackHost(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	address, err := netip.ParseAddr(host)
+	return err == nil && address.IsLoopback()
 }
 
 func validNetworkID(value string) bool {
