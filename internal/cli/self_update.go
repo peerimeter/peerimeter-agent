@@ -368,6 +368,7 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	for _, f := range inv.Files {
 		filesUpdated = append(filesUpdated, f.Name)
 	}
+	deps.progress.stop(selfUpdateProgressUpdateSucceeded)
 	return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "updated", PreviousVersion: currentVersion, UpdatedVersion: tag, Files: filesUpdated})
 }
 
