@@ -15,7 +15,8 @@
       "required": ["id", "name"],
       "properties": {
         "id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.-]+$", "not": {"enum": [".", ".."]}},
-        "name": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "[^\\s]"}
+        "name": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "[^\\s]"},
+        "cidr": {"type": "string", "description": "Optional private IPv4 WireGuard network prefix, normally supplied by peerimeter-service for managed networks."}
       }
     },
     "interface": {
@@ -31,7 +32,7 @@
     },
     "peers": {
       "type": "array",
-      "minItems": 1,
+      "minItems": 0,
       "maxItems": 1024,
       "items": {
         "type": "object",
