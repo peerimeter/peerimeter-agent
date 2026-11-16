@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -49,6 +50,7 @@ func TestManagedRefreshStopsBeforeSessionCleanup(t *testing.T) {
 	defer cancel()
 	refreshStarted := make(chan struct{})
 	refreshDone := make(chan struct{})
+	var startedOnce, doneOnce sync.Once
 	f := &fake{started: make(chan struct{}), refreshDone: refreshDone}
 	tempRoot := os.TempDir()
 	if runtime.GOOS != "windows" {
@@ -65,9 +67,9 @@ func TestManagedRefreshStopsBeforeSessionCleanup(t *testing.T) {
 	result := make(chan error, 1)
 	go func() {
 		result <- RunManagedWithRefresh(ctx, f, platform.Desired{Config: config.Config{Network: config.Network{ID: "net-a"}}}, dir, func(refreshCtx context.Context) (platform.Desired, error) {
-			close(refreshStarted)
+			startedOnce.Do(func() { close(refreshStarted) })
 			<-refreshCtx.Done()
-			close(refreshDone)
+			doneOnce.Do(func() { close(refreshDone) })
 			return platform.Desired{}, refreshCtx.Err()
 		}, "", "instance", nil, nil, time.Millisecond)
 	}()
