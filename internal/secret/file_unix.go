@@ -68,3 +68,14 @@ func createProtected(path string) (*os.File, error) {
 	}
 	return f, nil
 }
+
+func verifyProtectedFile(f *os.File) error {
+	var st unix.Stat_t
+	if err := unix.Fstat(int(f.Fd()), &st); err != nil {
+		return errors.New("inspect protected file: metadata unavailable")
+	}
+	if st.Mode&unix.S_IFMT != unix.S_IFREG || st.Nlink != 1 || st.Uid != uint32(os.Geteuid()) || st.Mode&0077 != 0 {
+		return errors.New("protected file must be a private regular file owned by the current user")
+	}
+	return checkExtendedPermissions(int(f.Fd()))
+}
