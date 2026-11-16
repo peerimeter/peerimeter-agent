@@ -194,7 +194,7 @@ func (m selfUpdateProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.spinnerOnly {
 			return m, m.spinner.Tick
 		}
-		return m, tea.Batch(m.bar.SetPercent(m.percent), selfUpdateProgressTickCmd(m.generation))
+		return m, tea.Batch(m.spinner.Tick, m.bar.SetPercent(m.percent), selfUpdateProgressTickCmd(m.generation))
 	case selfUpdateProgressFinish:
 		m.active, m.err = false, msg.err
 		m.generation++
@@ -211,7 +211,7 @@ func (m selfUpdateProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(m.bar.SetPercent(m.percent), selfUpdateProgressTickCmd(m.generation))
 		}
 	case spinner.TickMsg:
-		if m.active && m.spinnerOnly {
+		if m.active {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
@@ -229,14 +229,11 @@ func (m selfUpdateProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m selfUpdateProgressModel) View() tea.View {
 	icon := "✓"
 	if m.active {
-		icon = "→"
+		icon = m.spinner.View()
 	} else if m.err != nil {
 		icon = "✗"
 	}
 	if m.spinnerOnly {
-		if m.active {
-			icon = m.spinner.View()
-		}
 		v := tea.NewView(fmt.Sprintf("%s %s", icon, m.message))
 		v.DisableBracketedPasteMode = true
 		return v

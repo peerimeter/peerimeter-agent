@@ -144,9 +144,9 @@ new version is available, it reports that without prompting. The command selects
 the package for the current OS and CPU, then checks it against the release
 `SHA256SUMS` file downloaded over HTTPS. This is an integrity check using the
 GitHub release trust channel; it does not claim a detached release signature.
-The initial latest-release check uses a TUI spinner in a terminal. A progress
-bar advances across update steps without resetting; redirected output uses
-start/completion lines. With
+The latest-release check uses a TUI spinner in a terminal. During the update, a
+spinner appears above a progress bar that advances across steps without
+resetting; redirected output uses start/completion lines. With
 `--json`, progress stays on stderr and the final result remains on stdout.
 Startup checks may notify about an update, but never replace a running agent.
 
