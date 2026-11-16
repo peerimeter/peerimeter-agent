@@ -39,6 +39,23 @@ func TestSelfUpdateProgressStopKeepsCompletedBarVisible(t *testing.T) {
 	}
 }
 
+func TestSelfUpdateProgressStopsBeforeUpdateResult(t *testing.T) {
+	var output bytes.Buffer
+	progress := newSelfUpdateProgress(&output)
+	progress.tty = true
+	finish := runSelfUpdateAction(progress, "Finalizing update and removing rollback backup", func() error { return nil })
+	if finish != nil {
+		t.Fatal(finish)
+	}
+	progress.stop(selfUpdateProgressUpdateSucceeded)
+	_, _ = output.WriteString("Updated Peerimeter Agent from v0.19.0 to v0.19.1.\n")
+
+	bar := completedSelfUpdateProgressBar(selfUpdateProgressUpdateSucceeded, false)
+	if !strings.HasSuffix(output.String(), bar+"\n\nUpdated Peerimeter Agent from v0.19.0 to v0.19.1.\n") {
+		t.Fatalf("update result was not written after the progress UI closed: %q", output.String())
+	}
+}
+
 func TestSelfUpdateProgressCompletionColorsAreDistinct(t *testing.T) {
 	plain := completedSelfUpdateProgressBar(selfUpdateProgressUpToDate, false)
 	if strings.Contains(plain, "\x1b[") {
@@ -48,6 +65,10 @@ func TestSelfUpdateProgressCompletionColorsAreDistinct(t *testing.T) {
 	updateAvailable := completedSelfUpdateProgressBar(selfUpdateProgressUpdateAvailable, true)
 	if upToDate == updateAvailable {
 		t.Fatal("up-to-date and update-available bars use the same color")
+	}
+	updateSucceeded := completedSelfUpdateProgressBar(selfUpdateProgressUpdateSucceeded, true)
+	if updateSucceeded != upToDate {
+		t.Fatal("successful update should use the completed green bar")
 	}
 }
 

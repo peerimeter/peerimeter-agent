@@ -31,6 +31,7 @@ const (
 	selfUpdateProgressNeutral selfUpdateProgressOutcome = iota
 	selfUpdateProgressUpToDate
 	selfUpdateProgressUpdateAvailable
+	selfUpdateProgressUpdateSucceeded
 )
 
 type selfUpdateProgressStart struct{ message string }
@@ -157,6 +158,8 @@ func completedSelfUpdateProgressBar(outcome selfUpdateProgressOutcome, color boo
 	}
 	switch outcome {
 	case selfUpdateProgressUpToDate:
+		options = append(options, progress.WithColors(lipgloss.Color("#22C55E")))
+	case selfUpdateProgressUpdateSucceeded:
 		options = append(options, progress.WithColors(lipgloss.Color("#22C55E")))
 	case selfUpdateProgressUpdateAvailable:
 		options = append(options, progress.WithColors(lipgloss.Color("#F59E0B")))
