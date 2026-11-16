@@ -132,6 +132,9 @@ Use "peerimeter-agent info" to view environment variables and resolved directori
 			if err := cmd.Help(); err != nil {
 				return err
 			}
+			if err := writeInfoTables(app.out, shouldColor(app.out, app.color), outputWidth(app.out)); err != nil {
+				return err
+			}
 			return checkForUpgrade(cmd.Context(), app.out, app.color, false, false)
 		}),
 	}
@@ -154,9 +157,6 @@ Use "peerimeter-agent info" to view environment variables and resolved directori
 			defer restore()
 		}
 		defaultHelp(cmd, args)
-		if cmd == root {
-			_ = writeInfoTables(cmd.OutOrStdout(), shouldColor(cmd.OutOrStdout(), app.color), outputWidth(cmd.OutOrStdout()))
-		}
 	})
 	root.SetErr(io.Discard)
 	root.SetFlagErrorFunc(func(*cobra.Command, error) error { return errors.New("invalid command flags; use --help") })
