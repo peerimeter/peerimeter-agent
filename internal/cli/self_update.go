@@ -32,7 +32,7 @@ func newSelfUpdateCommand(app *application) *cobra.Command {
 		Long:  "Checks for the latest stable release, displays the current and new versions, asks before updating unless --yes is set, verifies SHA256SUMS, and replaces only program files recorded by this installation.",
 		Args:  noArguments,
 		RunE: app.handle(func(cmd *cobra.Command) error {
-			return selfUpdate(cmd.Context(), app.out, app.promptOut, app.in, app.jsonOutput, yes)
+			return selfUpdate(cmd.Context(), app.out, app.promptOut, app.in, app.jsonOutput, yes, app.color)
 		}),
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "Update without asking for confirmation")
@@ -46,7 +46,7 @@ type selfUpdateResult struct {
 	Files           []string `json:"files,omitempty"`
 }
 
-func selfUpdate(ctx context.Context, out, promptOut io.Writer, in io.Reader, jsonOutput, yes bool) error {
+func selfUpdate(ctx context.Context, out, promptOut io.Writer, in io.Reader, jsonOutput, yes bool, colorMode string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
@@ -58,7 +58,7 @@ func selfUpdate(ctx context.Context, out, promptOut io.Writer, in io.Reader, jso
 	return selfUpdateAt(ctx, out, jsonOutput, installDir, Version, runtime.GOOS, runtime.GOARCH, selfUpdateDeps{
 		latest: latestStableReleaseTag,
 		fetch:  selfupdate.Fetch, verify: verifyUpdatedBinary, manage: service.Manage, wait: waitForService,
-		yes: yes, progress: newSelfUpdateProgress(promptOut),
+		yes: yes, progress: newSelfUpdateProgress(promptOut, colorMode),
 		confirm: func(current, latest string) (bool, error) {
 			return confirmSelfUpdate(in, promptOut, current, latest)
 		},
@@ -153,18 +153,24 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	if err != nil {
 		return err
 	}
-	deps.progress.stop()
 	latest, ok := parseReleaseVersion(latestTag)
 	current, currentOK := parseReleaseVersion(currentVersion)
 	if !ok || !currentOK {
+		deps.progress.stop()
 		return fmt.Errorf("cannot compare agent version %q with release %q", currentVersion, latestTag)
+	}
+	upToDate := compareVersion(latest, current) <= 0
+	if upToDate {
+		deps.progress.stop(selfUpdateProgressUpToDate)
+	} else {
+		deps.progress.stop(selfUpdateProgressUpdateAvailable)
 	}
 	if !jsonOutput {
 		if _, err := fmt.Fprintf(out, "Current version: %s\nLatest version: %s\n", currentVersion, latestTag); err != nil {
 			return err
 		}
 	}
-	if compareVersion(latest, current) <= 0 {
+	if upToDate {
 		return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "up_to_date", PreviousVersion: currentVersion, UpdatedVersion: latestTag})
 	}
 	if !deps.yes {

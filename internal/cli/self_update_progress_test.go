@@ -23,6 +23,30 @@ func TestSelfUpdateProgressReportsStartedAndFinishedSteps(t *testing.T) {
 	}
 }
 
+func TestSelfUpdateProgressStopKeepsCompletedBarVisible(t *testing.T) {
+	var output bytes.Buffer
+	progress := newSelfUpdateProgress(&output)
+	progress.tty = true
+	finish := progress.start("Checking the latest stable release")
+	finish(nil)
+	progress.stop(selfUpdateProgressUpToDate)
+
+	if bar := completedSelfUpdateProgressBar(selfUpdateProgressUpToDate, false); !strings.Contains(output.String(), bar) {
+		t.Fatalf("stopped TUI output does not retain the completed bar: %q", output.String())
+	}
+	if !strings.HasSuffix(output.String(), completedSelfUpdateProgressBar(selfUpdateProgressUpToDate, false)+"\n\n") {
+		t.Fatalf("completed bar is not followed by a blank line: %q", output.String())
+	}
+}
+
+func TestSelfUpdateProgressCompletionColorsAreDistinct(t *testing.T) {
+	upToDate := completedSelfUpdateProgressBar(selfUpdateProgressUpToDate, true)
+	updateAvailable := completedSelfUpdateProgressBar(selfUpdateProgressUpdateAvailable, true)
+	if upToDate == updateAvailable {
+		t.Fatal("up-to-date and update-available bars use the same color")
+	}
+}
+
 func TestSelfUpdateProgressAdvancesOnceAndWaitsForFinish(t *testing.T) {
 	model := selfUpdateProgressModel{bar: progress.New(progress.WithWidth(32))}
 	updatedTeaModel, _ := model.Update(selfUpdateProgressStart{message: "Downloading release package"})

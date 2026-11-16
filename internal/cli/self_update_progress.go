@@ -9,16 +9,28 @@ import (
 
 	"charm.land/bubbles/v2/progress"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"golang.org/x/term"
 )
 
 type selfUpdateProgress struct {
-	out     io.Writer
-	tty     bool
-	mu      sync.Mutex
-	program *tea.Program
-	stopped chan struct{}
+	out       io.Writer
+	tty       bool
+	mu        sync.Mutex
+	program   *tea.Program
+	stopped   chan struct{}
+	finished  bool
+	finishErr error
+	color     bool
 }
+
+type selfUpdateProgressOutcome uint8
+
+const (
+	selfUpdateProgressNeutral selfUpdateProgressOutcome = iota
+	selfUpdateProgressUpToDate
+	selfUpdateProgressUpdateAvailable
+)
 
 type selfUpdateProgressStart struct{ message string }
 type selfUpdateProgressFinish struct{ err error }
@@ -34,8 +46,12 @@ type selfUpdateProgressModel struct {
 	generation uint64
 }
 
-func newSelfUpdateProgress(out io.Writer) *selfUpdateProgress {
-	p := &selfUpdateProgress{out: out}
+func newSelfUpdateProgress(out io.Writer, colorMode ...string) *selfUpdateProgress {
+	mode := "auto"
+	if len(colorMode) > 0 {
+		mode = colorMode[0]
+	}
+	p := &selfUpdateProgress{out: out, color: shouldColor(out, mode)}
 	if file, ok := out.(*os.File); ok && os.Getenv("TERM") != "dumb" {
 		p.tty = term.IsTerminal(int(file.Fd()))
 	}
@@ -57,11 +73,21 @@ func (p *selfUpdateProgress) start(message string) func(error) {
 		}
 	}
 
+	p.mu.Lock()
+	p.finished = false
+	p.finishErr = nil
+	p.mu.Unlock()
 	program := p.getProgram()
 	program.Send(selfUpdateProgressStart{message: message})
 	var once sync.Once
 	return func(err error) {
-		once.Do(func() { program.Send(selfUpdateProgressFinish{err: err}) })
+		once.Do(func() {
+			p.mu.Lock()
+			p.finished = true
+			p.finishErr = err
+			p.mu.Unlock()
+			program.Send(selfUpdateProgressFinish{err: err})
+		})
 	}
 }
 
@@ -86,25 +112,55 @@ func (p *selfUpdateProgress) getProgram() *tea.Program {
 	return p.program
 }
 
-func (p *selfUpdateProgress) stop() {
+func (p *selfUpdateProgress) stop(outcome ...selfUpdateProgressOutcome) {
 	if p == nil || !p.tty {
 		return
 	}
+	result := selfUpdateProgressNeutral
+	if len(outcome) > 0 {
+		result = outcome[0]
+	}
 	p.mu.Lock()
 	program, stopped := p.program, p.stopped
+	finished, finishErr := p.finished, p.finishErr
 	p.mu.Unlock()
 	if program == nil {
 		return
 	}
 	program.Send(selfUpdateProgressClose{})
 	<-stopped
-	_, _ = fmt.Fprintln(p.out)
+	if finished && finishErr == nil && result != selfUpdateProgressNeutral {
+		_, _ = fmt.Fprintln(p.out, completedSelfUpdateProgressBar(result, p.color))
+		_, _ = fmt.Fprintln(p.out)
+	} else {
+		_, _ = fmt.Fprintln(p.out)
+	}
 	p.mu.Lock()
 	if p.program == program {
 		p.program = nil
 		p.stopped = nil
+		p.finished = false
+		p.finishErr = nil
 	}
 	p.mu.Unlock()
+}
+
+func completedSelfUpdateProgressBar(outcome selfUpdateProgressOutcome, color bool) string {
+	options := []progress.Option{
+		progress.WithWidth(32),
+		progress.WithoutPercentage(),
+		progress.WithFillCharacters(progress.DefaultFullCharFullBlock, progress.DefaultEmptyCharBlock),
+	}
+	if color {
+		switch outcome {
+		case selfUpdateProgressUpToDate:
+			options = append(options, progress.WithColors(lipgloss.Color("#22C55E")))
+		case selfUpdateProgressUpdateAvailable:
+			options = append(options, progress.WithColors(lipgloss.Color("#F59E0B")))
+		}
+	}
+	bar := progress.New(options...)
+	return bar.ViewAs(1)
 }
 
 func (m selfUpdateProgressModel) Init() tea.Cmd { return nil }
