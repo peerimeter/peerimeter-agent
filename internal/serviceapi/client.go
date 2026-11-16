@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -90,7 +91,7 @@ func DecodeJoinTokenWithInsecureHTTP(token string, allowInsecureHTTP bool) (Join
 	localHTTP := u.Scheme == "http" && isLoopbackHost(u.Hostname())
 	allowedScheme := u.Scheme == "https" || localHTTP || (allowInsecureHTTP && u.Scheme == "http")
 	if !allowedScheme || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(bundle.APIURL, "#") || u.Opaque != "" {
-		return JoinBundle{}, errors.New("join token api_url must be an absolute HTTPS URL, or HTTP to localhost (or HTTP with --allow-insecure-http), without credentials, query or fragment")
+		return JoinBundle{}, errors.New("join token api_url must be an absolute HTTPS URL, or HTTP to localhost or a loopback IP (or HTTP with --allow-insecure-http), without credentials, query or fragment")
 	}
 	if port := u.Port(); port != "" {
 		portNumber, err := strconv.Atoi(port)
@@ -104,7 +105,7 @@ func DecodeJoinTokenWithInsecureHTTP(token string, allowInsecureHTTP bool) (Join
 
 func isLoopbackHost(host string) bool {
 	host = strings.TrimSuffix(strings.ToLower(host), ".")
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+	if host == "localhost" {
 		return true
 	}
 	address, err := netip.ParseAddr(host)
@@ -143,7 +144,7 @@ type Client struct {
 }
 
 func New(bundle JoinBundle) *Client {
-	return newClient(bundle, newHTTPClient())
+	return newClient(bundle, newAPIHTTPClient(bundle.APIURL))
 }
 
 func newHTTPClient() *http.Client {
@@ -153,6 +154,35 @@ func newHTTPClient() *http.Client {
 			return http.ErrUseLastResponse
 		},
 	}
+}
+
+func newAPIHTTPClient(apiURL string) *http.Client {
+	client := newHTTPClient()
+	u, err := url.Parse(apiURL)
+	if err != nil || u.Scheme != "http" || !isLoopbackHost(u.Hostname()) {
+		return client
+	}
+	client.Transport = &http.Transport{
+		DialContext: dialLoopbackContext,
+	}
+	return client
+}
+
+func dialLoopbackContext(ctx context.Context, network, address string) (net.Conn, error) {
+	conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
+	if err != nil {
+		return nil, err
+	}
+	if !isLoopbackRemoteAddress(conn.RemoteAddr()) {
+		_ = conn.Close()
+		return nil, errors.New("localhost HTTP API resolved to a non-loopback address")
+	}
+	return conn, nil
+}
+
+func isLoopbackRemoteAddress(address net.Addr) bool {
+	remote, ok := address.(*net.TCPAddr)
+	return ok && remote.IP.IsLoopback()
 }
 
 func newClient(bundle JoinBundle, client *http.Client) *Client {
