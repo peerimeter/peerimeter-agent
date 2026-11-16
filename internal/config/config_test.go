@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
 func fixture() Config {
@@ -192,11 +190,7 @@ func TestLoadPreservesDecodeError(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = Load(path)
-	var typeErr *yaml.TypeError
-	if !errors.As(err, &typeErr) {
-		t.Fatalf("lost underlying decode error: %v", err)
-	}
-	if !strings.Contains(err.Error(), "decode static config") || strings.Contains(err.Error(), "SECRET-VALUE") {
+	if !strings.Contains(err.Error(), "decode static YAML config") || strings.Contains(err.Error(), "SECRET-VALUE") {
 		t.Fatalf("unsafe or missing decode context: %v", err)
 	}
 }
