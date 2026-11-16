@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -143,15 +145,14 @@ func readConfigFile(path string) ([]byte, error) {
 
 func writeConfigFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".peerimeter-pull-*.tmp")
+	tmp, tmpPath, err := createPullTempFile(dir)
 	if err != nil {
 		return err
 	}
-	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(0600); err != nil {
+	if err := secret.VerifyProtectedFile(tmp); err != nil {
 		tmp.Close()
-		return err
+		return errors.New("temporary configuration file is not private")
 	}
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
@@ -168,6 +169,21 @@ func writeConfigFile(path string, data []byte) error {
 		return err
 	}
 	return nil
+}
+
+func createPullTempFile(dir string) (*os.File, string, error) {
+	for range 8 {
+		var suffix [16]byte
+		if _, err := rand.Read(suffix[:]); err != nil {
+			return nil, "", errors.New("could not create a private temporary file")
+		}
+		path := filepath.Join(dir, ".peerimeter-pull-"+hex.EncodeToString(suffix[:])+".tmp")
+		file, err := secret.CreateProtectedFile(path)
+		if err == nil {
+			return file, path, nil
+		}
+	}
+	return nil, "", errors.New("could not create a private temporary file")
 }
 
 func writeJSONLine(out io.Writer, value any) error { return json.NewEncoder(out).Encode(value) }

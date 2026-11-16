@@ -135,3 +135,7 @@ func createProtected(path string) (*os.File, error) {
 	}
 	return os.NewFile(uintptr(handle), "private-key"), nil
 }
+
+func verifyProtectedFile(f *os.File) error {
+	return inspectHandle(windows.Handle(f.Fd()))
+}

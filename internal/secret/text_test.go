@@ -9,7 +9,7 @@ import (
 
 func TestReadProtectedText(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "join-token.txt")
-	f, err := createProtected(path)
+	f, err := CreateProtectedFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}

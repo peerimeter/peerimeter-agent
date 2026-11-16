@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/peerimeter/peerimeter-agent/internal/secret"
 )
 
 func TestValidateConfigSelection(t *testing.T) {
@@ -43,6 +45,21 @@ func TestWriteConfigFileUsesPrivateMode(t *testing.T) {
 	}
 	if mode := mustStat(t, path).Mode().Perm(); runtime.GOOS != "windows" && mode != 0600 {
 		t.Fatalf("file permissions = %04o, want 0600", mode)
+	}
+	if _, err := secret.ReadProtectedText(path, 1<<20); err != nil {
+		t.Fatalf("pulled file failed protected ACL/permission validation: %v", err)
+	}
+}
+
+func TestPullTempFileIsProtectedBeforeWrite(t *testing.T) {
+	f, path, err := createPullTempFile(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(path)
+	defer f.Close()
+	if err := secret.VerifyProtectedFile(f); err != nil {
+		t.Fatalf("temporary file is not private before writing: %v", err)
 	}
 }
 
