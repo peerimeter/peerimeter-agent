@@ -188,15 +188,15 @@ func (m selfUpdateProgressModel) Init() tea.Cmd { return nil }
 func (m selfUpdateProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case selfUpdateProgressStart:
-		m.message, m.active, m.err, m.percent = msg.message, true, nil, 0
+		m.message, m.active, m.err = msg.message, true, nil
 		m.generation++
 		m.spinnerOnly = msg.message == "Checking the latest stable release"
 		if m.spinnerOnly {
 			return m, m.spinner.Tick
 		}
-		return m, tea.Batch(m.bar.SetPercent(0), selfUpdateProgressTickCmd(m.generation))
+		return m, tea.Batch(m.bar.SetPercent(m.percent), selfUpdateProgressTickCmd(m.generation))
 	case selfUpdateProgressFinish:
-		m.active, m.err, m.percent = false, msg.err, 1
+		m.active, m.err = false, msg.err
 		m.generation++
 		return m, nil
 	case selfUpdateProgressTick:

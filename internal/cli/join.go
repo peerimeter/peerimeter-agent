@@ -60,6 +60,7 @@ func eligiblePeerEntries(underlay []string, peers map[string]json.RawMessage) ([
 
 func newJoinCommand(app *application) *cobra.Command {
 	var networkID, nodeID, operator string
+	var allowInsecureHTTP bool
 	var listenPort int
 	var dirs paths.Options
 	cmd := &cobra.Command{Use: "join", Short: "Register this agent and connect it to a service-managed network", Args: noArguments, RunE: app.handle(func(cmd *cobra.Command) error {
@@ -68,7 +69,7 @@ func newJoinCommand(app *application) *cobra.Command {
 			return errors.New("could not read join token from stdin or token is too large")
 		}
 		token := strings.TrimSpace(string(data))
-		bundle, err := serviceapi.DecodeJoinToken(token)
+		bundle, err := serviceapi.DecodeJoinTokenWithInsecureHTTP(token, allowInsecureHTTP)
 		if err != nil {
 			return err
 		}
@@ -189,6 +190,7 @@ func newJoinCommand(app *application) *cobra.Command {
 	cmd.Flags().StringVar(&nodeID, "node-id", "", "Optional stable node ID (defaults to hostname)")
 	cmd.Flags().IntVar(&listenPort, "listen-port", 51820, "WireGuard UDP listen port")
 	cmd.Flags().StringVar(&operator, "operator", "", "Authorized local username/UID or Windows account/SID")
+	cmd.Flags().BoolVar(&allowInsecureHTTP, "allow-insecure-http", false, "Allow HTTP API URLs outside localhost (sends the enrollment token without TLS)")
 	directoryFlags(cmd, &dirs)
 	return cmd
 }

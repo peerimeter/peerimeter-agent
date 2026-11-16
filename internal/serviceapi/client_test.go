@@ -22,6 +22,30 @@ func TestDecodeJoinToken(t *testing.T) {
 	}
 }
 
+func TestDecodeJoinTokenAllowsLocalHTTPByDefault(t *testing.T) {
+	for _, apiURL := range []string{"http://localhost:8080/api", "http://127.0.0.1:8080/api", "http://[::1]:8080/api", "http://service.localhost:8080/api"} {
+		wire, _ := json.Marshal(JoinBundle{Version: 1, APIURL: apiURL, NetworkID: "mesh-a", EnrollmentToken: "secret-key"})
+		if _, err := DecodeJoinToken(base64.RawURLEncoding.EncodeToString(wire)); err != nil {
+			t.Errorf("default join token decoding rejected loopback URL %q: %v", apiURL, err)
+		}
+	}
+}
+
+func TestDecodeJoinTokenAllowsRemoteHTTPOnlyWhenExplicitlyEnabled(t *testing.T) {
+	wire, _ := json.Marshal(JoinBundle{Version: 1, APIURL: "http://api.example/prefix/", NetworkID: "mesh-a", EnrollmentToken: "secret-key"})
+	token := base64.RawURLEncoding.EncodeToString(wire)
+	if _, err := DecodeJoinToken(token); err == nil {
+		t.Fatal("default join token decoding accepted remote HTTP")
+	}
+	bundle, err := DecodeJoinTokenWithInsecureHTTP(token, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bundle.APIURL != "http://api.example/prefix" {
+		t.Fatalf("unexpected HTTP API URL: %q", bundle.APIURL)
+	}
+}
+
 func TestDecodeJoinTokenRejectsInvalidBundles(t *testing.T) {
 	for _, wire := range []string{
 		`{"version":2,"api_url":"https://api.example","network_id":"mesh-a","enrollment_token":"key"}`,

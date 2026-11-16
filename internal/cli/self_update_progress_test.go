@@ -143,10 +143,18 @@ func TestSelfUpdateProgressAdvancesOnceAndWaitsForFinish(t *testing.T) {
 	}
 	updatedTeaModel, _ = model.Update(selfUpdateProgressFinish{})
 	model = updatedTeaModel.(selfUpdateProgressModel)
-	if got := model.percent; got != 1 {
-		t.Fatalf("finished progress = %v; want 1", got)
+	if got := model.percent; got != 0.9 || model.bar.Percent() != 0.9 {
+		t.Fatalf("finished step progress = %v (bar target %v); want to retain 0.9", got, model.bar.Percent())
 	}
-	if bar := model.bar.ViewAs(1); bar == "" || !strings.Contains(model.View().Content, bar) {
-		t.Fatalf("finished progress bar is not fully rendered: %q", model.View().Content)
+	previous = model.bar.Percent()
+	updatedTeaModel, _ = model.Update(selfUpdateProgressStart{message: "Starting the updated agent service"})
+	model = updatedTeaModel.(selfUpdateProgressModel)
+	if model.percent < previous || model.bar.Percent() < previous {
+		t.Fatalf("progress moved backwards between update steps: previous %v, model %v, bar %v", previous, model.percent, model.bar.Percent())
+	}
+	updatedTeaModel, _ = model.Update(selfUpdateProgressTick{generation: model.generation})
+	model = updatedTeaModel.(selfUpdateProgressModel)
+	if model.percent < previous || model.bar.Percent() < previous {
+		t.Fatalf("progress moved backwards near the end of an update step: previous %v, model %v, bar %v", previous, model.percent, model.bar.Percent())
 	}
 }
