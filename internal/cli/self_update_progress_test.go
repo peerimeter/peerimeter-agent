@@ -74,7 +74,7 @@ func TestSelfUpdateProgressCompletionColorsAreDistinct(t *testing.T) {
 	}
 }
 
-func TestSelfUpdateProgressUsesSpinnerOnlyForReleaseCheck(t *testing.T) {
+func TestSelfUpdateProgressUsesSpinnerAndBarDuringUpdate(t *testing.T) {
 	model := selfUpdateProgressModel{
 		bar:     progress.New(progress.WithWidth(32)),
 		spinner: spinner.New(spinner.WithSpinner(spinner.Line)),
@@ -93,8 +93,14 @@ func TestSelfUpdateProgressUsesSpinnerOnlyForReleaseCheck(t *testing.T) {
 
 	updated, _ = model.Update(selfUpdateProgressStart{message: "Downloading release package"})
 	model = updated.(selfUpdateProgressModel)
-	if model.spinnerOnly || !strings.Contains(model.View().Content, "\n") {
-		t.Fatalf("update step should retain its progress bar: %q", model.View().Content)
+	view = model.View().Content
+	if model.spinnerOnly || !model.active || !strings.Contains(view, "Downloading release package") || !strings.Contains(view, "\n") || !strings.Contains(view, model.spinner.View()) {
+		t.Fatalf("update step should show a spinner above its progress bar: %q", view)
+	}
+	updated, cmd = model.Update(model.spinner.Tick())
+	model = updated.(selfUpdateProgressModel)
+	if cmd == nil || !model.active {
+		t.Fatal("update step spinner did not continue")
 	}
 }
 
