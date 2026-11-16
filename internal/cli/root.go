@@ -11,10 +11,14 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/diagnostic"
+	"github.com/peerimeter/peerimeter-agent/internal/installstate"
 	"github.com/peerimeter/peerimeter-agent/internal/logging"
+	"github.com/peerimeter/peerimeter-agent/internal/paths"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
 	"github.com/spf13/cobra"
 )
@@ -124,7 +128,10 @@ subcommands can optionally pull or push network and node YAML over HTTPS.
 Environment variables:
   PEERIMETER_LOG_FORMAT  Log format: console (default), text, or json.
   NO_COLOR               Disable ANSI colors when set.
-  TERM=dumb              Disable ANSI colors for dumb terminals.`,
+  TERM=dumb              Disable ANSI colors for dumb terminals.
+
+Directories (platform defaults; command flags can override config/state/runtime):
+` + directoryHelp(),
 		SilenceUsage:       true,
 		SilenceErrors:      true,
 		DisableSuggestions: true,
@@ -197,6 +204,31 @@ func showHiddenCommands(root *cobra.Command) func() {
 			command.Hidden = true
 		}
 	}
+}
+
+func directoryHelp() string {
+	layout, err := paths.Resolve(paths.Options{})
+	if err != nil {
+		return "  install: executable directory (installer-selected)"
+	}
+	executable, execErr := os.Executable()
+	installDir := "installer-selected"
+	if execErr == nil {
+		installDir = filepath.Dir(executable)
+	}
+	lines := []string{
+		"  install:  " + installDir,
+		"  config:   " + layout.ConfigDir,
+		"  data:     " + layout.StateDir,
+		"  runtime:  " + layout.RuntimeDir,
+	}
+	if execErr == nil {
+		if inv, loadErr := installstate.Load(installDir); loadErr == nil {
+			lines[0] = "  install:  " + inv.InstallDir
+			lines = append(lines, "  installer data: "+inv.DataDir, "  docs:     "+inv.DocDir, "  locks:    "+inv.LockDir)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func outputWidth(out io.Writer) int {

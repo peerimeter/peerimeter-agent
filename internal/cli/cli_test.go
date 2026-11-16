@@ -169,6 +169,14 @@ func TestHelpAllListsHiddenCommands(t *testing.T) {
 			t.Errorf("default help unexpectedly lists hidden command %q", command)
 		}
 	}
+	for _, directory := range []string{"install:", "config:", "data:", "runtime:"} {
+		if !strings.Contains(out, directory) {
+			t.Errorf("root help missing %q directory path: %s", directory, out)
+		}
+	}
+	if code, joinHelp, joinErr := invoke(t, "join", "--help"); code != 0 || joinErr != "" || !strings.Contains(joinHelp, "stdin") || !strings.Contains(joinHelp, "hostname") {
+		t.Fatalf("join help missing stdin/hostname behavior: %d %q %s", code, joinHelp, joinErr)
+	}
 }
 
 func TestConfigLoadErrorDiagnostics(t *testing.T) {
