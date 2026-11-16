@@ -5,9 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -23,10 +26,15 @@ func TestDecodeJoinToken(t *testing.T) {
 }
 
 func TestDecodeJoinTokenAllowsLocalHTTPByDefault(t *testing.T) {
-	for _, apiURL := range []string{"http://localhost:8080/api", "http://127.0.0.1:8080/api", "http://[::1]:8080/api", "http://service.localhost:8080/api"} {
+	for _, apiURL := range []string{"http://localhost:8080/api", "http://LOCALHOST.:8080/api", "http://127.0.0.1:8080/api", "http://[::1]:8080/api"} {
 		wire, _ := json.Marshal(JoinBundle{Version: 1, APIURL: apiURL, NetworkID: "mesh-a", EnrollmentToken: "secret-key"})
 		if _, err := DecodeJoinToken(base64.RawURLEncoding.EncodeToString(wire)); err != nil {
 			t.Errorf("default join token decoding rejected loopback URL %q: %v", apiURL, err)
+		}
+	}
+	for _, host := range []string{"service.localhost", "127.0.0.2.example", "api.example"} {
+		if isLoopbackHost(host) {
+			t.Errorf("treated non-loopback hostname %q as a local endpoint", host)
 		}
 	}
 }
@@ -43,6 +51,55 @@ func TestDecodeJoinTokenAllowsRemoteHTTPOnlyWhenExplicitlyEnabled(t *testing.T) 
 	}
 	if bundle.APIURL != "http://api.example/prefix" {
 		t.Fatalf("unexpected HTTP API URL: %q", bundle.APIURL)
+	}
+}
+
+func TestLocalHTTPClientBypassesProxyAndUsesLoopback(t *testing.T) {
+	var proxyCalled atomic.Bool
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		proxyCalled.Store(true)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer proxy.Close()
+
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-secret" {
+			t.Errorf("Authorization = %q", got)
+		}
+		_, _ = io.WriteString(w, `{"version":1,"id":"mesh-a","name":"mesh","cidr":"10.90.0.0/24"}`)
+	}))
+	defer api.Close()
+	parsed, err := url.Parse(api.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("HTTP_PROXY", proxy.URL)
+	t.Setenv("http_proxy", proxy.URL)
+	t.Setenv("NO_PROXY", "")
+	t.Setenv("no_proxy", "")
+	client := New(JoinBundle{APIURL: "http://localhost:" + parsed.Port(), EnrollmentToken: "test-secret"})
+	if _, err := client.GetNetwork(context.Background(), "mesh-a"); err != nil {
+		t.Fatal(err)
+	}
+	if proxyCalled.Load() {
+		t.Fatal("localhost API request was sent through the configured proxy")
+	}
+}
+
+func TestLocalHTTPClientRejectsNonLoopbackResolvedAddress(t *testing.T) {
+	for _, test := range []struct {
+		address net.Addr
+		want    bool
+	}{
+		{address: &net.TCPAddr{IP: net.ParseIP("127.0.0.1")}, want: true},
+		{address: &net.TCPAddr{IP: net.ParseIP("::1")}, want: true},
+		{address: &net.TCPAddr{IP: net.ParseIP("192.0.2.10")}, want: false},
+		{address: &net.UDPAddr{IP: net.ParseIP("127.0.0.1")}, want: false},
+	} {
+		if got := isLoopbackRemoteAddress(test.address); got != test.want {
+			t.Errorf("isLoopbackRemoteAddress(%v) = %v; want %v", test.address, got, test.want)
+		}
 	}
 }
 
