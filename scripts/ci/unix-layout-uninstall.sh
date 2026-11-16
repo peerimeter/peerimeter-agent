@@ -110,16 +110,17 @@ wait_interface_gone() {
 }
 check_layout() {
  local cfg=$1 state=$2 runtime=$3
- [[ -f "$cfg/service.json" && -f "$cfg/service.key" ]]
+ [[ -f "$cfg/service.yaml" && -f "$cfg/service.key" ]]
  [[ -f "$state/ownership" ]]
- [[ ! -e "$state/service.key" && ! -e "$state/service.json" && ! -e "$state/control.sock" && ! -e "$state/agent.lock" ]]
+ [[ ! -e "$state/service.key" && ! -e "$state/service.yaml" && ! -e "$state/control.sock" && ! -e "$state/agent.lock" ]]
  [[ -S "$runtime/control.sock" && -f "$runtime/.peerimeter-agent.runtime" ]]
  [[ ! -e "$runtime/service.key" && ! -e "$runtime/ownership" && ! -e "$runtime/network.json" ]]
  python3 - "$cfg" <<'PYLAYOUT'
-import json,os,pathlib,stat,sys
-root=pathlib.Path(sys.argv[1]);c=json.loads((root/'service.json').read_text())
-assert os.path.realpath(c['interface']['private_key_file'])==str((root/'service.key').resolve()),'installed config still depends on the original/legacy private key'
-for name in ('service.json','service.key'):
+import os,pathlib,re,stat,sys
+root=pathlib.Path(sys.argv[1]);text=(root/'service.yaml').read_text()
+match=re.search(r'(?m)^  private_key_file: ["\']?(.*?)["\']?$',text)
+assert match and os.path.realpath(match.group(1))==str((root/'service.key').resolve()),'installed config still depends on the original/legacy private key'
+for name in ('service.yaml','service.key'):
  s=(root/name).stat();assert s.st_uid==0 and stat.S_IMODE(s.st_mode)&0o077==0,'installed secret snapshot permissions are too broad'
 PYLAYOUT
  if as_operator test -r "$cfg/service.key" || as_operator test -w "$state/ownership"; then
@@ -153,13 +154,13 @@ PY
 
 # The original source lives outside every managed directory and must survive.
 "$source_cli" generate-example --directory "$base/original credentials"
-source_config="$base/original credentials/peer-a.json"
+source_config="$base/original credentials/peer-a.yaml"
 python3 - "$source_config" <<'PY'
-import json,pathlib,sys
-p=pathlib.Path(sys.argv[1]);c=json.loads(p.read_text())
-c['network']['name']='layout-probe';c['interface']['address']=['10.244.244.1/32'];c['interface']['listen_port']=51970
-c['peers'][0].update(allowed_ips=['10.244.244.2/32'],endpoint='127.0.0.1:51971')
-p.write_text(json.dumps(c)+'\n')
+import pathlib,sys
+p=pathlib.Path(sys.argv[1]);text=p.read_text()
+text=text.replace('  name: example\n','  name: layout-probe\n',1).replace('    - 10.80.0.1/32','    - 10.244.244.1/32',1).replace('  listen_port: 51820','  listen_port: 51970',1)
+text=text.replace('      - 10.80.0.2/32','      - 10.244.244.2/32',1).replace('    endpoint: 127.0.0.1:51821','    endpoint: 127.0.0.1:51971',1)
+p.write_text(text)
 PY
 snapshot "$base/original credentials" >"$base/original-before.json"
 
@@ -229,7 +230,7 @@ import errno,json,os,pathlib,subprocess,sys,time
 agent,program,source,base=sys.argv[1:];root=pathlib.Path(base)
 fifo=root/'queued configuration.json';os.mkfifo(fifo,0o600)
 state=root/'queued persistent state';runtime=root/'queued runtime';configdir=root/'queued installed configuration'
-config=json.loads(pathlib.Path(source).read_text());config['interface']['private_key_file']=str((pathlib.Path(source).parent/config['interface']['private_key_file']).resolve())
+config=pathlib.Path(source).read_text().replace('  private_key_file: peer-a.key',f'  private_key_file: "{(pathlib.Path(source).parent/"peer-a.key").resolve()}"',1)
 with (root/'queued-process.log').open('w') as log:
  process=subprocess.Popen([agent,'run','--config',str(fifo),'--config-dir',str(configdir),'--state-dir',str(state),'--runtime-dir',str(runtime)],stdout=log,stderr=subprocess.STDOUT)
  fd=None
@@ -245,7 +246,7 @@ with (root/'queued-process.log').open('w') as log:
   # being forked but not yet loaded when the installed path is deleted.
   removed=subprocess.run([agent,'uninstall','--json','--install-dir',program],capture_output=True,text=True,timeout=30,check=True)
   assert json.loads(removed.stdout)['state']=='removed'
-  os.write(fd,json.dumps(config).encode());os.close(fd);fd=None
+  os.write(fd,config.encode());os.close(fd);fd=None
   assert process.wait(timeout=10)!=0,'deleted installed image restarted as an untracked manager'
   assert not state.exists() and not runtime.exists(),'late startup created managed state after complete removal'
  finally:
@@ -295,7 +296,7 @@ check_state "$base/removed.json" removed
 wait_interface_gone "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["interface_name"])' "$base/managed-status.json")"
 active=''
 [[ ! -e "$service_file" && ! -e "$new_runtime/control.sock" ]]
-for path in "$program/peerimeter-agent" "$program/.peerimeter-agent.install.ref" "$program.data/.peerimeter-agent.install.json" "$program.locks/.peerimeter-agent.install.lock" "$program.docs/peerimeter-agent.NOTICES.txt" "$new_config/service.json" "$new_config/service.key" "$new_state/ownership" "$new_state/network.json" "$new_state/agent.lock" "$new_state/.peerimeter-agent.profile"; do [[ ! -e "$path" ]] || { echo "Managed resource survived uninstall: $path" >&2; exit 1; }; done
+for path in "$program/peerimeter-agent" "$program/.peerimeter-agent.install.ref" "$program.data/.peerimeter-agent.install.json" "$program.locks/.peerimeter-agent.install.lock" "$program.docs/peerimeter-agent.NOTICES.txt" "$new_config/service.yaml" "$new_config/service.key" "$new_state/ownership" "$new_state/network.json" "$new_state/agent.lock" "$new_state/.peerimeter-agent.profile"; do [[ ! -e "$path" ]] || { echo "Managed resource survived uninstall: $path" >&2; exit 1; }; done
 for directory in "$program" "$new_config" "$new_state" "$new_runtime"; do [[ $(cat "$directory/unrelated.txt") == 'unrelated operator file' ]]; done
 "$source_cli" uninstall --json --install-dir "$program" >"$base/already-absent.json"
 check_state "$base/already-absent.json" already_absent
@@ -304,7 +305,7 @@ check_state "$base/default-removed.json" removed
 [[ $(cat "$default_sentinel") == 'unrelated shared-bin resource' ]]
 for member in peerimeter-agent .peerimeter-agent.install.ref; do [[ ! -e "$program_default/$member" ]]; done
 for path in "$installer_doc/peerimeter-agent.NOTICES.txt" "$installer_data/.peerimeter-agent.install.json" "$installer_lock/.peerimeter-agent.install.lock"; do [[ ! -e "$path" ]]; done
-for path in "$defaults_config/service.json" "$defaults_config/service.key" "$defaults_state/ownership" "$defaults_state/network.json" "$defaults_state/.peerimeter-agent.profile" "$defaults_runtime/control.sock"; do [[ ! -e "$path" ]] || { echo "Default managed resource survived uninstall: $path" >&2; exit 1; }; done
+for path in "$defaults_config/service.yaml" "$defaults_config/service.key" "$defaults_state/ownership" "$defaults_state/network.json" "$defaults_state/.peerimeter-agent.profile" "$defaults_runtime/control.sock"; do [[ ! -e "$path" ]] || { echo "Default managed resource survived uninstall: $path" >&2; exit 1; }; done
 snapshot "$base/original credentials" >"$base/original-after.json"
 cmp "$base/original-before.json" "$base/original-after.json"
 echo 'PASS: actual installer inventory, read-only dry-run, live full uninstall, changed-file refusal, partial-state retry, idempotency and unrelated/source-file preservation.'

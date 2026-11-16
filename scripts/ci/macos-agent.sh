@@ -11,7 +11,7 @@ bash "$(dirname "$0")/unix-install-native.sh" "$agent_source" "$dir/current inst
 install -m 0755 "$helper_source" "$dir/pmprobe"
 agent="$dir/current installation/peerimeter-agent"
 helper=$dir/pmprobe
-config=$dir/agent.json
+config=$dir/agent.yaml
 state="$dir/persistent state"
 config_dir="$dir/installed config"
 runtime="$dir/runtime files"
@@ -34,14 +34,24 @@ trap cleanup EXIT
 python3 - "$dir" <<'PY'
 import json, pathlib, sys
 root = pathlib.Path(sys.argv[1])
-config = {
-    'version': 1, 'mode': 'static',
-    'network': {'id': 'native-agent-macos', 'name': 'native-agent-macos'},
-    'interface': {'private_key_file': str(root / 'native.key'), 'address': ['10.203.0.1/32'], 'listen_port': 51820},
-    'peers': [{'public_key': (root / 'reference.pub').read_text().strip(), 'allowed_ips': ['10.203.0.2/32'], 'endpoint': '127.0.0.1:51821', 'persistent_keepalive_seconds': 25}],
-}
-path = root / 'agent.json'
-path.write_text(json.dumps(config))
+path = root / 'agent.yaml'
+path.write_text(f'''version: 1
+mode: static
+network:
+  id: native-agent-macos
+  name: native-agent-macos
+interface:
+  private_key_file: {json.dumps(str(root / 'native.key'))}
+  address:
+    - 10.203.0.1/32
+  listen_port: 51820
+peers:
+  - public_key: {(root / 'reference.pub').read_text().strip()}
+    allowed_ips:
+      - 10.203.0.2/32
+    endpoint: 127.0.0.1:51821
+    persistent_keepalive_seconds: 25
+''')
 path.chmod(0o600)
 PY
 "$helper" reference "$dir" >"$dir/reference.log" 2>&1 &
@@ -199,9 +209,9 @@ iface=$(interface_name)
 service_installed=false
 verify_removed "$iface"
 test ! -e /Library/LaunchDaemons/com.peerimeter.agent.plist
-test -f "$config_dir/service.json"
+test -f "$config_dir/service.yaml"
 test -f "$config_dir/service.key"
-test ! -e "$state/service.json"
+test ! -e "$state/service.yaml"
 test ! -e "$state/service.key"
 test ! -e "$runtime/control.sock"
 if /bin/launchctl print system/com.peerimeter.agent >/dev/null 2>&1; then echo 'FAIL: launchd registration survived uninstall' >&2; exit 1; fi

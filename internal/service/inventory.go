@@ -47,12 +47,12 @@ func validateConfigOwnership(cfg Config) error {
 // A different profile can adopt identical, validated copies before our marker
 // claim wins. Never roll back files after that profile owns the config marker.
 func rollbackSnapshots(cfg Config) error { return rollbackSnapshotFiles(cfg, true) }
-func rollbackSnapshotFiles(cfg Config, removeJSON bool) error {
+func rollbackSnapshotFiles(cfg Config, removeConfig bool) error {
 	if err := validateConfigOwnership(cfg); err != nil {
 		return errors.Join(errors.New("configuration cleanup deferred because ownership changed"), err)
 	}
 	files := []string{filepath.Join(snapshotDirectory(cfg), "service.key")}
-	if removeJSON {
+	if removeConfig {
 		files = append(files, cfg.ConfigPath)
 	}
 	var failures []error

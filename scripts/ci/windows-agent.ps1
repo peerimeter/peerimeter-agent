@@ -15,7 +15,7 @@ $installation = Join-Path $env:ProgramFiles "Peerimeter-CI-$id"
 $agentExe = Join-Path $installation 'peerimeter-agent.exe'
 $installResourceRoot = $null
 $helperExe = Join-Path $installation 'pmprobe.exe'
-$configPath = Join-Path $dir 'native.json'
+$configPath = Join-Path $dir 'native.yaml'
 $state = Join-Path $dir 'foreground-state'
 $serviceState = Join-Path $installation 'service state'
 $udpRule = "Peerimeter-Agent-CI-UDP-$id"
@@ -208,7 +208,7 @@ function Verify-ConfigurationCollision {
     # Compare A's own resources only. The shared ProgramData namespace also
     # contains B's independently installed inventory, which this operation may
     # legitimately create while rejecting A's private service configuration.
-    $defaultProfileFiles = @('service.json','service.key','network.json','ownership','agent.lock','.peerimeter-agent.profile','.peerimeter-agent.runtime','.peerimeter-agent.config') | ForEach-Object { Join-Path $defaultState $_ }
+    $defaultProfileFiles = @('service.yaml','service.key','network.json','ownership','agent.lock','.peerimeter-agent.profile','.peerimeter-agent.runtime','.peerimeter-agent.config') | ForEach-Object { Join-Path $defaultState $_ }
     $defaultProfileSnapshotRoots = @($installResourceRoot) + $defaultProfileFiles
     $before = Snapshot-ManagedTrees $defaultProfileSnapshotRoots
     $beforeService = Get-CimInstance Win32_Service -Filter "Name='PeerimeterAgent'"
@@ -237,15 +237,19 @@ function Verify-HistoricalRuntimeReuse {
     New-Item -ItemType Directory -Path $reuseRoot | Out-Null
     $sources = Join-Path $reuseRoot 'source credentials'
     Invoke-Agent -CommandArgs @('generate-example','--directory',$sources) | Out-Null
-    $reuseConfig = Join-Path $sources 'peer-a.json'
-    $c = Get-Content -LiteralPath $reuseConfig -Raw | ConvertFrom-Json
+    $reuseConfig = Join-Path $sources 'peer-a.yaml'
+    $reuseYaml = Get-Content -LiteralPath $reuseConfig -Raw
     # Windows derives the WireGuard adapter name from the network ID. Keep one
     # adapter identity within this reuse scenario, but isolate it across CI runs
     # so a stale OS adapter from an earlier attempt cannot block driver startup.
-    $c.network.id=('runtime-reuse-' + $id); $c.network.name='runtime-reuse'
-    $c.interface.address=@('10.245.245.1/32'); $c.interface.listen_port=51990
-    $c.peers[0].allowed_ips=@('10.245.245.2/32'); $c.peers[0].endpoint='127.0.0.1:51991'; $c.peers[0].persistent_keepalive_seconds=0
-    [IO.File]::WriteAllText($reuseConfig,($c | ConvertTo-Json -Depth 8))
+    $reuseYaml = [regex]::Replace($reuseYaml,'(?m)^  id: .*$',('  id: runtime-reuse-' + $id))
+    $reuseYaml = [regex]::Replace($reuseYaml,'(?m)^  name: example$','  name: runtime-reuse')
+    $reuseYaml = [regex]::Replace($reuseYaml,'(?m)^    - 10\.80\.0\.1/32$','    - 10.245.245.1/32')
+    $reuseYaml = [regex]::Replace($reuseYaml,'(?m)^  listen_port: 51820$','  listen_port: 51990')
+    $reuseYaml = [regex]::Replace($reuseYaml,'(?m)^      - 10\.80\.0\.2/32$','      - 10.245.245.2/32')
+    $reuseYaml = [regex]::Replace($reuseYaml,'(?m)^    endpoint: .*$', '    endpoint: 127.0.0.1:51991')
+    $reuseYaml = [regex]::Replace($reuseYaml,'(?m)^    persistent_keepalive_seconds: 25$', '    persistent_keepalive_seconds: 0')
+    [IO.File]::WriteAllText($reuseConfig,$reuseYaml)
     foreach ($prefix in @($reuseInstallX,$reuseInstallY)) {
         & (Join-Path $PSScriptRoot '..\..\docs\install.ps1') -Archive $archive -SHA256 (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -InstallDir $prefix
     }
@@ -417,13 +421,27 @@ try {
                 Select-Object -First 1 -ExpandProperty IPAddress
         } | Select-Object -First 1
     if (-not $outerIP) { throw 'No physical IPv4 endpoint for native Windows test' }
-    $config = @{
-        version=1; mode='static'; network=@{id='windows-agent-ci'; name='CI'}
-        interface=@{private_key_file=(Join-Path $dir 'native.key'); address=@('10.203.0.1/32'); listen_port=51820}
-        peers=@(@{public_key=[IO.File]::ReadAllText((Join-Path $dir 'reference.pub')).Trim(); allowed_ips=@('10.203.0.2/32'); endpoint="${outerIP}:51821"; persistent_keepalive_seconds=1})
-    }
-    $validJSON = $config | ConvertTo-Json -Depth 8
-    [IO.File]::WriteAllText($configPath,$validJSON)
+    $quotedKey = "'" + (Join-Path $dir 'native.key').Replace("'", "''") + "'"
+    $publicKey = [IO.File]::ReadAllText((Join-Path $dir 'reference.pub')).Trim()
+    $validYaml = @"
+version: 1
+mode: static
+network:
+  id: windows-agent-ci
+  name: CI
+interface:
+  private_key_file: $quotedKey
+  address:
+    - 10.203.0.1/32
+  listen_port: 51820
+peers:
+  - public_key: $publicKey
+    allowed_ips:
+      - 10.203.0.2/32
+    endpoint: ${outerIP}:51821
+    persistent_keepalive_seconds: 1
+"@
+    [IO.File]::WriteAllText($configPath,$validYaml)
     $env:PM_NATIVE_ENDPOINT = "${outerIP}:51820"
     $reference = Start-Process -FilePath $helperExe -ArgumentList @('reference',('"{0}"' -f $dir)) -RedirectStandardOutput (Join-Path $dir 'reference.log') -RedirectStandardError (Join-Path $dir 'reference-error.log') -PassThru
     New-NetFirewallRule -DisplayName $udpRule -Direction Inbound -Action Allow -Protocol UDP -LocalPort 51820,51821 -RemoteAddress @('127.0.0.1',$outerIP) | Out-Null
@@ -440,11 +458,11 @@ try {
     $unchanged = Agent-Status $state
     if ((Get-NetAdapter -Name $adapterName).ifIndex -ne $index -or $unchanged.peers[0].last_handshake -ne $before.peers[0].last_handshake) { throw 'Idempotent sync restarted the native adapter or peer' }
     Write-Output 'PASS unchanged sync preserves native adapter index and handshake'
-    $config.version = 99
-    [IO.File]::WriteAllText($configPath,($config | ConvertTo-Json -Depth 8))
+    $invalidYaml = [regex]::Replace($validYaml,'(?m)^version: 1$','version: 99')
+    [IO.File]::WriteAllText($configPath,$invalidYaml)
     & $agentExe sync --state-dir $state *> $null
     if ($LASTEXITCODE -eq 0) { throw 'Invalid config sync unexpectedly succeeded' }
-    [IO.File]::WriteAllText($configPath,$validJSON)
+    [IO.File]::WriteAllText($configPath,$validYaml)
     Verify-Traffic $state | Out-Null
     Write-Output 'PASS invalid config preserves existing working tunnel'
     Stop-Foreground
@@ -474,7 +492,7 @@ try {
     Invoke-Agent -CommandArgs @('service','uninstall') | Out-Null
     $serviceInstalled = $false
     Assert-Removed
-    if (-not (Test-Path -LiteralPath (Join-Path $serviceState 'service.key')) -or -not (Test-Path -LiteralPath (Join-Path $serviceState 'service.json'))) { throw 'Service uninstall removed operator credentials or config' }
+    if (-not (Test-Path -LiteralPath (Join-Path $serviceState 'service.key')) -or -not (Test-Path -LiteralPath (Join-Path $serviceState 'service.yaml'))) { throw 'Service uninstall removed operator credentials or config' }
     if (Get-Service -Name 'PeerimeterAgent' -ErrorAction SilentlyContinue) { throw 'SCM registration leaked after uninstall' }
     Write-Output 'PASS Windows SCM install/start/status/stop/restart/uninstall, config/key preservation'
 
@@ -543,7 +561,7 @@ try {
     $serviceInstalled = $false
     Assert-Removed
     if (Get-Service -Name 'PeerimeterAgent' -ErrorAction SilentlyContinue) { throw 'Full uninstall left an SCM registration' }
-    foreach ($path in @($agentExe,(Join-Path $installation 'wireguard.dll'),(Join-Path $installation '.peerimeter-agent.install.ref'),(Join-Path (Join-Path $installResourceRoot 'Documentation') 'peerimeter-agent.NOTICES.txt'),(Join-Path (Join-Path $installResourceRoot 'State') '.peerimeter-agent.install.json'),(Join-Path (Join-Path $installResourceRoot 'Locks') '.peerimeter-agent.install.lock'),(Join-Path $serviceState 'service.key'),(Join-Path $serviceState 'service.json'),(Join-Path $serviceState 'ownership'),(Join-Path $serviceState 'agent.lock'),(Join-Path $state 'ownership'),(Join-Path $state 'agent.lock'),(Join-Path $serviceState '.peerimeter-agent.profile'),(Join-Path $state '.peerimeter-agent.profile'),(Join-Path $defaultState 'service.json'),(Join-Path $defaultState 'service.key'),(Join-Path $defaultState 'ownership'),(Join-Path $defaultState 'agent.lock'),(Join-Path $defaultState '.peerimeter-agent.profile'),(Join-Path $defaultState '.peerimeter-agent.runtime'))) {
+    foreach ($path in @($agentExe,(Join-Path $installation 'wireguard.dll'),(Join-Path $installation '.peerimeter-agent.install.ref'),(Join-Path (Join-Path $installResourceRoot 'Documentation') 'peerimeter-agent.NOTICES.txt'),(Join-Path (Join-Path $installResourceRoot 'State') '.peerimeter-agent.install.json'),(Join-Path (Join-Path $installResourceRoot 'Locks') '.peerimeter-agent.install.lock'),(Join-Path $serviceState 'service.key'),(Join-Path $serviceState 'service.yaml'),(Join-Path $serviceState 'ownership'),(Join-Path $serviceState 'agent.lock'),(Join-Path $state 'ownership'),(Join-Path $state 'agent.lock'),(Join-Path $serviceState '.peerimeter-agent.profile'),(Join-Path $state '.peerimeter-agent.profile'),(Join-Path $defaultState 'service.yaml'),(Join-Path $defaultState 'service.key'),(Join-Path $defaultState 'ownership'),(Join-Path $defaultState 'agent.lock'),(Join-Path $defaultState '.peerimeter-agent.profile'),(Join-Path $defaultState '.peerimeter-agent.runtime'))) {
         if (Test-Path -LiteralPath $path) { throw "Tracked resource survived full uninstall: $path" }
     }
     foreach ($folder in @($installation,$state,$serviceState,$defaultState)) {

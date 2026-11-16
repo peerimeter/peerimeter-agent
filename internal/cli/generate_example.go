@@ -12,6 +12,7 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/secret"
 	"github.com/peerimeter/peerimeter-agent/internal/stunprobe"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 const maxExamplePeers = 253 // 10.80.0.1 through 10.80.0.253
@@ -92,11 +93,11 @@ func generateMesh(directory string, count, stunPeer int, stunServer string) erro
 			}
 			cfg.Peers = append(cfg.Peers, config.Peer{PublicKey: base64.StdEncoding.EncodeToString(pubs[j][:]), AllowedIPs: []string{fmt.Sprintf("10.80.0.%d/32", j+1)}, Endpoint: endpoints[j], PersistentKeepaliveSeconds: 25})
 		}
-		data, err := json.MarshalIndent(cfg, "", "  ")
+		data, err := yaml.Marshal(cfg)
 		if err != nil {
 			return errors.New("cannot encode example config")
 		}
-		if err := os.WriteFile(filepath.Join(directory, name+".json"), append(data, '\n'), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(directory, name+".yaml"), data, 0600); err != nil {
 			return errors.New("cannot write example config")
 		}
 	}

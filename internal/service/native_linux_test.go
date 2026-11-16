@@ -97,11 +97,11 @@ func TestLinuxServiceOperatorIsExplicitAndSafelyQuoted(t *testing.T) {
 
 func TestLinuxInstallNeverReplacesAnotherPeerimeterUnit(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "peerimeter-agent.service")
-	a, err := linuxServiceUnit("/opt/install-a/peerimeter-agent", Config{ConfigPath: "/etc/install-a/service.json", ConfigDirectory: "/etc/install-a", StateDirectory: "/var/lib/install-a", RuntimeDirectory: "/run/install-a"})
+	a, err := linuxServiceUnit("/opt/install-a/peerimeter-agent", Config{ConfigPath: "/etc/install-a/service.yaml", ConfigDirectory: "/etc/install-a", StateDirectory: "/var/lib/install-a", RuntimeDirectory: "/run/install-a"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := linuxServiceUnit("/opt/install-b/peerimeter-agent", Config{ConfigPath: "/etc/install-b/service.json", ConfigDirectory: "/etc/install-b", StateDirectory: "/var/lib/install-b", RuntimeDirectory: "/run/install-b"})
+	b, err := linuxServiceUnit("/opt/install-b/peerimeter-agent", Config{ConfigPath: "/etc/install-b/service.yaml", ConfigDirectory: "/etc/install-b", StateDirectory: "/var/lib/install-b", RuntimeDirectory: "/run/install-b"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestLinuxInstallNeverReplacesAnotherPeerimeterUnit(t *testing.T) {
 
 func TestLinuxReadOnlyRegistrationMatchesExactExecutable(t *testing.T) {
 	executable := `/opt/Peerimeter Agent/bin/peerimeter-agent$literal%name`
-	unit, err := linuxServiceUnit(executable, Config{ConfigPath: "/etc/peerimeter/service.json", StateDirectory: "/var/lib/peerimeter-agent", RuntimeDirectory: "/run/peerimeter-agent"})
+	unit, err := linuxServiceUnit(executable, Config{ConfigPath: "/etc/peerimeter/service.yaml", StateDirectory: "/var/lib/peerimeter-agent", RuntimeDirectory: "/run/peerimeter-agent"})
 	if err != nil {
 		t.Fatal(err)
 	}

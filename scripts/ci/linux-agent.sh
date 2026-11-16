@@ -124,8 +124,8 @@ check_handshake() {
   local namespace=$1 state=$2 output=$3
   control "$namespace" "$state" status >"$output"
   control "$namespace" "$state" wg >"$output.peers"
-  local cfg="$work/config/peer-a.json" other="$work/config/peer-b.json"
-  [[ "$namespace" == "$left" ]] || { cfg="$work/config/peer-b.json"; other="$work/config/peer-a.json"; }
+  local cfg="$work/config/peer-a.yaml" other="$work/config/peer-b.yaml"
+  [[ "$namespace" == "$left" ]] || { cfg="$work/config/peer-b.yaml"; other="$work/config/peer-a.yaml"; }
   timeout 12s ip netns exec "$namespace" "$AGENT" wg show --runtime-dir "$(runtime_for_state "$state")" >"$output.human"
   python3 - "$output" "$output.peers" "$cfg" "$other" "$output.human" <<'PY'
 import datetime, json, sys
@@ -159,13 +159,13 @@ assert_removed() {
 
 "$AGENT" generate-example --directory "$work/config"
 python3 - "$work/config" <<'PY'
-import json, pathlib, sys
+import pathlib, sys
 root=pathlib.Path(sys.argv[1])
 for label, endpoint in [('a','192.0.2.2:51821'),('b','192.0.2.1:51820')]:
-    path=root/f'peer-{label}.json'; c=json.loads(path.read_text())
-    c['network']['name']='probe'
-    c['peers'][0]['endpoint']=endpoint
-    path.write_text(json.dumps(c)+'\n')
+    path=root/f'peer-{label}.yaml'; text=path.read_text()
+    text=text.replace('  name: example\n', '  name: probe\n', 1)
+    text=text.replace(f'    endpoint: 127.0.0.1:{51821 if label == "a" else 51820}', f'    endpoint: {endpoint}', 1)
+    path.write_text(text)
 PY
 ip netns add "$left"
 ip netns add "$right"
@@ -181,22 +181,22 @@ ip -n "$right" link set "$vright" up
 
 # Refuse to adopt or remove an unrelated interface, even with the desired name.
 ip -n "$left" link add pm-probe type dummy
-if timeout 10s ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --state-dir "$work/left-state" --config-dir "$(config_for_state "$work/left-state")" --runtime-dir "$(runtime_for_state "$work/left-state")" --operator "$operator" >"$work/refuse-existing.log" 2>&1; then
+if timeout 10s ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.yaml" --state-dir "$work/left-state" --config-dir "$(config_for_state "$work/left-state")" --runtime-dir "$(runtime_for_state "$work/left-state")" --operator "$operator" >"$work/refuse-existing.log" 2>&1; then
   echo 'Agent incorrectly accepted an existing unrelated interface.' >&2; exit 1
 fi
 ip -n "$left" -j -d link show dev pm-probe | python3 -c 'import json,sys; assert json.load(sys.stdin)[0]["linkinfo"]["info_kind"]=="dummy"'
 ip -n "$left" link del pm-probe
 
-ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --state-dir "$work/left-state" --config-dir "$(config_for_state "$work/left-state")" --runtime-dir "$(runtime_for_state "$work/left-state")" --operator "$operator" >"$work/left.log" 2>&1 &
+ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.yaml" --state-dir "$work/left-state" --config-dir "$(config_for_state "$work/left-state")" --runtime-dir "$(runtime_for_state "$work/left-state")" --operator "$operator" >"$work/left.log" 2>&1 &
 left_pid=$!
 wait_running "$left" "$work/left-state" "$work/left-status.json"
-ip netns exec "$right" "$AGENT" run --config "$work/config/peer-b.json" --interface pm-custom --state-dir "$work/right-state" --config-dir "$(config_for_state "$work/right-state")" --runtime-dir "$(runtime_for_state "$work/right-state")" --operator "$operator" >"$work/right.log" 2>&1 &
+ip netns exec "$right" "$AGENT" run --config "$work/config/peer-b.yaml" --interface pm-custom --state-dir "$work/right-state" --config-dir "$(config_for_state "$work/right-state")" --runtime-dir "$(runtime_for_state "$work/right-state")" --operator "$operator" >"$work/right.log" 2>&1 &
 right_pid=$!
 wait_running "$left" "$work/left-state" "$work/left-status.json"
 wait_running "$right" "$work/right-state" "$work/right-status.json"
 left_index=$(index_of "$left" pm-probe)
 right_index=$(index_of "$right" pm-custom)
-if timeout 8s ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --config-dir "$(config_for_state "$work/left-state")" --state-dir "$work/left-state" --runtime-dir "$work/competing runtime" >"$work/competing.log" 2>&1; then
+if timeout 8s ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.yaml" --config-dir "$(config_for_state "$work/left-state")" --state-dir "$work/left-state" --runtime-dir "$work/competing runtime" >"$work/competing.log" 2>&1; then
   echo 'Two runtime directories bypassed the persistent-state manager lock.' >&2; exit 1
 else
   [[ $? -ne 124 ]] || { echo 'Competing manager did not reject promptly.' >&2; exit 1; }
@@ -229,7 +229,7 @@ ping_both
 check_handshake "$left" "$work/left-state" "$work/left-before.json"
 check_handshake "$right" "$work/right-state" "$work/right-before.json"
 echo 'Passed: two real agents, Linux kernel interfaces, authenticated handshake, bidirectional traffic.'
-bash "$(dirname "$0")/unix-runtime-collision.sh" "$AGENT" "$work/config/peer-a.json" "$(runtime_for_state "$work/left-state")" "$work" "$left"
+bash "$(dirname "$0")/unix-runtime-collision.sh" "$AGENT" "$work/config/peer-a.yaml" "$(runtime_for_state "$work/left-state")" "$work" "$left"
 ping_both
 
 operator_control "$left" "$work/left-state" sync
@@ -249,10 +249,10 @@ PY
 
 # Add an address and matching AllowedIP/route without resetting either device.
 python3 - "$work/config" <<'PY'
-import json, pathlib, sys
-root=pathlib.Path(sys.argv[1]); a=root/'peer-a.json'; b=root/'peer-b.json'
-c=json.loads(a.read_text()); c['peers'][0]['allowed_ips'].append('10.81.0.2/32'); c['peers'][0]['persistent_keepalive_seconds']=7; a.write_text(json.dumps(c)+'\n')
-c=json.loads(b.read_text()); c['interface']['address'].append('10.81.0.2/32'); b.write_text(json.dumps(c)+'\n')
+import pathlib, sys
+root=pathlib.Path(sys.argv[1]); a=root/'peer-a.yaml'; b=root/'peer-b.yaml'
+text=a.read_text().replace('      - 10.80.0.2/32\n    endpoint:', '      - 10.80.0.2/32\n      - 10.81.0.2/32\n    endpoint:', 1).replace('    persistent_keepalive_seconds: 25', '    persistent_keepalive_seconds: 7', 1); a.write_text(text)
+text=b.read_text().replace('    - 10.80.0.2/32\n  listen_port:', '    - 10.80.0.2/32\n    - 10.81.0.2/32\n  listen_port:', 1); b.write_text(text)
 PY
 control "$right" "$work/right-state" sync
 control "$left" "$work/left-state" sync
@@ -272,17 +272,17 @@ PY
 [[ $(index_of "$right" pm-custom) == "$right_index" ]]
 echo 'Passed: unchanged sync and live peer/address/route changes preserve interfaces and handshakes.'
 
-python3 - "$work/config/peer-a.json" <<'PY'
-import json, pathlib, sys
-p=pathlib.Path(sys.argv[1]); c=json.loads(p.read_text()); c['version']=999; p.write_text(json.dumps(c)+'\n')
+python3 - "$work/config/peer-a.yaml" <<'PY'
+import pathlib, sys
+p=pathlib.Path(sys.argv[1]); p.write_text(p.read_text().replace('version: 1','version: 999',1))
 PY
 if control "$left" "$work/left-state" sync >"$work/invalid-sync.log" 2>&1; then
   echo 'Invalid config was accepted by sync.' >&2; exit 1
 fi
 ping_both
-python3 - "$work/config/peer-a.json" <<'PY'
-import json, pathlib, sys
-p=pathlib.Path(sys.argv[1]); c=json.loads(p.read_text()); c['version']=1; c['network']['name']='renamed network'; p.write_text(json.dumps(c)+'\n')
+python3 - "$work/config/peer-a.yaml" <<'PY'
+import pathlib, sys
+p=pathlib.Path(sys.argv[1]); text=p.read_text().replace('version: 999','version: 1',1).replace('  name: probe','  name: renamed network',1); p.write_text(text)
 PY
 control "$left" "$work/left-state" stop
 wait_process "$left_pid"
@@ -290,7 +290,7 @@ left_pid=''
 assert_removed "$left" pm-probe
 [[ ! -e "$(runtime_for_state "$work/left-state")/control.sock" ]]
 rm -rf -- "$(runtime_for_state "$work/left-state")"
-ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --state-dir "$work/left-state" --config-dir "$(config_for_state "$work/left-state")" --runtime-dir "$(runtime_for_state "$work/left-state")" --operator "$operator" >"$work/left-restarted.log" 2>&1 &
+ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.yaml" --state-dir "$work/left-state" --config-dir "$(config_for_state "$work/left-state")" --runtime-dir "$(runtime_for_state "$work/left-state")" --operator "$operator" >"$work/left-restarted.log" 2>&1 &
 left_pid=$!
 wait_running "$left" "$work/left-state" "$work/left-restarted.json"
 python3 - "$work/left-restarted.json" <<'PY'
@@ -306,7 +306,7 @@ kill -KILL "$left_pid"
 wait "$left_pid" 2>/dev/null || true
 left_pid=''
 ip -n "$left" link show dev pm-probe >/dev/null
-ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.json" --state-dir "$work/left-state" --config-dir "$(config_for_state "$work/left-state")" --runtime-dir "$(runtime_for_state "$work/left-state")" --operator "$operator" >"$work/left-crash-recovered.log" 2>&1 &
+ip netns exec "$left" "$AGENT" run --config "$work/config/peer-a.yaml" --state-dir "$work/left-state" --config-dir "$(config_for_state "$work/left-state")" --runtime-dir "$(runtime_for_state "$work/left-state")" --operator "$operator" >"$work/left-crash-recovered.log" 2>&1 &
 left_pid=$!
 wait_running "$left" "$work/left-state" "$work/left-crash-recovered.json"
 ping_both
@@ -325,14 +325,15 @@ echo 'Passed: invalid reload preserves traffic, graceful restart preserves local
 # above; a running supervisor alone never counts as tunnel traffic verification.
 [[ ! -e /etc/systemd/system/peerimeter-agent.service && ! -L /etc/systemd/system/peerimeter-agent.service ]]
 "$AGENT" generate-example --directory "$work/service-config"
-python3 - "$work/service-config/peer-a.json" <<'PY'
-import json, pathlib, sys
-p=pathlib.Path(sys.argv[1]); c=json.loads(p.read_text())
-c['interface'].update(name='pm-service',address=['10.254.254.1/32'],listen_port=51790)
-c['peers'][0].update(allowed_ips=['10.254.254.2/32'],endpoint='127.0.0.1:51791')
-p.write_text(json.dumps(c)+'\n')
+python3 - "$work/service-config/peer-a.yaml" <<'PY'
+import pathlib, sys
+p=pathlib.Path(sys.argv[1]); text=p.read_text()
+text=text.replace('    - 10.80.0.1/32','    - 10.254.254.1/32',1).replace('  listen_port: 51820','  listen_port: 51790',1)
+text=text.replace('      - 10.80.0.2/32','      - 10.254.254.2/32',1).replace('    endpoint: 127.0.0.1:51821','    endpoint: 127.0.0.1:51791',1)
+text=text.replace('  address:\n', '  name: pm-service\n  address:\n',1)
+p.write_text(text)
 PY
-"$AGENT" service install --config "$work/service-config/peer-a.json" --state-dir "$work/service-state" --config-dir "$(config_for_state "$work/service-state")" --runtime-dir "$(runtime_for_state "$work/service-state")" --operator "$operator"
+"$AGENT" service install --config "$work/service-config/peer-a.yaml" --state-dir "$work/service-state" --config-dir "$(config_for_state "$work/service-state")" --runtime-dir "$(runtime_for_state "$work/service-state")" --operator "$operator"
 service_installed=true
 systemctl is-enabled peerimeter-agent.service
 "$AGENT" service start
@@ -349,8 +350,8 @@ operator_control '' "$work/service-state" status --json >"$work/service-operator
 "$AGENT" service uninstall
 service_installed=false
 [[ ! -e /etc/systemd/system/peerimeter-agent.service ]]
-[[ -f "$(config_for_state "$work/service-state")/service.json" && -f "$(config_for_state "$work/service-state")/service.key" ]]
-[[ ! -e "$work/service-state/service.json" && ! -e "$work/service-state/service.key" ]]
+[[ -f "$(config_for_state "$work/service-state")/service.yaml" && -f "$(config_for_state "$work/service-state")/service.key" ]]
+[[ ! -e "$work/service-state/service.yaml" && ! -e "$work/service-state/service.key" ]]
 [[ ! -e "$(runtime_for_state "$work/service-state")/control.sock" ]]
 if ip link show dev pm-service >/dev/null 2>&1; then echo 'systemd uninstall left its interface behind.' >&2; exit 1; fi
 echo 'Passed: systemd install, boot enable, start, stop, second start and uninstall; protected keys/config preserved until test cleanup.'

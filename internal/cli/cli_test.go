@@ -32,7 +32,7 @@ func TestExampleValidatesAndRefusesOverwrite(t *testing.T) {
 		t.Fatal(e)
 	}
 	for _, name := range []string{"a", "b"} {
-		if c, o, e := invoke(t, "validate-config", "--config", filepath.Join(dir, "peer-"+name+".json")); c != 0 || !strings.Contains(o, "valid") || !strings.Contains(o, "State") {
+		if c, o, e := invoke(t, "validate-config", "--config", filepath.Join(dir, "peer-"+name+".yaml")); c != 0 || !strings.Contains(o, "valid") || !strings.Contains(o, "State") {
 			t.Fatalf("%d %s %s", c, o, e)
 		}
 	}
@@ -48,7 +48,7 @@ func TestExampleValidatesAndRefusesOverwrite(t *testing.T) {
 	// Unit tests must never call a privileged real backend.
 	var out, errOut bytes.Buffer
 	state := filepath.Join(t.TempDir(), "state")
-	code := execute(context.Background(), []string{"run", "--config", filepath.Join(dir, "peer-a.json"), "--state-dir", state}, &out, &errOut, rejectBackend{})
+	code := execute(context.Background(), []string{"run", "--config", filepath.Join(dir, "peer-a.yaml"), "--state-dir", state}, &out, &errOut, rejectBackend{})
 	if code != 3 || out.Len() != 0 || strings.Contains(errOut.String(), strings.TrimSpace(string(before))) {
 		t.Fatalf("unsafe backend failure: %d %s", code, errOut.String())
 	}
@@ -69,7 +69,7 @@ func TestGenerateThreePeerMeshWithLocalSTUNMapping(t *testing.T) {
 		t.Fatal(stderr)
 	}
 	for i, name := range []string{"a", "b", "c"} {
-		path := filepath.Join(dir, "peer-"+name+".json")
+		path := filepath.Join(dir, "peer-"+name+".yaml")
 		cfg, err := config.Load(path)
 		if err != nil {
 			t.Fatal(err)
@@ -104,7 +104,7 @@ func TestSelfPeerRejected(t *testing.T) {
 	if c, _, e := invoke(t, "generate-example", "--directory", dir); c != 0 {
 		t.Fatal(e)
 	}
-	path := filepath.Join(dir, "peer-a.json")
+	path := filepath.Join(dir, "peer-a.yaml")
 	cfg, err := config.Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -212,7 +212,7 @@ func TestConfigLoadErrorDiagnostics(t *testing.T) {
 }
 
 func TestDebugErrorRedaction(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "invalid.json")
+	path := filepath.Join(t.TempDir(), "invalid.yaml")
 	for _, data := range []string{
 		`{"private_key":"SUPERSECRET"}`,
 		`{"version":"SUPERSECRET"}`,
@@ -372,7 +372,7 @@ func TestCommandResultsDefaultToConsoleWithJSONOptIn(t *testing.T) {
 		} else if !strings.Contains(out, "Example configuration generated") || !strings.Contains(out, "keep private") || strings.Contains(out, "{") || strings.Contains(out, "\n\n") {
 			t.Fatalf("invalid console output: %s", out)
 		}
-		args = []string{"validate-config", "--config", filepath.Join(dir, "peer-a.json")}
+		args = []string{"validate-config", "--config", filepath.Join(dir, "peer-a.yaml")}
 		if machine {
 			args = append(args, "--json")
 		}

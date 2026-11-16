@@ -9,7 +9,7 @@ func TestServiceRemovalRequiresMatchingInstallationAndLayout(t *testing.T) {
 	root := t.TempDir()
 	exe := filepath.Join(root, "agent")
 	cfg := Config{ConfigDirectory: filepath.Join(root, "cfg"), StateDirectory: filepath.Join(root, "state"), RuntimeDirectory: filepath.Join(root, "runtime")}
-	cfg.ConfigPath = filepath.Join(cfg.ConfigDirectory, "service.json")
+	cfg.ConfigPath = filepath.Join(cfg.ConfigDirectory, "service.yaml")
 	args := []string{exe, "run", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory, "--runtime-dir", cfg.RuntimeDirectory, "--config-dir", cfg.ConfigDirectory, "--operator", "nobody"}
 	if err := verifyServiceArguments(args, exe, cfg); err != nil {
 		t.Fatal(err)
@@ -27,7 +27,7 @@ func TestServiceRemovalRequiresMatchingInstallationAndLayout(t *testing.T) {
 	}
 	legacy := cfg
 	legacy.ConfigDirectory = cfg.StateDirectory
-	legacy.ConfigPath = filepath.Join(cfg.StateDirectory, "service.json")
+	legacy.ConfigPath = filepath.Join(cfg.StateDirectory, "service.yaml")
 	legacy.RuntimeDirectory = cfg.StateDirectory
 	legacyArgs := []string{exe, "run", "--config", legacy.ConfigPath, "--state-dir", legacy.StateDirectory}
 	if err := verifyServiceArguments(legacyArgs, exe, legacy); err != nil {

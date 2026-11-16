@@ -8,12 +8,18 @@ import (
 	"syscall"
 
 	"github.com/peerimeter/peerimeter-agent/internal/cli"
+	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/logging"
 	"github.com/peerimeter/peerimeter-agent/internal/service"
 )
 
 func main() {
-	handler, err := logging.NewHandler(os.Getenv(logging.FormatEnv), os.Stderr)
+	settings, err := config.LoadEnvironment()
+	if err != nil {
+		_, _ = os.Stderr.WriteString(err.Error() + "\n")
+		os.Exit(2)
+	}
+	handler, err := logging.NewHandler(settings.LogFormat, os.Stderr)
 	if err != nil {
 		_, _ = os.Stderr.WriteString(err.Error() + "\n")
 		os.Exit(2)
@@ -22,7 +28,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	handled, err := service.Dispatch(ctx, func(ctx context.Context) error {
-		if cli.Execute(ctx, os.Args[1:], os.Stdout, os.Stderr) != 0 {
+		if cli.ExecuteWithEnvironment(ctx, os.Args[1:], os.Stdout, os.Stderr, settings) != 0 {
 			return syscall.EINVAL
 		}
 		return nil
@@ -33,5 +39,5 @@ func main() {
 		}
 		return
 	}
-	os.Exit(cli.Execute(ctx, os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(cli.ExecuteWithEnvironment(ctx, os.Args[1:], os.Stdout, os.Stderr, settings))
 }

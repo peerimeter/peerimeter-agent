@@ -45,7 +45,7 @@ func TestInstallFailureRetryAndPreservedReinstall(t *testing.T) {
 	if err := install(cfg, func(Config) error { return failure }, secure); !errors.Is(err, failure) {
 		t.Fatalf("wrong failure: %v", err)
 	}
-	for _, name := range []string{"service.json", "service.key"} {
+	for _, name := range []string{"service.yaml", "service.key"} {
 		if _, err := os.Lstat(filepath.Join(cfg.StateDirectory, name)); !os.IsNotExist(err) {
 			t.Fatal("failed registration left installed secrets")
 		}
@@ -128,7 +128,7 @@ func TestConcurrentInstallKeepsSnapshotsLockedThroughRegistration(t *testing.T) 
 	if firstErr != nil {
 		t.Fatal(firstErr)
 	}
-	for _, name := range []string{"service.json", "service.key"} {
+	for _, name := range []string{"service.yaml", "service.key"} {
 		if _, err := os.Stat(filepath.Join(cfg.StateDirectory, name)); err != nil {
 			t.Fatalf("successful registration lost %s: %v", name, err)
 		}
@@ -156,7 +156,7 @@ func TestForeignConfigMarkerPreventsSnapshotAdoptionBeforeRegistration(t *testin
 	public, _ := secret.Public(peer)
 	sourceConfig := config.Config{Version: 1, Mode: "static", Network: config.Network{ID: "shared-config", Name: "shared"}, Interface: config.Interface{PrivateKeyFile: keyPath, Address: []string{"10.203.0.1/32"}, ListenPort: 51820}, Peers: []config.Peer{{PublicKey: base64.StdEncoding.EncodeToString(public[:]), AllowedIPs: []string{"10.203.0.2/32"}, Endpoint: "127.0.0.1:51821"}}}
 	data, _ := json.Marshal(sourceConfig)
-	jsonPath := filepath.Join(configDir, "service.json")
+	jsonPath := filepath.Join(configDir, "service.yaml")
 	if err := os.WriteFile(jsonPath, data, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestSnapshotFailureDoesNotDeleteAnotherConfigurationClaim(t *testing.T) {
 	if !errors.Is(err, failure) {
 		t.Fatalf("snapshot failure was lost: %v", err)
 	}
-	for _, name := range []string{"service.json", "service.key", installstate.ConfigMarkerFilename} {
+	for _, name := range []string{"service.yaml", "service.key", installstate.ConfigMarkerFilename} {
 		if _, err := os.Stat(filepath.Join(target, name)); err != nil {
 			t.Fatalf("rollback deleted foreign claimed %s", name)
 		}

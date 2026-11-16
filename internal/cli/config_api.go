@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/secret"
 	"github.com/peerimeter/peerimeter-agent/internal/serviceapi"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 type serviceConfigOptions struct {
@@ -24,7 +26,7 @@ type serviceConfigOptions struct {
 }
 
 func newConfigAPICommand(app *application) *cobra.Command {
-	cmd := &cobra.Command{Use: "config", Short: "Pull or push network and node JSON through the service API", Args: noArguments}
+	cmd := &cobra.Command{Use: "config", Short: "Pull or push network and node YAML through the service API", Args: noArguments}
 	var pull serviceConfigOptions
 	pullCmd := &cobra.Command{Use: "pull", Short: "Download a network or node configuration", Args: noArguments, RunE: app.handleResponse(func(cmd *cobra.Command) error {
 		client, err := serviceClient(pull)
@@ -43,13 +45,21 @@ func newConfigAPICommand(app *application) *cobra.Command {
 		if err != nil {
 			return err
 		}
+		var value any
+		if err := json.Unmarshal(data, &value); err != nil {
+			return errors.New("service returned an invalid configuration")
+		}
+		data, err = yaml.Marshal(value)
+		if err != nil {
+			return errors.New("could not encode pulled configuration as YAML")
+		}
 		if err := writeConfigFile(pull.file, data); err != nil {
 			return errors.New("could not securely write pulled configuration")
 		}
 		return writeJSONLine(app.out, map[string]string{"state": "config_pulled", "kind": pull.kind, "network_id": pull.networkID, "file": pull.file})
 	})}
 	addServiceConfigFlags(pullCmd, &pull)
-	pullCmd.Flags().StringVar(&pull.file, "file", "", "Output file for the downloaded JSON configuration")
+	pullCmd.Flags().StringVar(&pull.file, "file", "", "Output YAML file for the downloaded configuration")
 	_ = pullCmd.MarkFlagRequired("file")
 
 	var push serviceConfigOptions
@@ -65,6 +75,14 @@ func newConfigAPICommand(app *application) *cobra.Command {
 		if err != nil {
 			return err
 		}
+		value, err := decodeYAMLConfig(data)
+		if err != nil {
+			return errors.New("configuration file is not valid YAML")
+		}
+		data, err = json.Marshal(value)
+		if err != nil {
+			return errors.New("could not encode configuration for the service API")
+		}
 		if push.kind == "network" {
 			err = client.PushNetwork(cmd.Context(), push.networkID, data)
 		} else {
@@ -76,11 +94,24 @@ func newConfigAPICommand(app *application) *cobra.Command {
 		return writeJSONLine(app.out, map[string]string{"state": "config_pushed", "kind": push.kind, "network_id": push.networkID})
 	})}
 	addServiceConfigFlags(pushCmd, &push)
-	pushCmd.Flags().StringVar(&push.file, "file", "", "JSON configuration file to upload")
+	pushCmd.Flags().StringVar(&push.file, "file", "", "YAML configuration file to upload")
 	_ = pushCmd.MarkFlagRequired("file")
 
 	cmd.AddCommand(pullCmd, pushCmd)
 	return cmd
+}
+
+func decodeYAMLConfig(data []byte) (any, error) {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return nil, errors.New("configuration must contain exactly one YAML document")
+	}
+	return value, nil
 }
 
 func addServiceConfigFlags(cmd *cobra.Command, options *serviceConfigOptions) {

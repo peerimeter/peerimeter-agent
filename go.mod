@@ -7,6 +7,7 @@ require (
 	charm.land/bubbletea/v2 v2.1.1
 	charm.land/lipgloss/v2 v2.1.1
 	github.com/Microsoft/go-winio v0.6.4
+	github.com/caarlos0/env/v11 v11.4.2
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
@@ -14,6 +15,7 @@ require (
 	golang.org/x/net v0.59.0
 	golang.org/x/sys v0.50.0
 	golang.org/x/term v0.48.0
+	gopkg.in/yaml.v3 v3.0.1
 	golang.zx2c4.com/wireguard v0.0.0-20261024220952-b3bc704ef0ee
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
 	golang.zx2c4.com/wireguard/windows v1.1.1

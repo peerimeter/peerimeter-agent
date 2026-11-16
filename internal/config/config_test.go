@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func fixture() Config {
@@ -99,7 +101,7 @@ func TestValidate(t *testing.T) {
 }
 func TestLoadStrictAndRelativePath(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "static.json")
+	path := filepath.Join(dir, "static.yaml")
 	data, err := json.Marshal(fixture())
 	if err != nil {
 		t.Fatal(err)
@@ -142,7 +144,7 @@ func TestLoadStrictAndRelativePath(t *testing.T) {
 			write(mutate(string(data)))
 			_, err := Load(path)
 			if err == nil {
-				t.Fatal("accepted malformed JSON")
+				t.Fatal("accepted malformed YAML")
 			}
 			if strings.Contains(err.Error(), "do-not-echo") {
 				t.Fatal("error leaked input")
@@ -156,7 +158,7 @@ func TestLoadStrictAndRelativePath(t *testing.T) {
 }
 
 func TestPublicTemplates(t *testing.T) {
-	for _, name := range []string{"peer-a.json", "peer-b.json"} {
+	for _, name := range []string{"peer-a.yaml", "peer-b.yaml"} {
 		cfg, err := Load(filepath.Join("..", "..", "examples", name))
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
@@ -168,7 +170,7 @@ func TestPublicTemplates(t *testing.T) {
 }
 
 func TestLoadPreservesOpenError(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "missing.json")
+	path := filepath.Join(t.TempDir(), "missing.yaml")
 	_, err := Load(path)
 	var pathErr *os.PathError
 	if !errors.Is(err, os.ErrNotExist) || !errors.As(err, &pathErr) || pathErr.Path != path {
@@ -184,14 +186,14 @@ func TestLoadPreservesDecodeError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(t.TempDir(), "invalid.json")
+	path := filepath.Join(t.TempDir(), "invalid.yaml")
 	data = bytes.Replace(data, []byte(`"version":1`), []byte(`"version":"SECRET-VALUE"`), 1)
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
 	_, err = Load(path)
-	var typeErr *json.UnmarshalTypeError
-	if !errors.As(err, &typeErr) || typeErr.Field != "version" {
+	var typeErr *yaml.TypeError
+	if !errors.As(err, &typeErr) {
 		t.Fatalf("lost underlying decode error: %v", err)
 	}
 	if !strings.Contains(err.Error(), "decode static config") || strings.Contains(err.Error(), "SECRET-VALUE") {

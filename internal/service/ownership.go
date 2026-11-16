@@ -43,7 +43,7 @@ func verifyServiceArguments(args []string, executable string, cfg Config) error 
 	}
 	expectedConfig := cfg.ConfigPath
 	if expectedConfig == "" {
-		expectedConfig = filepath.Join(snapshotDirectory(cfg), "service.json")
+		expectedConfig = filepath.Join(snapshotDirectory(cfg), "service.yaml")
 	}
 	if !equalServicePath(flags["--config"], expectedConfig) || !equalServicePath(flags["--state-dir"], cfg.StateDirectory) {
 		return errors.New("registered service configuration or state belongs to another installation")

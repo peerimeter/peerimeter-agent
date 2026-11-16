@@ -14,7 +14,7 @@ import (
 func TestRunJSONFormatsErrorsAsStructuredLogs(t *testing.T) {
 	t.Setenv("PEERIMETER_LOG_FORMAT", "console")
 	var out, errOut bytes.Buffer
-	missingConfig := filepath.Join(t.TempDir(), "missing.json")
+	missingConfig := filepath.Join(t.TempDir(), "missing.yaml")
 	code := execute(context.Background(), []string{"run", "--json", "--config", missingConfig}, &out, &errOut, platform.Native())
 	if code == 0 || out.Len() != 0 {
 		t.Fatalf("unexpected run result: code=%d stdout=%q", code, out.String())
