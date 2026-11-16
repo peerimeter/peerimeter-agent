@@ -11,14 +11,10 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/diagnostic"
-	"github.com/peerimeter/peerimeter-agent/internal/installstate"
 	"github.com/peerimeter/peerimeter-agent/internal/logging"
-	"github.com/peerimeter/peerimeter-agent/internal/paths"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
 	"github.com/spf13/cobra"
 )
@@ -125,13 +121,7 @@ func newRootCommand(app *application) *cobra.Command {
 Static WireGuard operation works without a Peerimeter service. The config
 subcommands can optionally pull or push network and node YAML over HTTPS.
 
-Environment variables:
-  PEERIMETER_LOG_FORMAT  Log format: console (default), text, or json.
-  NO_COLOR               Disable ANSI colors when set.
-  TERM=dumb              Disable ANSI colors for dumb terminals.
-
-Directories (platform defaults; command flags can override config/state/runtime):
-` + directoryHelp(),
+Use "peerimeter-agent info" to view environment variables and resolved directories.`,
 		SilenceUsage:       true,
 		SilenceErrors:      true,
 		DisableSuggestions: true,
@@ -164,6 +154,9 @@ Directories (platform defaults; command flags can override config/state/runtime)
 			defer restore()
 		}
 		defaultHelp(cmd, args)
+		if cmd == root {
+			_ = writeInfoTables(cmd.OutOrStdout(), shouldColor(cmd.OutOrStdout(), app.color), outputWidth(cmd.OutOrStdout()))
+		}
 	})
 	root.SetErr(io.Discard)
 	root.SetFlagErrorFunc(func(*cobra.Command, error) error { return errors.New("invalid command flags; use --help") })
@@ -182,7 +175,7 @@ Directories (platform defaults; command flags can override config/state/runtime)
 	}}
 	helpCommand.Flags().BoolVar(&showHidden, "all", false, "List all commands, including hidden commands")
 	root.SetHelpCommand(helpCommand)
-	root.AddCommand(newVersionCommand(app), newUpdateCommand(app), newSelfUpdateCommand(app), newUpdateHelperCommand(app), newUpdateRecoveryHelperCommand(app), newGenerateExampleCommand(app), newConfigAPICommand(app), newJoinCommand(app), newRunCommand(app), newValidateConfigCommand(app), newStatusCommand(app), newWGCommand(app), newSyncCommand(app), newStopCommand(app), newServiceCommand(app), newUninstallCommand(app), newRegisterInstallationCommand(app), newStunCommand(app))
+	root.AddCommand(newVersionCommand(app), newInfoCommand(app), newUpdateCommand(app), newSelfUpdateCommand(app), newUpdateHelperCommand(app), newUpdateRecoveryHelperCommand(app), newGenerateExampleCommand(app), newConfigAPICommand(app), newJoinCommand(app), newRunCommand(app), newValidateConfigCommand(app), newStatusCommand(app), newWGCommand(app), newSyncCommand(app), newStopCommand(app), newServiceCommand(app), newUninstallCommand(app), newRegisterInstallationCommand(app), newStunCommand(app))
 	return root
 }
 
@@ -204,31 +197,6 @@ func showHiddenCommands(root *cobra.Command) func() {
 			command.Hidden = true
 		}
 	}
-}
-
-func directoryHelp() string {
-	layout, err := paths.Resolve(paths.Options{})
-	if err != nil {
-		return "  install: executable directory (installer-selected)"
-	}
-	executable, execErr := os.Executable()
-	installDir := "installer-selected"
-	if execErr == nil {
-		installDir = filepath.Dir(executable)
-	}
-	lines := []string{
-		"  install:  " + installDir,
-		"  config:   " + layout.ConfigDir,
-		"  data:     " + layout.StateDir,
-		"  runtime:  " + layout.RuntimeDir,
-	}
-	if execErr == nil {
-		if inv, loadErr := installstate.Load(installDir); loadErr == nil {
-			lines[0] = "  install:  " + inv.InstallDir
-			lines = append(lines, "  installer data: "+inv.DataDir, "  docs:     "+inv.DocDir, "  locks:    "+inv.LockDir)
-		}
-	}
-	return strings.Join(lines, "\n")
 }
 
 func outputWidth(out io.Writer) int {

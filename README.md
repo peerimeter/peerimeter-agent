@@ -451,6 +451,8 @@ peerimeter-agent status --watch --json
 ```
 
 Cobra provides contextual `--help` and `completion bash|zsh|fish|powershell`.
+Root help renders environment variables and resolved directory paths in TUI
+tables; `peerimeter-agent info` shows the same tables (or JSON with `--json`).
 Running `peerimeter-agent` without arguments prints the version banner first,
 then the help, and checks GitHub Releases. When a newer stable release is
 available, it shows a boxed update notice recommending
