@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"charm.land/bubbles/v2/progress"
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/lipgloss/v2"
 )
 
@@ -74,11 +75,14 @@ func TestSelfUpdateProgressCompletionColorsAreDistinct(t *testing.T) {
 }
 
 func TestSelfUpdateProgressUsesSpinnerOnlyForReleaseCheck(t *testing.T) {
-	model := selfUpdateProgressModel{bar: progress.New(progress.WithWidth(32))}
+	model := selfUpdateProgressModel{
+		bar:     progress.New(progress.WithWidth(32)),
+		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
+	}
 	updated, cmd := model.Update(selfUpdateProgressStart{message: "Checking the latest stable release"})
 	model = updated.(selfUpdateProgressModel)
 	view := model.View().Content
-	if !model.spinnerOnly || !model.active || cmd == nil || !strings.Contains(view, "Checking the latest stable release") || !strings.Contains(view, model.spinner.View()) || strings.Contains(view, "\n") {
+	if !model.spinnerOnly || !model.active || cmd == nil || !strings.Contains(view, "Checking the latest stable release") || model.spinner.View() == "" || model.spinner.View() == "(error)" || !strings.Contains(view, model.spinner.View()) || strings.Contains(view, "\n") {
 		t.Fatalf("release check should show an active spinner: %+v %q", model, model.View().Content)
 	}
 	updated, cmd = model.Update(model.spinner.Tick())
