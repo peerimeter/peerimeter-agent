@@ -203,6 +203,9 @@ conflicting addresses/routes and endpoints captured by tunnel routes are
 rejected before changing OS state. Endpoints are numeric IPv4:port or
 `[IPv6]:port`; validation never performs DNS lookups. Private keys live in
 `private_key_file`, resolved relative to the configuration file.
+`network.cidr` is an optional canonical private IPv4 prefix for service-managed
+networks; when supplied it must be between `/8` and `/30`. Offline static
+configurations do not need it.
 
 Linux/macOS keys must be regular, singly linked files owned by the effective
 runtime user, with no group/other access (normally `0600`). macOS extended ACLs
@@ -235,9 +238,38 @@ peerimeter-agent config push --token-file /secure/join-token.txt \
 
 On Linux and macOS, protect the token file with owner-only permissions (for
 example, `chmod 600`). On Windows, allow access only to the current user,
-SYSTEM and Administrators. A static `run --config` remains independent of the
-service API. Automatic join, credential persistence, daemon reconciliation and
-multi-network runtime management are not implemented yet.
+SYSTEM and Administrators. To join a network created in the service API, run:
+
+```sh
+sudo peerimeter-agent join --token-file /secure/join-token.txt --network-id mesh-a
+```
+
+`join` generates a local WireGuard key if needed, registers its public key and
+the default-route physical interface's addresses, then receives a tunnel IPv4
+address from the network's API-configured CIDR. It selects a peer's LAN address
+when the reported CIDRs overlap; otherwise it uses that peer's STUN-observed
+public UDP mapping. While `join` runs in the foreground, it fetches peers every
+15 seconds and reconciles endpoint and peer changes without restarting the
+tunnel. The key, config, and shared service credential are stored in protected
+local files. Re-run `join` with the same token after a restart; the local key
+and node ID are reused. The shared token remains stored after the foreground
+process stops. Removing the protected `state-dir/managed/<network-id>.token`
+file only deletes the local credential; the service-side node record remains.
+There is not yet a `leave` command or server-side node revocation API.
+
+The service still uses one shared API key, so the join token grants access to
+all networks and node registrations. STUN is probed on the configured WireGuard
+listen port before the tunnel starts. If STUN is unavailable, same-LAN peers
+can still connect. UDP hole punching is best-effort and direct-only: symmetric
+NATs and UDP-blocking firewalls can prevent a connection. TURN/relay fallback
+is not included. A CIDR match only chooses a LAN candidate; a WireGuard
+handshake is still needed to verify reachability. Static `run --config` remains
+fully independent of the service API.
+The advertised STUN mapping is captured during `join`; the current agent does
+not re-probe it while the tunnel owns the UDP port, so a later public NAT
+mapping change needs a new join/restart. If the system's default route uses a
+virtual/VPN interface and no physical default route can be selected, `join`
+fails closed instead of reporting another interface's addresses.
 
 ## Foreground and local control
 

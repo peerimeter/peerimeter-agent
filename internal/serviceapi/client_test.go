@@ -65,6 +65,10 @@ func TestConfigRoundTripAndAuth(t *testing.T) {
 			_, _ = io.WriteString(w, `{"version":1,"public_key":"abc"}`)
 			return
 		}
+		if r.URL.Path == "/api/v1/networks/net-a/nodes/node-a/peers" && r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"version":1,"peers":{"node-b":{"version":1,"public_key":"def"}}}`)
+			return
+		}
 		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		http.NotFound(w, r)
 	}))
@@ -79,6 +83,56 @@ func TestConfigRoundTripAndAuth(t *testing.T) {
 	}
 	if string(got) != `{"version":1,"public_key":"abc"}` || calls != 2 {
 		t.Fatalf("response=%s calls=%d", got, calls)
+	}
+	peers, err := client.PullPeers(context.Background(), "net-a", "node-a")
+	if err != nil || peers.Peers["node-b"] == nil || calls != 3 {
+		t.Fatalf("peer response=%+v calls=%d err=%v", peers, calls, err)
+	}
+}
+
+func TestGetNetworkValidatesNetworkCIDRResource(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/networks/net-a" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		_, _ = io.WriteString(w, `{"version":1,"id":"net-a","name":"mesh","cidr":"10.90.0.0/24"}`)
+	}))
+	defer server.Close()
+	client := newClient(JoinBundle{APIURL: server.URL, EnrollmentToken: "key"}, server.Client())
+	got, err := client.GetNetwork(context.Background(), "net-a")
+	if err != nil || got.CIDR != "10.90.0.0/24" {
+		t.Fatalf("network=%+v err=%v", got, err)
+	}
+
+	for _, cidr := range []string{"10.90.0.1/24", "8.8.8.0/24", "10.90.0.0/31", "bad"} {
+		if validNetworkResource(NetworkResource{Version: 1, ID: "net-a", Name: "mesh", CIDR: cidr}) {
+			t.Errorf("accepted invalid service network CIDR %q", cidr)
+		}
+	}
+	mismatch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"version":1,"id":"other-network","name":"mesh","cidr":"10.90.0.0/24"}`)
+	}))
+	defer mismatch.Close()
+	wrongClient := newClient(JoinBundle{APIURL: mismatch.URL, EnrollmentToken: "key"}, mismatch.Client())
+	if _, err := wrongClient.GetNetwork(context.Background(), "net-a"); err == nil {
+		t.Fatal("accepted a network resource with a different ID")
+	}
+}
+
+func TestRegisterNodeReturnsAllocatedTunnelAddress(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/api/v1/networks/net-a/nodes/node-a/registration" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = io.WriteString(w, `{"version":1,"node_id":"node-a","tunnel_address":"10.90.0.2","public_key":"AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`)
+	}))
+	defer server.Close()
+	client := newClient(JoinBundle{APIURL: server.URL, EnrollmentToken: "key"}, server.Client())
+	public := make([]byte, 32)
+	public[0] = 1
+	result, err := client.RegisterNode(context.Background(), "net-a", "node-a", NodeRegistration{Version: 1, PublicKey: base64.StdEncoding.EncodeToString(public), ListenPort: 51820, PrimaryInterface: "eth0", LocalAddresses: []string{"192.168.1.12/24"}})
+	if err != nil || result.TunnelAddress != "10.90.0.2" {
+		t.Fatalf("result=%+v err=%v", result, err)
 	}
 }
 
@@ -99,6 +153,24 @@ func TestClientRejectsInvalidDataAndIDsWithoutRequests(t *testing.T) {
 	}
 	if _, err := client.PullNetwork(context.Background(), strings.Repeat("n", 129)); err == nil {
 		t.Fatal("accepted overlong network ID")
+	}
+}
+
+func TestPullPeersRejectsMalformedPeerDocuments(t *testing.T) {
+	for _, body := range []string{
+		`{"version":1,"peers":null}`,
+		`{"version":1,"peers":{"../bad":{"version":1}}}`,
+		`{"version":1,"peers":{"node-b":null}}`,
+		`{"version":1,"peers":{"node-b":{"version":2}}}`,
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, body)
+		}))
+		client := newClient(JoinBundle{APIURL: server.URL, EnrollmentToken: "key"}, server.Client())
+		if _, err := client.PullPeers(context.Background(), "net-a", "node-a"); err == nil {
+			t.Errorf("accepted malformed peer set %s", body)
+		}
+		server.Close()
 	}
 }
 

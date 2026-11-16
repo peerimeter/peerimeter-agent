@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -25,6 +26,32 @@ type JoinBundle struct {
 	Version         int    `json:"version"`
 	APIURL          string `json:"api_url"`
 	EnrollmentToken string `json:"enrollment_token"`
+}
+
+type PeerSet struct {
+	Version int                        `json:"version"`
+	Peers   map[string]json.RawMessage `json:"peers"`
+}
+
+type NetworkResource struct {
+	Version int    `json:"version"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	CIDR    string `json:"cidr"`
+}
+
+type NodeRegistration struct {
+	Version          int      `json:"version"`
+	PublicKey        string   `json:"public_key"`
+	ListenPort       int      `json:"listen_port"`
+	PrimaryInterface string   `json:"primary_interface"`
+	LocalAddresses   []string `json:"local_addresses"`
+	PublicEndpoint   string   `json:"public_endpoint,omitempty"`
+}
+
+type RegisteredNode struct {
+	NodeID        string `json:"node_id"`
+	TunnelAddress string `json:"tunnel_address"`
 }
 
 // DecodeJoinToken validates and decodes an unpadded Base64URL join token.
@@ -105,6 +132,26 @@ func (c *Client) PullNetwork(ctx context.Context, networkID string) ([]byte, err
 	return c.request(ctx, http.MethodGet, "/api/v1/networks/"+url.PathEscape(networkID)+"/config", nil)
 }
 
+func (c *Client) GetNetwork(ctx context.Context, networkID string) (NetworkResource, error) {
+	if !validID(networkID) {
+		return NetworkResource{}, errors.New("network ID is invalid")
+	}
+	data, err := c.request(ctx, http.MethodGet, "/api/v1/networks/"+url.PathEscape(networkID), nil)
+	if err != nil {
+		return NetworkResource{}, err
+	}
+	var result NetworkResource
+	if err := json.Unmarshal(data, &result); err != nil || result.ID != networkID || !validNetworkResource(result) {
+		return NetworkResource{}, errors.New("service returned an invalid network")
+	}
+	return result, nil
+}
+
+func validNetworkResource(n NetworkResource) bool {
+	prefix, err := netip.ParsePrefix(n.CIDR)
+	return n.Version == 1 && validID(n.ID) && strings.TrimSpace(n.Name) != "" && len(n.Name) <= 128 && err == nil && prefix.Addr().Is4() && prefix == prefix.Masked() && prefix.Bits() >= 8 && prefix.Bits() <= 30 && prefix.Addr().IsPrivate()
+}
+
 func (c *Client) PushNetwork(ctx context.Context, networkID string, config []byte) error {
 	if !validID(networkID) {
 		return errors.New("network ID is invalid")
@@ -118,6 +165,77 @@ func (c *Client) PullNode(ctx context.Context, networkID, nodeID string) ([]byte
 		return nil, errors.New("network or node ID is invalid")
 	}
 	return c.request(ctx, http.MethodGet, "/api/v1/networks/"+url.PathEscape(networkID)+"/nodes/"+url.PathEscape(nodeID)+"/config", nil)
+}
+
+// PullPeers returns the other node documents registered for a network.
+func (c *Client) PullPeers(ctx context.Context, networkID, nodeID string) (PeerSet, error) {
+	if !validID(networkID) || !validID(nodeID) {
+		return PeerSet{}, errors.New("network or node ID is invalid")
+	}
+	data, err := c.request(ctx, http.MethodGet, "/api/v1/networks/"+url.PathEscape(networkID)+"/nodes/"+url.PathEscape(nodeID)+"/peers", nil)
+	if err != nil {
+		return PeerSet{}, err
+	}
+	if !validPeerSet(data) {
+		return PeerSet{}, errors.New("service returned an invalid peer list")
+	}
+	var result PeerSet
+	if err := json.Unmarshal(data, &result); err != nil || result.Version != 1 || result.Peers == nil {
+		return PeerSet{}, errors.New("service returned an invalid peer list")
+	}
+	return result, nil
+}
+
+func (c *Client) RegisterNode(ctx context.Context, networkID, nodeID string, registration NodeRegistration) (RegisteredNode, error) {
+	if !validID(networkID) || !validID(nodeID) || !validNodeRegistration(registration) {
+		return RegisteredNode{}, errors.New("node registration is invalid")
+	}
+	body, err := json.Marshal(registration)
+	if err != nil {
+		return RegisteredNode{}, errors.New("could not encode node registration")
+	}
+	data, err := c.request(ctx, http.MethodPut, "/api/v1/networks/"+url.PathEscape(networkID)+"/nodes/"+url.PathEscape(nodeID)+"/registration", body)
+	if err != nil {
+		return RegisteredNode{}, err
+	}
+	var result RegisteredNode
+	if err := json.Unmarshal(data, &result); err != nil || result.NodeID != nodeID {
+		return RegisteredNode{}, errors.New("service returned an invalid registration")
+	}
+	address, err := netip.ParseAddr(result.TunnelAddress)
+	if err != nil || !address.Is4() || !address.IsPrivate() {
+		return RegisteredNode{}, errors.New("service returned an invalid tunnel address")
+	}
+	return result, nil
+}
+
+func validNodeRegistration(registration NodeRegistration) bool {
+	key, err := base64.StdEncoding.Strict().DecodeString(registration.PublicKey)
+	if registration.Version != 1 || err != nil || len(key) != 32 || allZero(key) || base64.StdEncoding.EncodeToString(key) != registration.PublicKey || registration.ListenPort < 1 || registration.ListenPort > 65535 || strings.TrimSpace(registration.PrimaryInterface) == "" || len(registration.PrimaryInterface) > 64 || len(registration.LocalAddresses) == 0 || len(registration.LocalAddresses) > 16 {
+		return false
+	}
+	for _, raw := range registration.LocalAddresses {
+		prefix, err := netip.ParsePrefix(raw)
+		if err != nil || prefix.Bits() == 0 || !prefix.Addr().IsGlobalUnicast() || prefix.Addr().IsLinkLocalUnicast() || prefix.Addr().IsLoopback() || prefix.Addr().IsMulticast() || prefix.Addr().IsUnspecified() || prefix.Addr().Is4In6() {
+			return false
+		}
+	}
+	if registration.PublicEndpoint != "" {
+		endpoint, err := netip.ParseAddrPort(registration.PublicEndpoint)
+		if err != nil || endpoint.Port() == 0 || !endpoint.Addr().IsGlobalUnicast() || endpoint.Addr().Zone() != "" || endpoint.Addr().Is4In6() {
+			return false
+		}
+	}
+	return true
+}
+
+func allZero(value []byte) bool {
+	for _, b := range value {
+		if b != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Client) PushNode(ctx context.Context, networkID, nodeID string, config []byte) error {
@@ -154,14 +272,37 @@ func (c *Client) request(ctx context.Context, method, path string, body []byte) 
 	if method == http.MethodPut && res.StatusCode == http.StatusNoContent {
 		return nil, nil
 	}
-	if method == http.MethodGet && res.StatusCode == http.StatusOK {
+	if method == http.MethodPut && res.StatusCode == http.StatusOK {
 		data, err := io.ReadAll(io.LimitReader(res.Body, maxConfigSize+1))
 		if err != nil || len(data) > maxConfigSize || !validConfig(data) {
+			return nil, errors.New("service returned an invalid registration")
+		}
+		return data, nil
+	}
+	if method == http.MethodGet && res.StatusCode == http.StatusOK {
+		data, err := io.ReadAll(io.LimitReader(res.Body, maxConfigSize+1))
+		if err != nil || len(data) > maxConfigSize || (!validConfig(data) && !validPeerSet(data)) {
 			return nil, errors.New("service returned an invalid configuration")
 		}
 		return data, nil
 	}
 	return nil, fmt.Errorf("service API returned HTTP %d", res.StatusCode)
+}
+
+func validPeerSet(data []byte) bool {
+	var value struct {
+		Version int                        `json:"version"`
+		Peers   map[string]json.RawMessage `json:"peers"`
+	}
+	if err := json.Unmarshal(data, &value); err != nil || value.Version != 1 || value.Peers == nil {
+		return false
+	}
+	for id, config := range value.Peers {
+		if !validID(id) || !validConfig(config) {
+			return false
+		}
+	}
+	return true
 }
 
 func validConfig(data []byte) bool {

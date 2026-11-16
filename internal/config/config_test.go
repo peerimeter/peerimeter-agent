@@ -32,6 +32,11 @@ func TestValidate(t *testing.T) {
 		{"mode", func(c *Config) { c.Mode = "managed" }},
 		{"id", func(c *Config) { c.Network.ID = "bad/id" }},
 		{"empty name", func(c *Config) { c.Network.Name = " \t" }},
+		{"network CIDR noncanonical", func(c *Config) { c.Network.CIDR = "10.90.0.1/24" }},
+		{"network CIDR public", func(c *Config) { c.Network.CIDR = "8.8.8.0/24" }},
+		{"network CIDR broad", func(c *Config) { c.Network.CIDR = "10.0.0.0/7" }},
+		{"network CIDR too small", func(c *Config) { c.Network.CIDR = "10.90.0.0/31" }},
+		{"network CIDR IPv6", func(c *Config) { c.Network.CIDR = "fd00::/64" }},
 		{"key reference", func(c *Config) { c.Interface.PrivateKeyFile = "" }},
 		{"port", func(c *Config) { c.Interface.ListenPort = 65536 }},
 		{"address", func(c *Config) { c.Interface.Address = []string{"not-a-cidr"} }},
@@ -39,7 +44,6 @@ func TestValidate(t *testing.T) {
 		{"address default route", func(c *Config) { c.Interface.Address = []string{"10.80.0.1/0"} }},
 		{"address multicast", func(c *Config) { c.Interface.Address = []string{"224.0.0.1/32"} }},
 		{"mapped IPv6", func(c *Config) { c.Interface.Address = []string{"::ffff:10.80.0.1/128"} }},
-		{"no peers", func(c *Config) { c.Peers = nil }},
 		{"bad key", func(c *Config) { c.Peers[0].PublicKey = "secret-invalid-key" }},
 		{"zero key", func(c *Config) { c.Peers[0].PublicKey = base64.StdEncoding.EncodeToString(make([]byte, 32)) }},
 		{"duplicate key", func(c *Config) { c.Peers = append(c.Peers, c.Peers[0]) }},
@@ -86,7 +90,16 @@ func TestValidate(t *testing.T) {
 			}
 		})
 	}
+	emptyPeers := fixture()
+	emptyPeers.Peers = nil
+	if err := Validate(emptyPeers, "linux"); err != nil {
+		t.Fatalf("empty peer set rejected: %v", err)
+	}
 	c := fixture()
+	c.Network.CIDR = "10.90.0.0/24"
+	if err := Validate(c, "linux"); err != nil {
+		t.Fatalf("valid network CIDR rejected: %v", err)
+	}
 	c.Interface.Name = "wg-prod"
 	if err := Validate(c, "linux"); err != nil {
 		t.Fatal(err)

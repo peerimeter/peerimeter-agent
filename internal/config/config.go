@@ -34,6 +34,7 @@ type Config struct {
 type Network struct {
 	ID   string `json:"id" yaml:"id"`
 	Name string `json:"name" yaml:"name"`
+	CIDR string `json:"cidr,omitempty" yaml:"cidr,omitempty"`
 }
 type Interface struct {
 	PrivateKeyFile string   `json:"private_key_file" yaml:"private_key_file"`
@@ -122,6 +123,12 @@ func Validate(cfg Config, targetOS string) error {
 	if strings.TrimSpace(cfg.Network.Name) == "" || len(cfg.Network.Name) > 128 || strings.IndexFunc(cfg.Network.Name, unicode.IsControl) >= 0 {
 		return invalid("network.name must be nonempty, at most 128 bytes, without control characters")
 	}
+	if cfg.Network.CIDR != "" {
+		prefix, err := netip.ParsePrefix(cfg.Network.CIDR)
+		if err != nil || !prefix.Addr().Is4() || prefix != prefix.Masked() || prefix.Bits() < 8 || prefix.Bits() > 30 || !prefix.Addr().IsPrivate() {
+			return invalid("network.cidr must be a canonical private IPv4 prefix between /8 and /30")
+		}
+	}
 	if strings.TrimSpace(cfg.Interface.PrivateKeyFile) == "" || strings.ContainsRune(cfg.Interface.PrivateKeyFile, 0) {
 		return invalid("interface.private_key_file is required")
 	}
@@ -152,8 +159,8 @@ func Validate(cfg Config, targetOS string) error {
 		}
 		local = append(local, p)
 	}
-	if len(cfg.Peers) == 0 || len(cfg.Peers) > 1024 {
-		return invalid("peers requires 1–1024 entries")
+	if len(cfg.Peers) > 1024 {
+		return invalid("peers supports at most 1024 entries")
 	}
 	keys := map[string]bool{}
 	var routes []netip.Prefix

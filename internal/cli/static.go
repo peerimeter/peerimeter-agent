@@ -17,9 +17,14 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 )
 
 func staticCommand(ctx context.Context, commandName, path, override string, layout paths.Layout, operator string, out io.Writer, backend platform.Backend) error {
+	return staticCommandWithRefresh(ctx, commandName, path, override, layout, operator, out, backend, nil, 0)
+}
+
+func staticCommandWithRefresh(ctx context.Context, commandName, path, override string, layout paths.Layout, operator string, out io.Writer, backend platform.Backend, remoteReload func() (config.Config, error), refresh time.Duration) error {
 	if commandName == "run" {
 		installstate.TrustSudoUserForRun()
 		secret.TrustSudoUserForRun()
@@ -98,7 +103,13 @@ func staticCommand(ctx context.Context, commandName, path, override string, layo
 	}
 	desired := platform.Desired{Config: cfg, InterfaceName: name, PrivateKey: private, OwnershipToken: token}
 	reload := func() (platform.Desired, error) {
-		next, err := config.Load(path)
+		var next config.Config
+		var err error
+		if remoteReload != nil {
+			next, err = remoteReload()
+		} else {
+			next, err = config.Load(path)
+		}
 		if err != nil {
 			return platform.Desired{}, err
 		}
@@ -134,7 +145,7 @@ func staticCommand(ctx context.Context, commandName, path, override string, layo
 		}
 		return installstate.RegisterProfile(filepath.Dir(exe), installstate.Profile{StateDir: layout.StateDir, RuntimeDir: layout.RuntimeDir, ClaimRuntime: true})
 	}
-	return agent.RunManaged(ctx, backend, desired, layout.RuntimeDir, reload, operator, local.InstanceID(layout.StateDir), ready, func() error {
+	return agent.RunManagedWithRefresh(ctx, backend, desired, layout.RuntimeDir, reload, operator, local.InstanceID(layout.StateDir), ready, func() error {
 		return installstate.ReleaseRuntime(filepath.Dir(exe), layout.StateDir, layout.RuntimeDir)
-	})
+	}, refresh)
 }
