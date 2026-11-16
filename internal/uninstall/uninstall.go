@@ -57,18 +57,18 @@ type report struct {
 func resources(p installstate.Profile) []removalFile {
 	var files []removalFile
 	if p.LegacyConfigOwned && p.LegacyConfigDir != "" && p.LegacyConfigDir != p.ConfigDir {
-		for _, name := range []string{"service.yaml", "service.key"} {
+		for _, name := range []string{"service.yaml", "service.json", "service.key"} {
 			files = append(files, removalFile{Path: filepath.Join(p.LegacyConfigDir, name)})
 		}
 	}
 	if p.PendingConfigOwned && p.PendingConfigDir != "" && p.PendingConfigDir != p.ConfigDir {
-		for _, name := range []string{"service.yaml", "service.key"} {
+		for _, name := range []string{"service.yaml", "service.json", "service.key"} {
 			files = append(files, removalFile{Path: filepath.Join(p.PendingConfigDir, name)})
 		}
 		files = append(files, removalFile{Path: filepath.Join(p.PendingConfigDir, installstate.ConfigMarkerFilename), Marker: true})
 	}
 	if p.ConfigOwned && p.ConfigDir != "" {
-		for _, name := range []string{"service.yaml", "service.key"} {
+		for _, name := range []string{"service.yaml", "service.json", "service.key"} {
 			files = append(files, removalFile{Path: filepath.Join(p.ConfigDir, name)})
 		}
 	}
@@ -251,7 +251,14 @@ func preflight(inv installstate.Inventory, p removalPlan) error {
 	return nil
 }
 func serviceConfig(p installstate.Profile) service.Config {
-	return service.Config{ConfigPath: filepath.Join(p.ConfigDir, "service.yaml"), ConfigDirectory: p.ConfigDir, StateDirectory: p.StateDir, RuntimeDirectory: p.RuntimeDir}
+	configPath := filepath.Join(p.ConfigDir, "service.yaml")
+	if _, err := os.Lstat(configPath); os.IsNotExist(err) {
+		legacyPath := filepath.Join(p.ConfigDir, "service.json")
+		if _, legacyErr := os.Lstat(legacyPath); legacyErr == nil {
+			configPath = legacyPath
+		}
+	}
+	return service.Config{ConfigPath: configPath, ConfigDirectory: p.ConfigDir, StateDirectory: p.StateDir, RuntimeDirectory: p.RuntimeDir}
 }
 func removeServices(ctx context.Context, exe string, profiles []installstate.Profile) error {
 	var failed []installstate.Profile

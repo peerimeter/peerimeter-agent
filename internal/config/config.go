@@ -267,6 +267,12 @@ func checkYAML(data []byte) error {
 				if path != "" {
 					childPath = path + "." + key.Value
 				}
+				switch childPath {
+				case "version", "interface.listen_port", "peers.persistent_keepalive_seconds":
+					if value.Kind != yaml.ScalarNode || value.Tag != "!!int" {
+						return errors.New("static config contains an invalid integer field")
+					}
+				}
 				if childPath == "interface.name" && (value.Kind != yaml.ScalarNode || value.Tag != "!!str" || value.Value == "") {
 					return errors.New("static config contains an invalid interface.name")
 				}

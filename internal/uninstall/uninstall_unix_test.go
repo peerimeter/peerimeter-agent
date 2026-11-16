@@ -60,6 +60,33 @@ func prepareUninstall(t *testing.T) (string, installstate.Profile) {
 	}
 	return dir, p
 }
+
+func TestLegacyJSONSnapshotIsRemovedAndUsedForOwnership(t *testing.T) {
+	_, p := prepareUninstall(t)
+	if err := os.Remove(filepath.Join(p.ConfigDir, "service.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := filepath.Join(p.ConfigDir, "service.json")
+	if err := os.WriteFile(legacyPath, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := serviceConfig(p).ConfigPath; got != legacyPath {
+		t.Fatalf("service config path = %q, want %q", got, legacyPath)
+	}
+	found := false
+	owned := p
+	owned.ConfigOwned = true
+	for _, file := range resources(owned) {
+		if file.Path == legacyPath {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("legacy JSON snapshot missing from owned removal plan")
+	}
+}
+
 func snapshotTree(t *testing.T, root string) map[string]string {
 	t.Helper()
 	canonicalRoot, err := filepath.EvalSymlinks(root)
