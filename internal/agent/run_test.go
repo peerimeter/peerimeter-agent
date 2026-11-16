@@ -52,11 +52,12 @@ func TestManagedRefreshStopsBeforeSessionCleanup(t *testing.T) {
 	f := &fake{started: make(chan struct{}), refreshDone: refreshDone}
 	tempRoot := os.TempDir()
 	if runtime.GOOS != "windows" {
-		if _, err := os.Stat("/tmp"); err == nil {
-			tempRoot = "/tmp"
-		}
+		tempRoot = "/tmp"
 	}
 	dir, err := os.MkdirTemp(tempRoot, "pm-")
+	if err != nil && tempRoot != os.TempDir() {
+		dir, err = os.MkdirTemp(os.TempDir(), "pm-")
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

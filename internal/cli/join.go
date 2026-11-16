@@ -34,6 +34,30 @@ type registeredPeer struct {
 	PublicEndpoint string   `json:"public_endpoint"`
 }
 
+type peerEntry struct {
+	id       string
+	peer     registeredPeer
+	endpoint string
+}
+
+func eligiblePeerEntries(underlay []string, peers map[string]json.RawMessage) ([]peerEntry, []string) {
+	entries := make([]peerEntry, 0, len(peers))
+	routes := make([]string, 0, len(peers))
+	for peerID, raw := range peers {
+		var peer registeredPeer
+		if err := json.Unmarshal(raw, &peer); err != nil || peer.Version != 1 || peer.NodeID != peerID || peer.PublicKey == "" || peer.TunnelAddress == "" {
+			continue
+		}
+		endpoint, ok := discovery.SelectEndpoint(underlay, peer.LocalAddresses, peer.ListenPort, peer.PublicEndpoint)
+		if !ok {
+			continue
+		}
+		entries = append(entries, peerEntry{id: peerID, peer: peer, endpoint: endpoint})
+		routes = append(routes, peer.TunnelAddress+"/32")
+	}
+	return entries, routes
+}
+
 func newJoinCommand(app *application) *cobra.Command {
 	var token, tokenFile, networkID, nodeID, operator string
 	var listenPort int
@@ -129,26 +153,10 @@ func newJoinCommand(app *application) *cobra.Command {
 				return config.Config{}, err
 			}
 			desired := config.Config{Version: 1, Mode: "static", Network: config.Network{ID: network.ID, Name: network.Name, CIDR: network.CIDR}, Interface: config.Interface{PrivateKeyFile: keyPath, Address: []string{address.String() + "/32"}, ListenPort: listenPort}}
-			type peerEntry struct {
-				id   string
-				peer registeredPeer
-			}
-			entries := make([]peerEntry, 0, len(peers.Peers))
-			routes := make([]string, 0, len(peers.Peers))
-			for peerID, raw := range peers.Peers {
-				var peer registeredPeer
-				if err := json.Unmarshal(raw, &peer); err != nil || peer.Version != 1 || peer.NodeID != peerID {
-					continue
-				}
-				entries = append(entries, peerEntry{id: peerID, peer: peer})
-				routes = append(routes, peer.TunnelAddress+"/32")
-			}
+			entries, routes := eligiblePeerEntries(underlay.Addresses, peers.Peers)
 			for _, entry := range entries {
 				peer := entry.peer
-				endpoint, ok := discovery.SelectEndpoint(underlay.Addresses, peer.LocalAddresses, peer.ListenPort, peer.PublicEndpoint)
-				if !ok || peer.PublicKey == "" || peer.TunnelAddress == "" {
-					continue
-				}
+				endpoint := entry.endpoint
 				if discovery.EndpointConflictsWithRoutes(endpoint, routes) {
 					endpoint = peer.PublicEndpoint
 					if endpoint == "" || discovery.EndpointConflictsWithRoutes(endpoint, routes) {
