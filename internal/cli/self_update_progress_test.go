@@ -40,6 +40,10 @@ func TestSelfUpdateProgressStopKeepsCompletedBarVisible(t *testing.T) {
 }
 
 func TestSelfUpdateProgressCompletionColorsAreDistinct(t *testing.T) {
+	plain := completedSelfUpdateProgressBar(selfUpdateProgressUpToDate, false)
+	if strings.Contains(plain, "\x1b[") {
+		t.Fatalf("color-disabled progress bar contains ANSI styling: %q", plain)
+	}
 	upToDate := completedSelfUpdateProgressBar(selfUpdateProgressUpToDate, true)
 	updateAvailable := completedSelfUpdateProgressBar(selfUpdateProgressUpdateAvailable, true)
 	if upToDate == updateAvailable {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -146,18 +147,19 @@ func (p *selfUpdateProgress) stop(outcome ...selfUpdateProgressOutcome) {
 }
 
 func completedSelfUpdateProgressBar(outcome selfUpdateProgressOutcome, color bool) string {
+	if !color {
+		return strings.Repeat(string(progress.DefaultFullCharFullBlock), 32)
+	}
 	options := []progress.Option{
 		progress.WithWidth(32),
 		progress.WithoutPercentage(),
 		progress.WithFillCharacters(progress.DefaultFullCharFullBlock, progress.DefaultEmptyCharBlock),
 	}
-	if color {
-		switch outcome {
-		case selfUpdateProgressUpToDate:
-			options = append(options, progress.WithColors(lipgloss.Color("#22C55E")))
-		case selfUpdateProgressUpdateAvailable:
-			options = append(options, progress.WithColors(lipgloss.Color("#F59E0B")))
-		}
+	switch outcome {
+	case selfUpdateProgressUpToDate:
+		options = append(options, progress.WithColors(lipgloss.Color("#22C55E")))
+	case selfUpdateProgressUpdateAvailable:
+		options = append(options, progress.WithColors(lipgloss.Color("#F59E0B")))
 	}
 	bar := progress.New(options...)
 	return bar.ViewAs(1)
