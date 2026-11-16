@@ -143,6 +143,28 @@ func TestSelfUpdateHasExplicitHelp(t *testing.T) {
 	}
 }
 
+func TestHelpAllListsHiddenCommands(t *testing.T) {
+	code, out, stderr := invoke(t, "help", "--all")
+	if code != 0 || stderr != "" {
+		t.Fatalf("help --all failed: %d %q %s", code, out, stderr)
+	}
+	for _, command := range []string{"__update-helper", "__recover-helper", "register-installation"} {
+		if !strings.Contains(out, command) {
+			t.Errorf("help --all output does not list %q: %s", command, out)
+		}
+	}
+
+	code, out, stderr = invoke(t, "--help")
+	if code != 0 || stderr != "" {
+		t.Fatalf("default help failed: %d %q %s", code, out, stderr)
+	}
+	for _, command := range []string{"__update-helper", "__recover-helper", "register-installation"} {
+		if strings.Contains(out, command) {
+			t.Errorf("default help unexpectedly lists hidden command %q", command)
+		}
+	}
+}
+
 func TestConfigLoadErrorDiagnostics(t *testing.T) {
 	for _, format := range []string{"console", "text", "json"} {
 		t.Run(format, func(t *testing.T) {
