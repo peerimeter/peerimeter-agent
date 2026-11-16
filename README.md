@@ -265,6 +265,9 @@ NATs and UDP-blocking firewalls can prevent a connection. TURN/relay fallback
 is not included. A CIDR match only chooses a LAN candidate; a WireGuard
 handshake is still needed to verify reachability. Static `run --config` remains
 fully independent of the service API.
+Overlapping RFC1918 ranges do not prove that two machines share a reachable LAN;
+if an unreachable LAN candidate is selected, join currently does not fall back
+to the public endpoint automatically.
 The advertised STUN mapping is captured during `join`; the current agent does
 not re-probe it while the tunnel owns the UDP port, so a later public NAT
 mapping change needs a new join/restart. If the system's default route uses a
