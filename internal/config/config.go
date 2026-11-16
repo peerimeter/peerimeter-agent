@@ -70,7 +70,7 @@ func Load(path string) (Config, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&cfg); err != nil {
-		return Config{}, diagnostic.Wrap(fmt.Errorf("decode static YAML config %q (check field names and value types): %w", path, err))
+		return Config{}, diagnostic.Wrap(fmt.Errorf("decode static YAML config %q (check field names and value types)", path))
 	}
 	var extra any
 	if err := dec.Decode(&extra); err != io.EOF {
@@ -87,6 +87,19 @@ func Load(path string) (Config, error) {
 		return Config{}, diagnostic.Wrap(fmt.Errorf("resolve private key path %q from static config %q: %w", cfg.Interface.PrivateKeyFile, path, err))
 	}
 	return cfg, nil
+}
+
+func MarshalYAML(value any) ([]byte, error) {
+	var output bytes.Buffer
+	encoder := yaml.NewEncoder(&output)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	if err := encoder.Close(); err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
 }
 
 func invalid(field string) error { return fmt.Errorf("invalid static config: %s", field) }

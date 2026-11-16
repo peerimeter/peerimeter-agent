@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/secret"
 	"github.com/peerimeter/peerimeter-agent/internal/serviceapi"
 	"github.com/spf13/cobra"
@@ -49,7 +50,7 @@ func newConfigAPICommand(app *application) *cobra.Command {
 		if err := json.Unmarshal(data, &value); err != nil {
 			return errors.New("service returned an invalid configuration")
 		}
-		data, err = yaml.Marshal(value)
+		data, err = config.MarshalYAML(value)
 		if err != nil {
 			return errors.New("could not encode pulled configuration as YAML")
 		}

@@ -18,7 +18,6 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/paths"
 	"github.com/peerimeter/peerimeter-agent/internal/secret"
-	"gopkg.in/yaml.v3"
 )
 
 type Config struct{ ConfigPath, ConfigDirectory, StateDirectory, RuntimeDirectory, Operator string }
@@ -182,7 +181,7 @@ func provision(cfg *Config, secure func(...string) error) (copied bool, resultEr
 		}
 	}()
 	desired.Interface.PrivateKeyFile = keyPath
-	data, err := yaml.Marshal(desired)
+	data, err := config.MarshalYAML(desired)
 	if err != nil {
 		return false, errors.New("cannot encode protected service configuration")
 	}
