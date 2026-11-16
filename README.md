@@ -144,11 +144,10 @@ new version is available, it reports that without prompting. The command selects
 the package for the current OS and CPU, then checks it against the release
 `SHA256SUMS` file downloaded over HTTPS. This is an integrity check using the
 GitHub release trust channel; it does not claim a detached release signature.
-During the update it shows the current operation on stderr: an animated
-per-step progress bar in a terminal, or start/completion lines when output is
-redirected. With `--json`, progress stays on stderr and the final result remains
-on stdout. Startup checks may notify about an update, but never replace a running
-agent.
+During the update it shows the current operation on stderr: a TUI spinner in a
+terminal, or start/completion lines when output is redirected. With `--json`,
+progress stays on stderr and the final result remains on stdout. Startup checks
+may notify about an update, but never replace a running agent.
 
 ```sh
 peerimeter-agent self-update       # show versions and ask before upgrading
@@ -163,8 +162,9 @@ program-file hash before making changes. It replaces only those inventoried
 files, preserving the recorded install, documentation, data and lock
 directories and all configuration, keys, state, runtime paths and service
 profiles. A running foreground profile prevents an update. For managed
-services, it stops the service, updates the program files, starts the service
-and waits for the local status endpoint. If the updated service does not become
+services, it stops the service and waits for the agent to release its profile
+locks before updating program files. It then starts the service and waits for
+the local status endpoint. If the updated service does not become
 ready, it restores the previous files and inventory hashes and restarts the
 previous service. The update needs the same filesystem and service privileges
 as the existing installation. On Windows, a helper launched from the verified

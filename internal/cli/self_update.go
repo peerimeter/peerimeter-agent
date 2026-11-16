@@ -160,11 +160,7 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 		return fmt.Errorf("cannot compare agent version %q with release %q", currentVersion, latestTag)
 	}
 	upToDate := compareVersion(latest, current) <= 0
-	if upToDate {
-		deps.progress.stop(selfUpdateProgressUpToDate)
-	} else {
-		deps.progress.stop(selfUpdateProgressUpdateAvailable)
-	}
+	deps.progress.stop()
 	if !jsonOutput {
 		if _, err := fmt.Fprintf(out, "Current version: %s\nLatest version: %s\n", currentVersion, latestTag); err != nil {
 			return err
@@ -269,6 +265,11 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 		}); err != nil {
 			return restartAfterFailure(managedService, fmt.Errorf("stop installed service before update: %w", err))
 		}
+		if err := runSelfUpdateAction(deps.progress, "Waiting for the stopped agent to release its locks", func() error {
+			return waitForProfileStopped(ctx, *managedService)
+		}); err != nil {
+			return restartAfterFailure(managedService, fmt.Errorf("wait for installed service to stop: %w", err))
+		}
 	}
 	if goos == "windows" {
 		return runSelfUpdateAction(deps.progress, "Scheduling Windows file replacement", func() error {
@@ -368,12 +369,45 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	for _, f := range inv.Files {
 		filesUpdated = append(filesUpdated, f.Name)
 	}
-	deps.progress.stop(selfUpdateProgressUpdateSucceeded)
+	deps.progress.stop()
 	return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "updated", PreviousVersion: currentVersion, UpdatedVersion: tag, Files: filesUpdated})
 }
 
 func sameUpdateSnapshot(a, b installstate.Inventory) bool {
 	return snapshotUpdateInventory(a).matches(b)
+}
+
+func waitForProfileStopped(parent context.Context, profile installstate.Profile) error {
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		busy := false
+		for _, dir := range []string{profile.StateDir, profile.RuntimeDir} {
+			guard, err := local.TryAcquireExisting(dir)
+			if errors.Is(err, local.ErrBusy) {
+				busy = true
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("cannot inspect stopped agent profile: %w", err)
+			}
+			if guard != nil {
+				if err := guard.Close(); err != nil {
+					return fmt.Errorf("release stopped agent profile lock: %w", err)
+				}
+			}
+		}
+		if !busy {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("stopped service still owns an agent profile lock: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 type updateInventorySnapshot struct {

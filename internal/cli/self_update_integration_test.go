@@ -576,6 +576,38 @@ func TestSelfUpdateIntegrationRestartsManagedServiceAfterReplacement(t *testing.
 	}
 }
 
+func TestSelfUpdateWaitsForStoppedServiceToReleaseProfileLock(t *testing.T) {
+	f := newSelfUpdateFixture(t, true)
+	var actions []string
+	var releaseResult chan error
+	manage := func(action string, _ service.Config) error {
+		actions = append(actions, action)
+		if action == "stop" {
+			guard, err := local.Acquire(f.runtime)
+			if err != nil {
+				return err
+			}
+			releaseResult = make(chan error, 1)
+			go func() {
+				time.Sleep(200 * time.Millisecond)
+				releaseResult <- guard.Close()
+			}()
+		}
+		return nil
+	}
+	deps := f.deps("v1.2.0", manage, func(context.Context, string) error { return nil })
+	var output bytes.Buffer
+	if err := selfUpdateAt(context.Background(), &output, true, f.install, "v1.0.0", "linux", runtime.GOARCH, deps); err != nil {
+		t.Fatalf("self-update failed while stopped service released its lock: %v", err)
+	}
+	if err := <-releaseResult; err != nil {
+		t.Fatalf("release stopped service lock: %v", err)
+	}
+	if !reflect.DeepEqual(actions, []string{"stop", "start"}) {
+		t.Fatalf("managed service lifecycle = %v", actions)
+	}
+}
+
 func TestSelfUpdateIntegrationRestoresFilesWhenNewBinaryCannotStart(t *testing.T) {
 	f := newSelfUpdateFixture(t, false)
 	deps := f.deps("v1.2.0", nil, nil)
