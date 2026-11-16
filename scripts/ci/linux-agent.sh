@@ -128,20 +128,13 @@ check_handshake() {
   [[ "$namespace" == "$left" ]] || { cfg="$work/config/peer-b.yaml"; other="$work/config/peer-a.yaml"; }
   timeout 12s ip netns exec "$namespace" "$AGENT" wg show --runtime-dir "$(runtime_for_state "$state")" >"$output.human"
   python3 - "$output" "$output.peers" "$cfg" "$other" "$output.human" <<'PY'
-import datetime, json, pathlib, re, sys
+import datetime, json, pathlib, sys, yaml
 s=json.load(open(sys.argv[1])); peers=json.load(open(sys.argv[2]))
 assert s['state']=='running' and len(s['peers'])==len(peers)==1
 assert s['peers'][0]['public_key']==peers[0]['public_key']
 p=peers[0]
 def read_config(path):
-    text=pathlib.Path(path).read_text()
-    private_key=re.search(r'(?m)^  private_key_file: (.+)$',text).group(1).strip('"\'')
-    listen_port=int(re.search(r'(?m)^  listen_port: (\d+)$',text).group(1))
-    public_key=re.search(r'(?m)^  - public_key: (.+)$',text).group(1)
-    allowed_block=re.search(r'(?m)^    allowed_ips:\n((?:^      - .+\n)+)',text).group(1)
-    allowed_ips=re.findall(r'(?m)^      - (.+)$',allowed_block)
-    keepalive_match=re.search(r'(?m)^    persistent_keepalive_seconds: (\d+)$',text)
-    return {'interface':{'private_key_file':private_key,'listen_port':listen_port},'peers':[{'public_key':public_key,'allowed_ips':allowed_ips,'persistent_keepalive_seconds':int(keepalive_match.group(1)) if keepalive_match else 0}]}
+    return yaml.safe_load(pathlib.Path(path).read_text())
 cfg=read_config(sys.argv[3]); other=read_config(sys.argv[4])
 assert s['public_key']==other['peers'][0]['public_key'] and s['listen_port']==cfg['interface']['listen_port']
 assert set(p['allowed_ips'])==set(cfg['peers'][0]['allowed_ips'])

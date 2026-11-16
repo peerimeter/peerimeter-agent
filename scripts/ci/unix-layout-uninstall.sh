@@ -118,7 +118,7 @@ check_layout() {
  python3 - "$cfg" <<'PYLAYOUT'
 import os,pathlib,re,stat,sys
 root=pathlib.Path(sys.argv[1]);text=(root/'service.yaml').read_text()
-match=re.search(r'(?m)^  private_key_file: ["\']?(.*?)["\']?$',text)
+match=re.search(r'(?m)^[ \t]+private_key_file: ["\']?(.*?)["\']?$',text)
 assert match and os.path.realpath(match.group(1))==str((root/'service.key').resolve()),'installed config still depends on the original/legacy private key'
 for name in ('service.yaml','service.key'):
  s=(root/name).stat();assert s.st_uid==0 and stat.S_IMODE(s.st_mode)&0o077==0,'installed secret snapshot permissions are too broad'

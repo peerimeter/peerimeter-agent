@@ -44,6 +44,21 @@ func migrationFixture(t *testing.T) (Config, [32]byte, map[string][]byte) {
 	if err := install(Config{ConfigPath: source, ConfigDirectory: legacy, StateDirectory: legacy, RuntimeDirectory: legacy}, func(Config) error { return nil }, func(...string) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
+	installedConfig := filepath.Join(legacy, "service.yaml")
+	installed, err := config.Load(installedConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyJSON, err := json.MarshalIndent(installed, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, "service.json"), legacyJSON, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(installedConfig); err != nil {
+		t.Fatal(err)
+	}
 	preserved := map[string][]byte{"network.json": []byte(`{"network_id":"migration-network","interface_name":"wg-persisted"}`), "ownership": []byte("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n")}
 	for name, data := range preserved {
 		if err := os.WriteFile(filepath.Join(legacy, name), data, 0600); err != nil {
@@ -60,7 +75,7 @@ func TestUnixMigrationPreservesKeyAndDurableIdentity(t *testing.T) {
 	unregistered, registered := false, false
 	unregister := func(old Config) error {
 		unregistered = true
-		if old.ConfigPath != filepath.Join(cfg.StateDirectory, "service.yaml") || old.RuntimeDirectory != cfg.StateDirectory {
+		if old.ConfigPath != filepath.Join(cfg.StateDirectory, "service.json") || old.RuntimeDirectory != cfg.StateDirectory {
 			t.Fatal("incorrect legacy registration identity")
 		}
 		return nil
@@ -98,7 +113,7 @@ func TestUnixMigrationPreservesKeyAndDurableIdentity(t *testing.T) {
 			t.Fatalf("durable %s changed", name)
 		}
 	}
-	for _, name := range []string{"service.yaml", "service.key", "agent.lock"} {
+	for _, name := range []string{"service.json", "service.key", "agent.lock"} {
 		if _, err := os.Lstat(filepath.Join(cfg.StateDirectory, name)); !os.IsNotExist(err) {
 			t.Fatalf("legacy %s not removed", name)
 		}
@@ -126,7 +141,7 @@ func TestUnixMigrationRefusesLiveLegacyManager(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "legacy agent is still using persistent state") {
 		t.Fatalf("migration should refuse a live legacy manager, got %v", err)
 	}
-	for _, name := range []string{"service.yaml", "service.key", "agent.lock"} {
+	for _, name := range []string{"service.json", "service.key", "agent.lock"} {
 		if _, err := os.Stat(filepath.Join(cfg.StateDirectory, name)); err != nil {
 			t.Fatalf("migration removed legacy %s while manager lock was held: %v", name, err)
 		}
@@ -197,7 +212,7 @@ func TestUnixMigrationRegistrationFailureRetainsRecoverableLegacy(t *testing.T) 
 	if err != nil || oldKey != key {
 		t.Fatal("failed registration removed legacy credentials")
 	}
-	for _, name := range []string{"service.yaml", "service.key"} {
+	for _, name := range []string{"service.yaml", "service.json", "service.key"} {
 		if _, err := os.Stat(filepath.Join(cfg.ConfigDirectory, name)); !os.IsNotExist(err) {
 			t.Fatal("failed registration left conflicting new snapshots")
 		}

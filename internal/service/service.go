@@ -59,7 +59,7 @@ func Manage(action string, cfg Config) error {
 			return migrate(cfg, func(legacy Config) error { return RemoveOwned(context.Background(), currentExecutable(), legacy) }, func(next Config) error { return registerMigratedService(next) }, nativeSecureFiles)
 		}
 		if runtime.GOOS != "windows" && cfg.ConfigDirectory != cfg.StateDirectory {
-			if _, err := os.Lstat(filepath.Join(cfg.StateDirectory, "service.yaml")); err == nil {
+			if _, err := legacySnapshotPath(cfg.StateDirectory); err == nil {
 				return errors.New("legacy combined service layout requires explicit service migrate before installation")
 			} else if !os.IsNotExist(err) {
 				return err
@@ -88,6 +88,18 @@ func snapshotDirectory(cfg Config) string {
 		return cfg.ConfigDirectory
 	}
 	return cfg.StateDirectory
+}
+
+func legacySnapshotPath(directory string) (string, error) {
+	for _, name := range []string{"service.yaml", "service.json"} {
+		path := filepath.Join(directory, name)
+		if _, err := os.Lstat(path); err == nil {
+			return path, nil
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+	}
+	return "", os.ErrNotExist
 }
 func registerService(cfg Config) error {
 	if err := nativeManage("install", cfg); err != nil {
@@ -283,7 +295,10 @@ func migrateWithContext(ctx context.Context, cfg Config, unregister func(Config)
 		return err
 	}
 	defer startup.Close()
-	legacyConfig := filepath.Join(cfg.StateDirectory, "service.yaml")
+	legacyConfig, err := legacySnapshotPath(cfg.StateDirectory)
+	if err != nil {
+		return errors.New("legacy service snapshot is unavailable")
+	}
 	legacyKey := filepath.Join(cfg.StateDirectory, "service.key")
 	if snapshotDirectory(cfg) == cfg.StateDirectory || cfg.RuntimeDirectory == cfg.StateDirectory {
 		return errors.New("migration requires separate config, persistent state and runtime directories")
@@ -310,7 +325,7 @@ func migrateWithContext(ctx context.Context, cfg Config, unregister func(Config)
 	if err := validateConfigOwnership(cfg); err != nil {
 		return err
 	}
-	for _, name := range []string{"service.yaml", "service.key"} {
+	for _, name := range []string{"service.yaml", "service.json", "service.key"} {
 		if _, err := os.Lstat(filepath.Join(snapshotDirectory(cfg), name)); err == nil {
 			return errors.New("migration destination already contains service configuration or keys; refusing to overwrite")
 		} else if !os.IsNotExist(err) {

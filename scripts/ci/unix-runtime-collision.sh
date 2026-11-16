@@ -51,7 +51,7 @@ import json,pathlib,re,subprocess,sys,time
 agent,repo,work,namespace=sys.argv[1:];root=pathlib.Path(work)
 subprocess.run([agent,'generate-example','--directory',str(root/'reuse sources')],check=True)
 config=root/'reuse sources'/'peer-a.yaml';text=config.read_text()
-for pattern,replacement in [(r'(?m)^  id: .*$', '  id: runtime-reuse-network'),(r'(?m)^  name: example$', '  name: runtime-reuse'),(r'(?m)^    - 10\.80\.0\.1/32$', '    - 10.245.245.1/32'),(r'(?m)^  listen_port: 51820$', '  listen_port: 51990'),(r'(?m)^      - 10\.80\.0\.2/32$', '      - 10.245.245.2/32'),(r'(?m)^    endpoint: .*$', '    endpoint: 127.0.0.1:51991'),(r'(?m)^    persistent_keepalive_seconds: 25$', '    persistent_keepalive_seconds: 0')]:text=re.sub(pattern,replacement,text,count=1)
+for pattern,replacement in [(r'(?m)^[ \t]+id: .*$', '  id: runtime-reuse-network'),(r'(?m)^  name: example$', '  name: runtime-reuse'),(r'(?m)^    - 10\.80\.0\.1/32$', '    - 10.245.245.1/32'),(r'(?m)^  listen_port: 51820$', '  listen_port: 51990'),(r'(?m)^      - 10\.80\.0\.2/32$', '      - 10.245.245.2/32'),(r'(?m)^    endpoint: .*$', '    endpoint: 127.0.0.1:51991'),(r'(?m)^    persistent_keepalive_seconds: 25$', '    persistent_keepalive_seconds: 0')]:text=re.sub(pattern,replacement,text,count=1)
 config.write_text(text)
 programs=[root/'installation X',root/'installation Y']
 for program in programs:subprocess.run(['bash',str(pathlib.Path(repo)/'scripts/ci/unix-install-native.sh'),agent,str(program)],check=True)

@@ -242,7 +242,7 @@ function Verify-HistoricalRuntimeReuse {
     # Windows derives the WireGuard adapter name from the network ID. Keep one
     # adapter identity within this reuse scenario, but isolate it across CI runs
     # so a stale OS adapter from an earlier attempt cannot block driver startup.
-    $reuseYaml = [regex]::Replace($reuseYaml,'(?m)^  id: .*$',('  id: runtime-reuse-' + $id))
+    $reuseYaml = [regex]::Replace($reuseYaml,'(?m)^[ \t]+id: .*$',('  id: runtime-reuse-' + $id))
     $reuseYaml = [regex]::Replace($reuseYaml,'(?m)^  name: example$','  name: runtime-reuse')
     $reuseYaml = [regex]::Replace($reuseYaml,'(?m)^    - 10\.80\.0\.1/32$','    - 10.245.245.1/32')
     $reuseYaml = [regex]::Replace($reuseYaml,'(?m)^  listen_port: 51820$','  listen_port: 51990')
