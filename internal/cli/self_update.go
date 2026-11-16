@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/peerimeter/peerimeter-agent/internal/diagnostic"
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/selfupdate"
@@ -252,7 +253,7 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 			for _, dir := range []string{p.StateDir, p.RuntimeDir} {
 				guard, err := local.TryAcquireExisting(dir)
 				if err != nil {
-					return errors.New("an agent process started while the release was being fetched; retry self-update")
+					return diagnostic.Wrap(fmt.Errorf("an agent process started while the release was being fetched; retry self-update: %w", err))
 				}
 				if guard != nil {
 					_ = guard.Close()
@@ -306,7 +307,7 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 			guard, guardErr := local.TryAcquireExisting(dir)
 			if guardErr != nil {
 				_ = lock.Close()
-				return restartAfterFailure(managedService, errors.New("an agent process started while the release was being fetched; retry self-update"))
+				return restartAfterFailure(managedService, diagnostic.Wrap(fmt.Errorf("an agent process started while the release was being fetched; retry self-update: %w", guardErr)))
 			}
 			if guard != nil {
 				_ = guard.Close()
