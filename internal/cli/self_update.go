@@ -253,7 +253,7 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 			for _, dir := range []string{p.StateDir, p.RuntimeDir} {
 				guard, err := local.TryAcquireExisting(dir)
 				if err != nil {
-					return diagnostic.Wrap(fmt.Errorf("an agent process started while the release was being fetched; retry self-update: %w", err))
+					return selfUpdateProfileLockError(err)
 				}
 				if guard != nil {
 					_ = guard.Close()
@@ -307,7 +307,7 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 			guard, guardErr := local.TryAcquireExisting(dir)
 			if guardErr != nil {
 				_ = lock.Close()
-				return restartAfterFailure(managedService, diagnostic.Wrap(fmt.Errorf("an agent process started while the release was being fetched; retry self-update: %w", guardErr)))
+				return restartAfterFailure(managedService, selfUpdateProfileLockError(guardErr))
 			}
 			if guard != nil {
 				_ = guard.Close()
@@ -376,6 +376,13 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	}
 	deps.progress.stop(selfUpdateProgressUpdateSucceeded)
 	return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "updated", PreviousVersion: currentVersion, UpdatedVersion: tag, Files: filesUpdated})
+}
+
+func selfUpdateProfileLockError(err error) error {
+	if errors.Is(err, local.ErrBusy) {
+		return diagnostic.Wrap(fmt.Errorf("an agent process started while the release was being fetched; retry self-update: %w", err))
+	}
+	return diagnostic.Wrap(fmt.Errorf("cannot verify whether an agent profile is stopped: %w", err))
 }
 
 func sameUpdateSnapshot(a, b installstate.Inventory) bool {
