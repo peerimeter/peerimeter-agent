@@ -132,11 +132,16 @@ func TestLoadStrictAndRelativePath(t *testing.T) {
 		"empty explicit interface": func(s string) string {
 			return strings.Replace(s, `"listen_port":51820`, `"listen_port":51820,"name":""`, 1)
 		},
-		"case spelling": func(s string) string { return strings.Replace(s, `"version":1`, `"VERSION":1`, 1) },
-		"trailing":      func(s string) string { return s + ` {}` },
-		"null":          func(s string) string { return strings.Replace(s, `"name":"Home Network"`, `"name":null`, 1) },
-		"type":          func(s string) string { return strings.Replace(s, `"version":1`, `"version":"do-not-echo"`, 1) },
-		"syntax":        func(s string) string { return `{"secret":"do-not-echo"` },
+		"case spelling":      func(s string) string { return strings.Replace(s, `"version":1`, `"VERSION":1`, 1) },
+		"trailing":           func(s string) string { return s + ` {}` },
+		"null":               func(s string) string { return strings.Replace(s, `"name":"Home Network"`, `"name":null`, 1) },
+		"type":               func(s string) string { return strings.Replace(s, `"version":1`, `"version":"do-not-echo"`, 1) },
+		"fractional version": func(s string) string { return strings.Replace(s, `"version":1`, `"version":1.9`, 1) },
+		"fractional port":    func(s string) string { return strings.Replace(s, `"listen_port":51820`, `"listen_port":51820.9`, 1) },
+		"fractional keepalive": func(s string) string {
+			return strings.Replace(s, `"persistent_keepalive_seconds":25`, `"persistent_keepalive_seconds":25.9`, 1)
+		},
+		"syntax": func(s string) string { return `{"secret":"do-not-echo"` },
 	} {
 		t.Run(name, func(t *testing.T) {
 			write(mutate(string(data)))
@@ -179,7 +184,7 @@ func TestLoadPreservesOpenError(t *testing.T) {
 	}
 }
 
-func TestLoadPreservesDecodeError(t *testing.T) {
+func TestLoadRejectsAndRedactsInvalidInteger(t *testing.T) {
 	data, err := json.Marshal(fixture())
 	if err != nil {
 		t.Fatal(err)
@@ -190,7 +195,7 @@ func TestLoadPreservesDecodeError(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = Load(path)
-	if !strings.Contains(err.Error(), "decode static YAML config") || strings.Contains(err.Error(), "SECRET-VALUE") {
+	if !strings.Contains(err.Error(), "static config contains an invalid integer field") || strings.Contains(err.Error(), "SECRET-VALUE") {
 		t.Fatalf("unsafe or missing decode context: %v", err)
 	}
 }
