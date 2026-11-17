@@ -23,3 +23,17 @@ func TestEligiblePeerEntriesExcludePeersWithoutUsableEndpoint(t *testing.T) {
 		t.Fatalf("routes = %#v, want only configured peer route", routes)
 	}
 }
+
+func TestDefaultNodeIDDropsLocalDomainSuffix(t *testing.T) {
+	id, err := defaultNodeID("zero-m5-max.localdomain")
+	if err != nil || id != "zero-m5-max" {
+		t.Fatalf("defaultNodeID() = %q, %v; want zero-m5-max", id, err)
+	}
+	id, err = defaultNodeID("workstation")
+	if err != nil || id != "workstation" {
+		t.Fatalf("defaultNodeID() = %q, %v; want workstation", id, err)
+	}
+	if _, err := defaultNodeID(".localdomain"); err == nil {
+		t.Fatal("empty hostname after suffix removal was accepted")
+	}
+}

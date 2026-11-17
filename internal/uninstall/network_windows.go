@@ -174,6 +174,21 @@ function Remove-Leaf([string]$Path) {
         }
     }
 }
+function Purge-Directory([string]$Path,[bool]$Top) {
+    if (-not (Exists $Path)) { return }
+    No-Reparse $Path
+    foreach ($item in Get-ChildItem -LiteralPath $Path -Force) {
+        if ($Top -and $item.Name -in @('.peerimeter-agent.profile','.peerimeter-agent.config','.peerimeter-agent.runtime','agent.lock')) { continue }
+        No-Reparse $item.FullName
+        if ($item.PSIsContainer) {
+            Purge-Directory $item.FullName $false
+            Remove-Item -LiteralPath $item.FullName -Force
+        } else {
+            Remove-Item -LiteralPath $item.FullName -Force
+        }
+        $removed.Add($item.FullName)
+    }
+}
 function File-SHA256([string]$Path) {
     $algorithm = [Security.Cryptography.SHA256]::Create()
     $stream = [IO.File]::OpenRead($Path)
@@ -221,6 +236,7 @@ try {
         if ($f.marker -or [IO.Path]::GetFileName($f.path) -eq 'agent.lock') { continue }
         Remove-Leaf $f.path
     }
+    foreach ($dir in $p.purge_directories) { Purge-Directory $dir $true }
     # Delete the coordination names while their exclusive ranges remain held.
     # FILE_SHARE_DELETE makes deletion pending, so new openers cannot replace a
     # live manager's lock between guard release and unlink.

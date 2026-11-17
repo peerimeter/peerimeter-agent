@@ -40,12 +40,28 @@ func prepareDirectoryWithSudoOwner(dir string, allowSudoOwner bool) error {
 		return fmt.Errorf("cannot create protected agent state directory %s: %w", dir, err)
 	}
 	st, err := os.Lstat(dir)
-	if err != nil || !st.IsDir() || st.Mode()&os.ModeSymlink != 0 || st.Mode().Perm()&0066 != 0 {
+	if err != nil || !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("state directory %s must be owner-controlled (chmod 700 or 711), without group/other read or write access, and not a symbolic link", dir)
 	}
+	fd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return fmt.Errorf("cannot open protected agent state directory %s: %w", dir, err)
+	}
+	defer unix.Close(fd)
 	var stat unix.Stat_t
-	if unix.Stat(dir, &stat) != nil || (stat.Uid != uint32(os.Geteuid()) && !(allowSudoOwner && trustedDirectoryOwner(stat.Uid))) {
+	if unix.Fstat(fd, &stat) != nil || stat.Mode&unix.S_IFMT != unix.S_IFDIR || (stat.Uid != uint32(os.Geteuid()) && !(allowSudoOwner && trustedDirectoryOwner(stat.Uid))) {
 		return fmt.Errorf("state directory %s must belong to the current effective user", dir)
+	}
+	// Existing XDG directories are often created as 0755. Once ownership and
+	// the non-symlink path are verified, remove group/other access instead of
+	// making the user repair the directory by hand.
+	if stat.Mode&0066 != 0 {
+		if !allowSudoOwner {
+			return fmt.Errorf("state directory %s must be owner-controlled (chmod 700 or 711), without group/other read or write access, and not a symbolic link", dir)
+		}
+		if err := unix.Fchmod(fd, uint32(stat.Mode&^uint16(0066))); err != nil {
+			return fmt.Errorf("cannot protect state directory %s: %w", dir, err)
+		}
 	}
 	return nil
 }
