@@ -271,7 +271,10 @@ repeat the same token and any original `--node-id` and `--listen-port` values.
 Without `--node-id`, the node ID defaults to the machine hostname; without
 `--listen-port`, the port defaults to 51820. Changing either on a later Join
 can register a different node or update the peer port. The shared token remains
-stored after the command exits. Removing the protected
+stored after the command exits. If a `join --run` tunnel is active, stop it
+before changing `--listen-port`; the running process keeps its original listen
+port and refresh settings. Then run Join with the new port and start the tunnel
+again. Removing the protected
 `state-dir/managed/<network-id>.token` file only deletes the local credential;
 the service-side node record remains. There is not yet a `leave` command or
 server-side node revocation API.
