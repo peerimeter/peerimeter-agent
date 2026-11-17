@@ -13,6 +13,7 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
 	"github.com/peerimeter/peerimeter-agent/internal/selfupdate"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -159,11 +160,75 @@ func TestUninstallListsFilesAndRequiresConfirmation(t *testing.T) {
 	if !strings.Contains(prompt.String(), filepath.Join(p.ConfigDir, "service.key")) {
 		t.Fatal("confirmation prompt omitted the installed private key")
 	}
-	if !strings.Contains(prompt.String(), p.ConfigDir) {
+	canonicalConfig, err := installstate.Canonical(p.ConfigDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundDirectory := false
+	for _, line := range strings.Split(prompt.String(), "\n") {
+		if line == "  "+canonicalConfig {
+			foundDirectory = true
+		}
+	}
+	if !foundDirectory {
 		t.Fatal("confirmation prompt omitted a directory removal candidate")
 	}
 	if _, err := os.Stat(filepath.Join(p.ConfigDir, "service.key")); err != nil {
 		t.Fatalf("cancelled uninstall removed a file: %v", err)
+	}
+}
+
+type callbackReader struct {
+	callback func()
+	used     bool
+}
+
+func (r *callbackReader) Read(p []byte) (int, error) {
+	if r.used {
+		return 0, io.EOF
+	}
+	r.used = true
+	r.callback()
+	return copy(p, "y\n"), nil
+}
+
+type failedWriter struct{}
+
+func (failedWriter) Write([]byte) (int, error) { return 0, errors.New("write failed") }
+
+func TestConfirmationWriteFailurePreservesInstallation(t *testing.T) {
+	dir, p := prepareUninstall(t)
+	err := Execute(context.Background(), Options{InstallDir: dir, ConfirmIn: strings.NewReader("y\n"), ConfirmOut: failedWriter{}}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "cannot display uninstall preview") {
+		t.Fatalf("confirmation output failure returned %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(p.ConfigDir, "service.key")); err != nil {
+		t.Fatalf("preview output failure removed an installed file: %v", err)
+	}
+}
+
+func TestUninstallRejectsProfileChangesDuringConfirmation(t *testing.T) {
+	dir, _ := prepareUninstall(t)
+	newState := filepath.Join(t.TempDir(), "new-state")
+	newRuntime := filepath.Join(t.TempDir(), "new-runtime")
+	for _, path := range []string{newState, newRuntime} {
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var registrationErr error
+	reader := &callbackReader{callback: func() {
+		registrationErr = installstate.RegisterProfile(dir, installstate.Profile{StateDir: newState, RuntimeDir: newRuntime})
+	}}
+	err := Execute(context.Background(), Options{InstallDir: dir, ConfirmIn: reader, ConfirmOut: &bytes.Buffer{}}, &bytes.Buffer{})
+	if registrationErr != nil {
+		t.Fatalf("register concurrent profile: %v", registrationErr)
+	}
+	if err == nil || !strings.Contains(err.Error(), "installation profiles changed") {
+		t.Fatalf("uninstall accepted profiles different from the confirmed plan: %v", err)
+	}
+	if _, err := os.Stat(newState); err != nil {
+		t.Fatalf("uninstall removed the newly registered profile: %v", err)
 	}
 }
 
