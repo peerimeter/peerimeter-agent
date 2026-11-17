@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,12 +9,11 @@ import (
 
 	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/discovery"
-	"github.com/peerimeter/peerimeter-agent/internal/secret"
 	"github.com/peerimeter/peerimeter-agent/internal/serviceapi"
 	"github.com/peerimeter/peerimeter-agent/internal/stunprobe"
 )
 
-func refreshManagedRegistration(ctx context.Context, client *serviceapi.Client, networkID, nodeID string, underlay discovery.Underlay, desired config.Config) error {
+func refreshManagedRegistration(ctx context.Context, client *serviceapi.Client, networkID, nodeID, publicKey string, underlay discovery.Underlay, desired config.Config) error {
 	registeredNodes, err := client.PullNetworkPeers(ctx, networkID)
 	if err != nil {
 		return fmt.Errorf("cannot read current node registration: %w", err)
@@ -29,15 +27,6 @@ func refreshManagedRegistration(ctx context.Context, client *serviceapi.Client, 
 		return errors.New("service returned an invalid current node registration")
 	}
 
-	private, err := secret.Load(desired.Interface.PrivateKeyFile)
-	if err != nil {
-		return fmt.Errorf("cannot load joined network private key: %w", err)
-	}
-	public, err := secret.Public(private)
-	if err != nil {
-		return errors.New("cannot derive joined network public key")
-	}
-	publicKey := base64.StdEncoding.EncodeToString(public[:])
 	if previous.PublicKey != publicKey {
 		return errors.New("joined network key does not match the registered node; run join again")
 	}

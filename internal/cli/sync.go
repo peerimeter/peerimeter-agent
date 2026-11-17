@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/discovery"
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/paths"
+	"github.com/peerimeter/peerimeter-agent/internal/platform"
 	"github.com/spf13/cobra"
 )
 
@@ -97,11 +99,19 @@ func newSyncCommand(app *application) *cobra.Command {
 			if current.Network.ID != networkID {
 				return errors.New("joined configuration network ID does not match --network-id")
 			}
+			var statusData bytes.Buffer
+			if err := local.Request(cmd.Context(), layout.RuntimeDir, "status", &statusData); err != nil {
+				return err
+			}
+			var running platform.Snapshot
+			if err := json.Unmarshal(statusData.Bytes(), &running); err != nil || running.NetworkID != networkID || running.PublicKey == "" {
+				return errors.New("running agent returned an invalid network identity")
+			}
 			underlay, err := discovery.PrimaryUnderlay(cmd.Context())
 			if err != nil {
 				return err
 			}
-			if err := refreshManagedRegistration(cmd.Context(), client, networkID, nodeID, underlay, current); err != nil {
+			if err := refreshManagedRegistration(cmd.Context(), client, networkID, nodeID, running.PublicKey, underlay, current); err != nil {
 				return err
 			}
 			updated, err := refreshManagedPeers(cmd.Context(), client, networkID, nodeID, underlay.Addresses, current)
