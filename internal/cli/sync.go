@@ -154,7 +154,11 @@ func syncConfigPath(override, runtimePath string) (string, error) {
 	if err != nil {
 		return "", errors.New("cannot resolve --config path")
 	}
-	if filepath.Clean(override) != runtimePath {
+	pathsMatch := filepath.Clean(override) == runtimePath
+	if runtime.GOOS == "windows" {
+		pathsMatch = strings.EqualFold(filepath.Clean(override), runtimePath)
+	}
+	if !pathsMatch {
 		return "", errors.New("--config must identify the configuration file used by the running agent")
 	}
 	return runtimePath, nil
