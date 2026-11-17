@@ -188,15 +188,17 @@ Recovery is operator-triggered rather than an automatic boot action.
 
 ### Publishing a release
 
-Start **Actions → Peerimeter CI and Release → Run workflow** on `main`. The workflow
-uses the lockfile-verified `ietf-tools/semver-action` to read Conventional
-Commits since the latest stable tag: `feat` bumps minor, patch-level changes
-bump patch, and breaking changes bump major. If commits do not call for a version bump, package
-and release jobs are skipped. Native installer checks run on Linux, macOS and
-Windows; GoReleaser cross-builds both `x86_64` and `aarch64` assets for all
-three platforms, creates the Windows ZIP and `SHA256SUMS`, and publishes the
-matching version tag and release. It does not reject or rewrite commits during
-normal CI.
+Push release commits to `main` to start **Peerimeter CI and Release**. The
+workflow uses the lockfile-verified `ietf-tools/semver-action` to read
+Conventional Commits since the latest stable tag: `feat` bumps minor,
+patch-level changes bump patch, and breaking changes bump major. If commits do
+not call for a version bump, the release job is skipped. Manually running the
+workflow runs CI and creates package artifacts using the selected input version,
+but does not publish a GitHub release. Native installer checks run on Linux,
+macOS and Windows; GoReleaser cross-builds both `x86_64` and `aarch64` assets
+for all three platforms, creates the Windows ZIP and `SHA256SUMS`, and publishes
+the matching version tag and release. It does not reject or rewrite commits
+during normal CI.
 
 ## Offline configuration
 
