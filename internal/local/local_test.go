@@ -68,10 +68,10 @@ func TestLocalChannel(t *testing.T) {
 	var appliedConfig string
 	closeServer, err := Serve(ctx, dir, Operations{InstanceID: "instance", NetworkID: "test", ConfigPath: filepath.Join(dir, "service.yaml"), Config: func() ([]byte, error) {
 		return []byte(`{"network":{"id":"test"}}`), nil
-	}, ReplaceConfig: func(data []byte) (func() error, error) {
-		previous := appliedConfig
+	}, ApplyConfig: func(_ context.Context, data []byte) error {
 		appliedConfig = string(data)
-		return func() error { appliedConfig = previous; return nil }, nil
+		reloaded.Store(true)
+		return nil
 	}, Snapshot: func(context.Context) (platform.Snapshot, error) {
 		return platform.Snapshot{NetworkID: "test", State: "running", Peers: []platform.PeerState{}}, nil
 	}, Reload: func(context.Context) error { reloaded.Store(true); return nil }, Stop: func() { stopped.Store(true) }})
