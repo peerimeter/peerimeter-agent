@@ -178,7 +178,7 @@ function Purge-Directory([string]$Path,[bool]$Top) {
     if (-not (Exists $Path)) { return }
     No-Reparse $Path
     foreach ($item in Get-ChildItem -LiteralPath $Path -Force) {
-        if ($Top -and $item.Name -in @('.peerimeter-agent.profile','.peerimeter-agent.config','.peerimeter-agent.runtime','agent.lock')) { continue }
+        if ($Top -and $item.Name -in @('.profile','.config','.runtime','.peerimeter-agent.profile','.peerimeter-agent.config','.peerimeter-agent.runtime')) { continue }
         No-Reparse $item.FullName
         if ($item.PSIsContainer) {
             Purge-Directory $item.FullName $false
@@ -236,11 +236,11 @@ try {
         if ($f.marker -or [IO.Path]::GetFileName($f.path) -eq 'agent.lock') { continue }
         Remove-Leaf $f.path
     }
-    foreach ($dir in $p.purge_directories) { Purge-Directory $dir $true }
     # Delete the coordination names while their exclusive ranges remain held.
     # FILE_SHARE_DELETE makes deletion pending, so new openers cannot replace a
     # live manager's lock between guard release and unlink.
     foreach ($f in $p.files) { if ([IO.Path]::GetFileName($f.path) -eq 'agent.lock') { Remove-Leaf $f.path } }
+    foreach ($dir in $p.purge_directories) { Purge-Directory $dir $true }
     foreach ($f in $p.files) { if ($f.marker) { Remove-Leaf $f.path } }
     Remove-Leaf $p.lock
     Remove-Leaf $p.legacy_lock

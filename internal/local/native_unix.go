@@ -60,7 +60,7 @@ func prepareDirectoryWithSudoOwner(dir string, allowSudoOwner bool) error {
 		if !allowSudoOwner {
 			return fmt.Errorf("state directory %s must be owner-controlled (chmod 700 or 711), without group/other read or write access, and not a symbolic link", dir)
 		}
-		if err := unix.Fchmod(fd, mode&^uint32(0066)); err != nil {
+		if err := unix.Fchmod(fd, uint32(stat.Mode&^0066)); err != nil {
 			return fmt.Errorf("cannot protect state directory %s: %w", dir, err)
 		}
 	}
