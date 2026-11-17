@@ -11,28 +11,6 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/secret"
 )
 
-func TestValidateConfigSelection(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		opts serviceConfigOptions
-		ok   bool
-	}{
-		{name: "network", opts: serviceConfigOptions{kind: "network", networkID: "mesh", file: "network.yaml"}, ok: true},
-		{name: "node", opts: serviceConfigOptions{kind: "node", networkID: "mesh", nodeID: "node-1", file: "node.yaml"}, ok: true},
-		{name: "unknown kind", opts: serviceConfigOptions{kind: "other", networkID: "mesh", file: "config.json"}},
-		{name: "missing network", opts: serviceConfigOptions{kind: "network", file: "config.json"}},
-		{name: "node requires node ID", opts: serviceConfigOptions{kind: "node", networkID: "mesh", file: "config.json"}},
-		{name: "network rejects node ID", opts: serviceConfigOptions{kind: "network", networkID: "mesh", nodeID: "node-1", file: "config.json"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			err := validateConfigSelection(tc.opts)
-			if (err == nil) != tc.ok {
-				t.Fatalf("validateConfigSelection() error = %v", err)
-			}
-		})
-	}
-}
-
 func TestManagedServiceMigrationIsSavedOnlyWhenRequested(t *testing.T) {
 	stateDir := t.TempDir()
 	managedDir := filepath.Join(stateDir, "managed")
@@ -109,8 +87,8 @@ func TestWriteConfigFileUsesPrivateMode(t *testing.T) {
 	}
 }
 
-func TestPullTempFileIsProtectedBeforeWrite(t *testing.T) {
-	f, path, err := createPullTempFile(t.TempDir())
+func TestPrivateConfigTempFileIsProtectedBeforeWrite(t *testing.T) {
+	f, path, err := createPrivateConfigTempFile(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

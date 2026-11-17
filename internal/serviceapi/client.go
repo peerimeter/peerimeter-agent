@@ -189,13 +189,6 @@ func newClient(bundle JoinBundle, client *http.Client) *Client {
 	return &Client{baseURL: strings.TrimRight(bundle.APIURL, "/"), token: bundle.EnrollmentToken, http: client}
 }
 
-func (c *Client) PullNetwork(ctx context.Context, networkID string) ([]byte, error) {
-	if !validID(networkID) {
-		return nil, errors.New("network ID is invalid")
-	}
-	return c.request(ctx, http.MethodGet, "/api/v1/networks/"+url.PathEscape(networkID)+"/config", nil)
-}
-
 func (c *Client) GetNetwork(ctx context.Context, networkID string) (NetworkResource, error) {
 	if !validID(networkID) {
 		return NetworkResource{}, errors.New("network ID is invalid")
@@ -224,21 +217,6 @@ func privateIPv4Prefix(prefix netip.Prefix) bool {
 		}
 	}
 	return false
-}
-
-func (c *Client) PushNetwork(ctx context.Context, networkID string, config []byte) error {
-	if !validID(networkID) {
-		return errors.New("network ID is invalid")
-	}
-	_, err := c.request(ctx, http.MethodPut, "/api/v1/networks/"+url.PathEscape(networkID)+"/config", config)
-	return err
-}
-
-func (c *Client) PullNode(ctx context.Context, networkID, nodeID string) ([]byte, error) {
-	if !validID(networkID) || !validID(nodeID) {
-		return nil, errors.New("network or node ID is invalid")
-	}
-	return c.request(ctx, http.MethodGet, "/api/v1/networks/"+url.PathEscape(networkID)+"/nodes/"+url.PathEscape(nodeID)+"/config", nil)
 }
 
 // PullPeers returns the other node documents registered for a network.
@@ -310,14 +288,6 @@ func allZero(value []byte) bool {
 		}
 	}
 	return true
-}
-
-func (c *Client) PushNode(ctx context.Context, networkID, nodeID string, config []byte) error {
-	if !validID(networkID) || !validID(nodeID) {
-		return errors.New("network or node ID is invalid")
-	}
-	_, err := c.request(ctx, http.MethodPut, "/api/v1/networks/"+url.PathEscape(networkID)+"/nodes/"+url.PathEscape(nodeID)+"/config", config)
-	return err
 }
 
 func (c *Client) request(ctx context.Context, method, path string, body []byte) ([]byte, error) {

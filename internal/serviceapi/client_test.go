@@ -127,46 +127,22 @@ func TestDecodeJoinTokenRejectsInvalidBundles(t *testing.T) {
 	}
 }
 
-func TestConfigRoundTripAndAuth(t *testing.T) {
+func TestPullPeersUsesEnrollmentAuthorization(t *testing.T) {
 	var calls int
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		if got := r.Header.Get("Authorization"); got != "Bearer test-secret" {
 			t.Errorf("Authorization = %q", got)
 		}
-		if r.URL.Path == "/api/v1/networks/net-a/config" && r.Method == http.MethodPut {
-			data, _ := io.ReadAll(r.Body)
-			if string(data) != `{"version":1,"name":"mesh"}` {
-				t.Errorf("PUT body = %s", data)
-			}
-			w.WriteHeader(http.StatusNoContent)
-			return
+		if r.URL.Path != "/api/v1/networks/net-a/nodes/node-a/peers" || r.Method != http.MethodGet {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
 		}
-		if r.URL.Path == "/api/v1/networks/net-a/nodes/node-a/config" && r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"version":1,"public_key":"abc"}`)
-			return
-		}
-		if r.URL.Path == "/api/v1/networks/net-a/nodes/node-a/peers" && r.Method == http.MethodGet {
-			_, _ = io.WriteString(w, `{"version":1,"peers":{"node-b":{"version":1,"public_key":"def"}}}`)
-			return
-		}
-		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-		http.NotFound(w, r)
+		_, _ = io.WriteString(w, `{"version":1,"peers":{"node-b":{"version":1,"public_key":"def"}}}`)
 	}))
 	defer server.Close()
 	client := newClient(JoinBundle{APIURL: server.URL, EnrollmentToken: "test-secret"}, server.Client())
-	if err := client.PushNetwork(context.Background(), "net-a", []byte(`{"version":1,"name":"mesh"}`)); err != nil {
-		t.Fatal(err)
-	}
-	got, err := client.PullNode(context.Background(), "net-a", "node-a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != `{"version":1,"public_key":"abc"}` || calls != 2 {
-		t.Fatalf("response=%s calls=%d", got, calls)
-	}
 	peers, err := client.PullPeers(context.Background(), "net-a", "node-a")
-	if err != nil || peers.Peers["node-b"] == nil || calls != 3 {
+	if err != nil || peers.Peers["node-b"] == nil || calls != 1 {
 		t.Fatalf("peer response=%+v calls=%d err=%v", peers, calls, err)
 	}
 }
@@ -217,26 +193,6 @@ func TestRegisterNodeReturnsAllocatedTunnelAddress(t *testing.T) {
 	}
 }
 
-func TestClientRejectsInvalidDataAndIDsWithoutRequests(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		t.Fatal("unexpected network request")
-	}))
-	defer server.Close()
-	client := newClient(JoinBundle{APIURL: server.URL, EnrollmentToken: "key"}, server.Client())
-	if err := client.PushNetwork(context.Background(), "../bad", []byte(`{"version":1}`)); err == nil {
-		t.Fatal("accepted invalid network ID")
-	}
-	if err := client.PushNode(context.Background(), "net-a", "node-a", []byte(`[]`)); err == nil {
-		t.Fatal("accepted non-object config")
-	}
-	if err := client.PushNode(context.Background(), "net-a", "node-a", []byte(`{"version":2}`)); err == nil {
-		t.Fatal("accepted unsupported config version")
-	}
-	if _, err := client.PullNetwork(context.Background(), strings.Repeat("n", 129)); err == nil {
-		t.Fatal("accepted overlong network ID")
-	}
-}
-
 func TestPullPeersRejectsMalformedPeerDocuments(t *testing.T) {
 	for _, body := range []string{
 		`{"version":1,"peers":null}`,
@@ -262,7 +218,7 @@ func TestResponseAndRequestErrorsDoNotLeakToken(t *testing.T) {
 	}))
 	defer server.Close()
 	client := newClient(JoinBundle{APIURL: server.URL, EnrollmentToken: secret}, server.Client())
-	_, err := client.PullNetwork(context.Background(), "net-a")
+	_, err := client.PullPeers(context.Background(), "net-a", "node-a")
 	if err == nil || strings.Contains(err.Error(), secret) {
 		t.Fatalf("unsafe API error: %v", err)
 	}
@@ -281,7 +237,7 @@ func TestAPIClientDoesNotFollowRedirectsWithBearerToken(t *testing.T) {
 	}))
 	defer server.Close()
 	client := newClient(JoinBundle{APIURL: server.URL, EnrollmentToken: "secret-key"}, newHTTPClient())
-	if _, err := client.PullNetwork(context.Background(), "net-a"); err == nil {
+	if _, err := client.PullPeers(context.Background(), "net-a", "node-a"); err == nil {
 		t.Fatal("accepted redirect as a config response")
 	}
 	if redirectedCalls != 0 {

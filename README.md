@@ -219,29 +219,7 @@ allowlisted owner/DACL; only the current user, SYSTEM and Administrators may
 have access. Symlinks/reparse points and broadly readable keys are rejected.
 Parent directories must be trusted.
 
-## Service configuration API
-
-The optional `config pull` and `config push` commands exchange version 1 network
-or node YAML with `peerimeter-service`. After `join`, they use the saved
-network-scoped enrollment token and service URL, and default to the joined
-network. They use separate Service API YAML files under
-`<config-dir>/service-api/<network-id>/` (`network.yaml` for network configs,
-`nodes/<node-id>.yaml` for node configs), so pull and push do not overwrite or
-upload the WireGuard configuration created by `join`. When only one network is joined,
-`--network-id` is optional; it is required when multiple networks are joined.
-For node YAML, the joined node ID is used by default. `--file` and `--node-id`
-can override the local file and node selection. Older joins that did not save
-service metadata need `--api-url` once. The service derives the enrollment
-token from its static API key, so rotating that key invalidates existing tokens.
-When using `/api/v1/join-bundle?network_id=mesh-a`, pass its `token` field
-without the surrounding response JSON to `join` on stdin. The hostname is the
-default node ID.
-
-```sh
-peerimeter-agent config pull
-peerimeter-agent config pull --kind node
-peerimeter-agent config push --network-id mesh-a
-```
+## Managed enrollment with join
 
 To register with a network created in the service API and save its managed
 configuration, run:
