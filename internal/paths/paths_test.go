@@ -11,24 +11,28 @@ func TestDefaultLayouts(t *testing.T) {
 	for target, want := range map[string]Layout{"linux": {"/etc/peerimeter", "/var/lib/peerimeter-agent", "/run/peerimeter-agent"}, "darwin": {"/etc/peerimeter", "/Library/Application Support/Peerimeter", "/var/run/peerimeter-agent"}} {
 		if target == runtime.GOOS && os.Geteuid() != 0 {
 			home, err := os.UserHomeDir()
-			if err != nil {
-				t.Fatal(err)
-			}
 			config := os.Getenv("XDG_CONFIG_HOME")
-			if !filepath.IsAbs(config) {
+			if !filepath.IsAbs(config) && err == nil && home != "" {
 				config = filepath.Join(home, ".config")
 			}
 			state := os.Getenv("XDG_STATE_HOME")
-			if !filepath.IsAbs(state) {
+			if !filepath.IsAbs(state) && err == nil && home != "" {
 				state = filepath.Join(home, ".local", "state")
 			}
-			runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
-			if filepath.IsAbs(runtimeDir) {
-				runtimeDir = filepath.Join(runtimeDir, "peerimeter-agent")
-			} else {
-				runtimeDir = filepath.Join(state, "peerimeter-agent", "run")
+			if filepath.IsAbs(config) && filepath.IsAbs(state) {
+				runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
+				if filepath.IsAbs(runtimeDir) {
+					runtimeDir = filepath.Join(runtimeDir, "peerimeter-agent")
+				} else {
+					runtimeDir = filepath.Join(state, "peerimeter-agent", "run")
+				}
+				configDir := filepath.Join(config, "peerimeter-agent")
+				stateDir := filepath.Join(state, "peerimeter-agent")
+				if configDir == stateDir {
+					configDir = filepath.Join(configDir, "config")
+				}
+				want = Layout{configDir, stateDir, runtimeDir}
 			}
-			want = Layout{filepath.Join(config, "peerimeter-agent"), filepath.Join(state, "peerimeter-agent"), runtimeDir}
 		}
 		got, err := ResolveForOS(Options{}, target)
 		if err != nil || got != want {
