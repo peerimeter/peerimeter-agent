@@ -15,18 +15,20 @@ func TestDefaultLayouts(t *testing.T) {
 				t.Fatal(err)
 			}
 			config := os.Getenv("XDG_CONFIG_HOME")
-			if config == "" {
+			if !filepath.IsAbs(config) {
 				config = filepath.Join(home, ".config")
 			}
 			state := os.Getenv("XDG_STATE_HOME")
-			if state == "" {
+			if !filepath.IsAbs(state) {
 				state = filepath.Join(home, ".local", "state")
 			}
 			runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
-			if runtimeDir == "" {
+			if filepath.IsAbs(runtimeDir) {
+				runtimeDir = filepath.Join(runtimeDir, "peerimeter-agent")
+			} else {
 				runtimeDir = filepath.Join(state, "peerimeter-agent", "run")
 			}
-			want = Layout{filepath.Join(config, "peerimeter-agent"), filepath.Join(state, "peerimeter-agent"), filepath.Join(runtimeDir, "peerimeter-agent")}
+			want = Layout{filepath.Join(config, "peerimeter-agent"), filepath.Join(state, "peerimeter-agent"), runtimeDir}
 		}
 		got, err := ResolveForOS(Options{}, target)
 		if err != nil || got != want {
