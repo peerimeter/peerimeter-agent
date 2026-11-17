@@ -530,7 +530,7 @@ func save(inv Inventory) error {
 	if err := WritePrivateWithPolicy(filepath.Join(inv.DataDir, Filename), append(data, '\n'), inv.AllowInsecureInstallDir); err != nil {
 		return err
 	}
-	// TODO(next major): remove cleanup of the previous installation inventory names.
+	// TODO(next major): remove compatibility writes for the previous inventory names.
 	for _, name := range []string{LegacyYAMLFilename, LegacyJSONFilename} {
 		legacyPath := filepath.Join(inv.DataDir, name)
 		legacyData, err := readPrivate(legacyPath)
@@ -544,7 +544,15 @@ func save(inv Inventory) error {
 		if yaml.Unmarshal(legacyData, &legacy) != nil || legacy.ID != inv.ID || legacy.InstallDir != inv.InstallDir {
 			return errors.New("legacy installation inventory identity does not match")
 		}
-		if err := os.Remove(legacyPath); err != nil && !os.IsNotExist(err) {
+		compatData := data
+		if name == LegacyJSONFilename {
+			compatData, err = json.Marshal(inv)
+			if err != nil {
+				return err
+			}
+			compatData = append(compatData, '\n')
+		}
+		if err := WritePrivateWithPolicy(legacyPath, compatData, inv.AllowInsecureInstallDir); err != nil {
 			return err
 		}
 	}
