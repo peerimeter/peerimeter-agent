@@ -224,7 +224,7 @@ func TestUninstallRejectsProfileChangesDuringConfirmation(t *testing.T) {
 	if registrationErr != nil {
 		t.Fatalf("register concurrent profile: %v", registrationErr)
 	}
-	if err == nil || !strings.Contains(err.Error(), "installation profiles changed") {
+	if err == nil || !strings.Contains(err.Error(), "changed before removal") {
 		t.Fatalf("uninstall accepted profiles different from the confirmed plan: %v", err)
 	}
 	if _, err := os.Stat(newState); err != nil {
