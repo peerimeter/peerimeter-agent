@@ -4,6 +4,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
+	"github.com/peerimeter/peerimeter-agent/internal/secret"
 	"gopkg.in/yaml.v3"
 )
 
@@ -47,6 +49,11 @@ func RunManaged(ctx context.Context, backend platform.Backend, desired platform.
 func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desired platform.Desired, dir string, reload func(context.Context) (platform.Desired, error), operator, instanceID string, beforeServe, onClose func() error, interval time.Duration, configPath string, replaceConfig func([]byte) (func() error, error)) (result error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	public, err := secret.Public(desired.PrivateKey)
+	if err != nil {
+		return errors.New("cannot derive running agent public key")
+	}
+	publicKey := base64.StdEncoding.EncodeToString(public[:])
 	session, err := backend.Start(ctx, desired)
 	if err != nil {
 		return err
@@ -118,7 +125,7 @@ func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desire
 		}
 		return err
 	}
-	closeControl, err := local.Serve(ctx, dir, local.Operations{Operator: operator, InstanceID: instanceID, NetworkID: desired.Config.Network.ID, ConfigPath: configPath, BeforeListen: beforeServe, OnClose: onClose,
+	closeControl, err := local.Serve(ctx, dir, local.Operations{Operator: operator, InstanceID: instanceID, NetworkID: desired.Config.Network.ID, ConfigPath: configPath, PublicKey: publicKey, BeforeListen: beforeServe, OnClose: onClose,
 		Config: func() ([]byte, error) {
 			mu.Lock()
 			defer mu.Unlock()
