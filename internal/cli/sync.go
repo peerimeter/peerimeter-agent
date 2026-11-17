@@ -60,7 +60,7 @@ func newSyncCommand(app *application) *cobra.Command {
 
 			metadata, metadataErr := readManagedNetworkMetadata(layout.StateDir, networkID)
 			// TODO(peerimeter): Remove the local-only fallback when legacy joins no longer need compatibility.
-			if metadataErr != nil && apiURL == "" {
+			if shouldFallbackToLocalSync(metadata, metadataErr, nodeID, apiURL) {
 				return local.Request(cmd.Context(), layout.RuntimeDir, "reload", app.out)
 			}
 			if nodeID == "" {
@@ -70,7 +70,7 @@ func newSyncCommand(app *application) *cobra.Command {
 				return errors.New("--node-id is required because this network has no saved node ID")
 			}
 			options := serviceConfigOptions{networkID: networkID, nodeID: nodeID, apiURL: apiURL, allowInsecureHTTP: allowInsecureHTTP}
-			client, err := managedServiceClient(options, layout)
+			client, saveMigration, err := managedServiceClient(options, layout)
 			if err != nil {
 				return err
 			}
@@ -88,6 +88,9 @@ func newSyncCommand(app *application) *cobra.Command {
 			}
 			updated, err := refreshManagedPeers(cmd.Context(), client, networkID, nodeID, underlay.Addresses, current)
 			if err != nil {
+				return err
+			}
+			if err := saveMigration(); err != nil {
 				return err
 			}
 			if err := config.Validate(updated, runtime.GOOS); err != nil {
@@ -113,6 +116,10 @@ func newSyncCommand(app *application) *cobra.Command {
 	cmd.Flags().BoolVar(&allowInsecureHTTP, "allow-insecure-http", false, "Allow a non-local HTTP API URL (sends the enrollment token without TLS)")
 	directoryFlags(cmd, &dirs)
 	return cmd
+}
+
+func shouldFallbackToLocalSync(metadata managedNetworkMetadata, metadataErr error, nodeID, apiURL string) bool {
+	return (metadataErr != nil || metadata.NodeID == "") && nodeID == "" && apiURL == ""
 }
 
 func syncConfigPath(override, configDir, networkID string) string {
