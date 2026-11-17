@@ -32,18 +32,22 @@ type removalFile struct {
 	Marker bool   `json:"marker,omitempty"`
 }
 type removalPlan struct {
-	Version     int                    `json:"version"`
-	InstallID   string                 `json:"installation_id"`
-	InstallDir  string                 `json:"install_dir"`
-	ParentPID   int                    `json:"parent_pid"`
-	Inventory   string                 `json:"inventory"`
-	Lock        string                 `json:"lock"`
-	UpdateLock  string                 `json:"update_lock,omitempty"`
-	DataLock    string                 `json:"data_lock,omitempty"`
-	Files       []removalFile          `json:"files"`
-	Directories []string               `json:"directories"`
-	Profiles    []installstate.Profile `json:"profiles"`
-	ResultFile  string                 `json:"result_file"`
+	Version           int                    `json:"version"`
+	InstallID         string                 `json:"installation_id"`
+	InstallDir        string                 `json:"install_dir"`
+	ParentPID         int                    `json:"parent_pid"`
+	Inventory         string                 `json:"inventory"`
+	Lock              string                 `json:"lock"`
+	UpdateLock        string                 `json:"update_lock,omitempty"`
+	DataLock          string                 `json:"data_lock,omitempty"`
+	LegacyLock        string                 `json:"legacy_lock,omitempty"`
+	LegacyDataLock    string                 `json:"legacy_data_lock,omitempty"`
+	LegacyUpdateLock  string                 `json:"legacy_update_lock,omitempty"`
+	LegacyInventories []string               `json:"legacy_inventories,omitempty"`
+	Files             []removalFile          `json:"files"`
+	Directories       []string               `json:"directories"`
+	Profiles          []installstate.Profile `json:"profiles"`
+	ResultFile        string                 `json:"result_file"`
 }
 type report struct {
 	State      string   `json:"state"`
@@ -65,7 +69,7 @@ func resources(p installstate.Profile) []removalFile {
 		for _, name := range []string{"service.yaml", "service.json", "service.key"} {
 			files = append(files, removalFile{Path: filepath.Join(p.PendingConfigDir, name)})
 		}
-		files = append(files, removalFile{Path: filepath.Join(p.PendingConfigDir, installstate.ConfigMarkerFilename), Marker: true})
+		files = append(files, removalFile{Path: filepath.Join(p.PendingConfigDir, installstate.ConfigMarkerFilename), Marker: true}, removalFile{Path: filepath.Join(p.PendingConfigDir, installstate.LegacyConfigMarkerFilename), Marker: true})
 	}
 	if p.ConfigOwned && p.ConfigDir != "" {
 		for _, name := range []string{"service.yaml", "service.json", "service.key"} {
@@ -73,25 +77,30 @@ func resources(p installstate.Profile) []removalFile {
 		}
 	}
 	if p.ConfigOwned {
-		files = append(files, removalFile{Path: filepath.Join(p.ConfigDir, installstate.ConfigMarkerFilename), Marker: true})
+		files = append(files, removalFile{Path: filepath.Join(p.ConfigDir, installstate.ConfigMarkerFilename), Marker: true}, removalFile{Path: filepath.Join(p.ConfigDir, installstate.LegacyConfigMarkerFilename), Marker: true})
 	}
 	if p.LegacyConfigOwned && p.LegacyConfigDir != p.ConfigDir {
-		files = append(files, removalFile{Path: filepath.Join(p.LegacyConfigDir, installstate.ConfigMarkerFilename), Marker: true})
+		files = append(files, removalFile{Path: filepath.Join(p.LegacyConfigDir, installstate.ConfigMarkerFilename), Marker: true}, removalFile{Path: filepath.Join(p.LegacyConfigDir, installstate.LegacyConfigMarkerFilename), Marker: true})
 	}
 	// TODO(next major): remove network.json from owned cleanup after migration support expires.
 	for _, name := range []string{"network.yaml", "network.json", "ownership", "agent.lock"} {
 		files = append(files, removalFile{Path: filepath.Join(p.StateDir, name)})
 	}
 	if p.RuntimeOwned {
-		files = append(files, removalFile{Path: filepath.Join(p.RuntimeDir, "control.sock")}, removalFile{Path: filepath.Join(p.RuntimeDir, installstate.RuntimeMarkerFilename), Marker: true})
+		files = append(files, removalFile{Path: filepath.Join(p.RuntimeDir, "control.sock")}, removalFile{Path: filepath.Join(p.RuntimeDir, installstate.RuntimeMarkerFilename), Marker: true}, removalFile{Path: filepath.Join(p.RuntimeDir, installstate.LegacyRuntimeMarkerFilename), Marker: true})
 	}
-	files = append(files, removalFile{Path: filepath.Join(p.StateDir, installstate.MarkerFilename), Marker: true})
+	files = append(files, removalFile{Path: filepath.Join(p.StateDir, installstate.MarkerFilename), Marker: true}, removalFile{Path: filepath.Join(p.StateDir, installstate.LegacyMarkerFilename), Marker: true})
 	return files
 }
 func makePlan(inv installstate.Inventory) removalPlan {
-	p := removalPlan{Version: 1, InstallID: inv.ID, InstallDir: inv.InstallDir, ParentPID: os.Getpid(), Inventory: filepath.Join(inv.DataDir, installstate.Filename), Lock: filepath.Join(inv.LockDir, installstate.LockFilename), UpdateLock: filepath.Join(inv.LockDir, selfupdate.UpdateLockFilename), Profiles: inv.Profiles}
+	inventoryName := installstate.Filename
+	if name, err := installstate.ExistingInventoryFilename(inv.DataDir); err == nil {
+		inventoryName = name
+	}
+	p := removalPlan{Version: 1, InstallID: inv.ID, InstallDir: inv.InstallDir, ParentPID: os.Getpid(), Inventory: filepath.Join(inv.DataDir, inventoryName), Lock: filepath.Join(inv.LockDir, installstate.LockFilename), UpdateLock: filepath.Join(inv.LockDir, selfupdate.UpdateLockFilename), LegacyLock: filepath.Join(inv.LockDir, installstate.LegacyLockFilename), LegacyUpdateLock: filepath.Join(inv.LockDir, selfupdate.LegacyUpdateLockFilename), LegacyInventories: []string{filepath.Join(inv.DataDir, installstate.LegacyYAMLFilename), filepath.Join(inv.DataDir, installstate.LegacyJSONFilename)}, Profiles: inv.Profiles}
 	if inv.DataDir != inv.LockDir {
 		p.DataLock = filepath.Join(inv.DataDir, installstate.LockFilename)
+		p.LegacyDataLock = filepath.Join(inv.DataDir, installstate.LegacyLockFilename)
 	}
 	seen := map[string]bool{}
 	dirs := map[string]bool{inv.InstallDir: true, inv.DocDir: true, inv.DataDir: true, inv.LockDir: true}
@@ -130,7 +139,7 @@ func makePlan(inv installstate.Inventory) removalPlan {
 	}
 	// Keep discovery metadata until every managed resource is gone, so a
 	// partial removal can load the same inventory and resume safely.
-	p.Files = append(p.Files, removalFile{Path: filepath.Join(inv.InstallDir, installstate.ReferenceFilename), Marker: true})
+	p.Files = append(p.Files, removalFile{Path: filepath.Join(inv.InstallDir, installstate.ReferenceFilename), Marker: true}, removalFile{Path: filepath.Join(inv.InstallDir, installstate.LegacyReferenceFilename), Marker: true})
 	for d := range dirs {
 		p.Directories = append(p.Directories, d)
 	}
@@ -178,8 +187,10 @@ func verifyProfile(inv installstate.Inventory, p installstate.Profile) error {
 	}
 	// A previous removal can finish a profile before failing on another file.
 	// Missing markers are accepted only when every other tracked leaf is absent.
-	if _, e := os.Lstat(filepath.Join(p.StateDir, installstate.MarkerFilename)); !os.IsNotExist(e) {
-		return err
+	for _, name := range []string{installstate.MarkerFilename, installstate.LegacyMarkerFilename} {
+		if _, e := os.Lstat(filepath.Join(p.StateDir, name)); !os.IsNotExist(e) {
+			return err
+		}
 	}
 	for _, f := range resources(p) {
 		if f.Marker {
@@ -363,7 +374,7 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	}
 	inv, err := installstate.Load(dir)
 	if os.IsNotExist(err) {
-		for _, name := range append(append(installstate.ProgramNames(), installstate.Filename), installstate.ReferenceFilename) {
+		for _, name := range append(append(installstate.ProgramNames(), installstate.Filename, installstate.LegacyYAMLFilename, installstate.LegacyJSONFilename), installstate.ReferenceFilename, installstate.LegacyReferenceFilename) {
 			if _, e := os.Lstat(filepath.Join(dir, name)); !os.IsNotExist(e) {
 				return errors.New("installation inventory is absent; existing files are untracked and were preserved")
 			}
@@ -373,10 +384,10 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	if err != nil {
 		return err
 	}
-	if _, err := os.Lstat(filepath.Join(inv.LockDir, selfupdate.JournalFilename)); err == nil {
-		return errors.New("an interrupted self-update must be recovered with `peerimeter-agent self-update` before uninstall")
-	} else if !os.IsNotExist(err) {
+	if _, found, err := selfupdate.FindJournal(inv); err != nil {
 		return err
+	} else if found {
+		return errors.New("an interrupted self-update must be recovered with `peerimeter-agent self-update` before uninstall")
 	}
 	if err := validateOverrides(opts, inv); err != nil {
 		return err
@@ -419,10 +430,11 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		for _, f := range plan.Files {
 			r.Paths = append(r.Paths, f.Path)
 		}
-		r.Paths = append(r.Paths, plan.Lock, plan.Inventory)
-		r.Paths = append(r.Paths, plan.UpdateLock)
+		r.Paths = append(r.Paths, plan.Lock, plan.LegacyLock, plan.Inventory)
+		r.Paths = append(r.Paths, plan.UpdateLock, plan.LegacyUpdateLock)
+		r.Paths = append(r.Paths, plan.LegacyInventories...)
 		if plan.DataLock != "" {
-			r.Paths = append(r.Paths, plan.DataLock)
+			r.Paths = append(r.Paths, plan.DataLock, plan.LegacyDataLock)
 		}
 		for _, p := range inv.Profiles {
 			if p.Service {
@@ -453,10 +465,10 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	if reread.ID != inv.ID {
 		return errors.New("installation inventory changed before removal")
 	}
-	if _, err := os.Lstat(filepath.Join(reread.LockDir, selfupdate.JournalFilename)); err == nil {
-		return errors.New("an interrupted self-update must be recovered with `peerimeter-agent self-update` before uninstall")
-	} else if !os.IsNotExist(err) {
+	if _, found, err := selfupdate.FindJournal(reread); err != nil {
 		return err
+	} else if found {
+		return errors.New("an interrupted self-update must be recovered with `peerimeter-agent self-update` before uninstall")
 	}
 	inv = reread
 	for i, p := range inv.Profiles {
@@ -633,17 +645,34 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	} else if removed {
 		removedFiles = append(removedFiles, plan.Lock)
 	}
+	if removed, err := removeTracked(plan.LegacyLock); err != nil {
+		return err
+	} else if removed {
+		removedFiles = append(removedFiles, plan.LegacyLock)
+	}
 	if plan.DataLock != "" {
 		if removed, err := removeTracked(plan.DataLock); err != nil {
 			return err
 		} else if removed {
 			removedFiles = append(removedFiles, plan.DataLock)
 		}
+		if removed, err := removeTracked(plan.LegacyDataLock); err != nil {
+			return err
+		} else if removed {
+			removedFiles = append(removedFiles, plan.LegacyDataLock)
+		}
 	}
 	if removed, err := removeTracked(plan.Inventory); err != nil {
 		return err
 	} else if removed {
 		removedFiles = append(removedFiles, plan.Inventory)
+	}
+	for _, inventory := range plan.LegacyInventories {
+		if removed, err := removeTracked(inventory); err != nil {
+			return err
+		} else if removed {
+			removedFiles = append(removedFiles, inventory)
+		}
 	}
 	if err := updateLock.Close(); err != nil {
 		return err
@@ -653,6 +682,11 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		return err
 	} else if removed {
 		removedFiles = append(removedFiles, plan.UpdateLock)
+	}
+	if removed, err := removeTracked(plan.LegacyUpdateLock); err != nil {
+		return err
+	} else if removed {
+		removedFiles = append(removedFiles, plan.LegacyUpdateLock)
 	}
 	for _, d := range plan.Directories {
 		if err := removeEmptyDirectory(d); err != nil {

@@ -17,7 +17,7 @@ case $(uname -s) in Linux) unit=/etc/systemd/system/peerimeter-agent.service;; D
 snapshot() {
  python3 - "$config_dir" "$unit" <<'PY'
 import hashlib,json,pathlib,sys
-root=pathlib.Path(sys.argv[1]);paths=[root/'service.yaml',root/'service.key',root/'.peerimeter-agent.config',pathlib.Path(sys.argv[2])];out={}
+root=pathlib.Path(sys.argv[1]);paths=[root/'service.yaml',root/'service.key',root/'.config',pathlib.Path(sys.argv[2])];out={}
 for p in paths:
  s=p.stat();out[str(p)]=[s.st_mode,s.st_uid,s.st_gid,s.st_mtime_ns,hashlib.sha256(p.read_bytes()).hexdigest()]
 print(json.dumps(out,sort_keys=True))

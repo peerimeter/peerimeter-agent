@@ -12,7 +12,7 @@ trap 'rm -rf "$work"' EXIT
 other="$work/installation B"
 bash "$repo/scripts/ci/unix-install-native.sh" "$agent" "$other"
 other_agent="$other/peerimeter-agent"
-cp "$runtime/.peerimeter-agent.runtime" "$work/runtime-marker.before"
+cp "$runtime/.runtime" "$work/runtime-marker.before"
 python3 - "$other_agent" "$config" "$work/state B" "$work/config B" "$runtime" "$namespace" "$work/start.log" <<'PY'
 import subprocess,sys
 agent,config,state,configdir,runtime,ns,log=sys.argv[1:]
@@ -21,7 +21,7 @@ if ns:command=['ip','netns','exec',ns]+command
 with open(log,'w') as output:p=subprocess.run(command,stdout=output,stderr=subprocess.STDOUT,timeout=8)
 assert p.returncode!=0,'installation B accepted installation A runtime'
 PY
-python3 - "$other.data/.peerimeter-agent.install.yaml" "$runtime" <<'PY'
+python3 - "$other.data/.install.yaml" "$runtime" <<'PY'
 import os,re,sys
 inventory=open(sys.argv[1]).read()
 profiles=re.findall(r'(?ms)^[ \t]*- id:.*?(?=^[ \t]*- id:|\Z)',inventory)
@@ -36,7 +36,7 @@ import json,sys
 assert json.load(open(sys.argv[1]))['state']=='removed'
 PY
 [[ -S "$runtime/control.sock" ]]
-cmp "$runtime/.peerimeter-agent.runtime" "$work/runtime-marker.before"
+cmp "$runtime/.runtime" "$work/runtime-marker.before"
 "$agent" status --json --runtime-dir "$runtime" >"$work/A-still-running.json"
 python3 - "$work/A-still-running.json" <<'PY'
 import json,sys
@@ -74,7 +74,7 @@ def start(index):
  raise AssertionError('native historical-reuse agent did not become ready')
 try:
  first,before=start(0)
- marker_before=(runtime/'.peerimeter-agent.runtime').read_bytes()
+ marker_before=(runtime/'.runtime').read_bytes()
  cli(['stop','--runtime-dir',str(runtime)]);assert first.wait(timeout=15)==0
  for attempt in range(40):
   if sys.platform=='darwin':check=['/sbin/ifconfig',before['interface_name']]
@@ -85,11 +85,11 @@ try:
   time.sleep(.2)
  else:raise AssertionError('stopped historical-owner tunnel did not detach')
  second,before_second=start(1)
- marker_second=(runtime/'.peerimeter-agent.runtime').read_bytes()
+ marker_second=(runtime/'.runtime').read_bytes()
  assert marker_second!=marker_before,'runtime profile identity did not change when reused'
  result=subprocess.run([str(programs[0]/'peerimeter-agent'),'uninstall','--json','--install-dir',str(programs[0])],capture_output=True,text=True,timeout=30,check=True)
  assert json.loads(result.stdout)['state']=='removed'
- assert (runtime/'.peerimeter-agent.runtime').read_bytes()==marker_second,'historical owner removed or replaced the new runtime identity'
+ assert (runtime/'.runtime').read_bytes()==marker_second,'historical owner removed or replaced the new runtime identity'
  after=json.loads(cli(['status','--json','--runtime-dir',str(runtime)]).stdout)
  assert after['state']=='running' and after['interface_name']==before_second['interface_name'],'historical owner stopped or recreated the new manager/tunnel'
  cli(['stop','--runtime-dir',str(runtime)]);assert second.wait(timeout=15)==0

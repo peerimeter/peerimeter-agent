@@ -20,14 +20,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const Filename = ".peerimeter-agent.install.yaml"
+const Filename = ".install.yaml"
 
-// TODO(next major): remove the JSON inventory fallback and its migration path.
-const LegacyFilename = ".peerimeter-agent.install.json"
-const LockFilename = ".peerimeter-agent.install.lock"
-const ReferenceFilename = ".peerimeter-agent.install.ref"
-const MarkerFilename = ".peerimeter-agent.profile"
-const RuntimeMarkerFilename = ".peerimeter-agent.runtime"
+// TODO(next major): remove the previous dotfile names after migration support expires.
+const LegacyYAMLFilename = ".peerimeter-agent.install.yaml"
+const LegacyJSONFilename = ".peerimeter-agent.install.json"
+const LockFilename = ".install.lock"
+const LegacyLockFilename = ".peerimeter-agent.install.lock"
+const ReferenceFilename = ".install.ref"
+const LegacyReferenceFilename = ".peerimeter-agent.install.ref"
+const MarkerFilename = ".profile"
+const LegacyMarkerFilename = ".peerimeter-agent.profile"
+const RuntimeMarkerFilename = ".runtime"
+const LegacyRuntimeMarkerFilename = ".peerimeter-agent.runtime"
 const MaxInventorySize = 1 << 20
 
 type File struct {
@@ -82,6 +87,34 @@ func NewID() (string, error) {
 func validID(s string) bool {
 	b, e := hex.DecodeString(s)
 	return e == nil && len(b) == 16 && len(s) == 32
+}
+
+func readInventory(dataDir string) ([]byte, string, error) {
+	for _, name := range []string{Filename, LegacyYAMLFilename, LegacyJSONFilename} {
+		data, err := readPrivate(filepath.Join(dataDir, name))
+		if err == nil {
+			return data, name, nil
+		}
+		if !os.IsNotExist(err) {
+			return nil, "", err
+		}
+	}
+	return nil, "", os.ErrNotExist
+}
+
+// ExistingInventoryFilename returns the currently persisted inventory name.
+func ExistingInventoryFilename(dataDir string) (string, error) {
+	_, name, err := readInventory(dataDir)
+	return name, err
+}
+
+func readCompatPrivate(dir, currentName, legacyName string) ([]byte, bool, error) {
+	data, err := readPrivate(filepath.Join(dir, currentName))
+	if err == nil || !os.IsNotExist(err) {
+		return data, false, err
+	}
+	data, err = readPrivate(filepath.Join(dir, legacyName))
+	return data, err == nil, err
 }
 func ProgramNames() []string {
 	names := []string{"peerimeter-agent", "peerimeter-agent.NOTICES.txt"}
@@ -325,13 +358,9 @@ func loadAtDataDir(dir, requestedDataDir string, allowInsecureOverride bool) (In
 	}
 	dataDir := ""
 	hasReference := false
-	refPath := filepath.Join(canonical, ReferenceFilename)
-	if _, statErr := os.Lstat(refPath); statErr == nil {
+	refData, legacyRef, refErr := readCompatPrivate(canonical, ReferenceFilename, LegacyReferenceFilename)
+	if refErr == nil {
 		hasReference = true
-		refData, readErr := readPrivate(refPath)
-		if readErr != nil {
-			return inv, readErr
-		}
 		var ref installReference
 		if json.Unmarshal(refData, &ref) != nil {
 			return inv, errors.New("installation reference is invalid")
@@ -340,9 +369,13 @@ func loadAtDataDir(dir, requestedDataDir string, allowInsecureOverride bool) (In
 		if err != nil || dataDir != ref.DataDir {
 			return inv, errors.New("installation reference path is invalid")
 		}
-	} else if !os.IsNotExist(statErr) {
-		return inv, statErr
-	} else {
+	} else if !os.IsNotExist(refErr) {
+		return inv, refErr
+	}
+	if legacyRef {
+		// TODO(next major): remove previous install reference discovery.
+	}
+	if !hasReference {
 		if requestedDataDir != "" {
 			dataDir, err = Canonical(requestedDataDir)
 			if err != nil {
@@ -358,8 +391,7 @@ func loadAtDataDir(dir, requestedDataDir string, allowInsecureOverride bool) (In
 	// Older installations kept their inventory beside the executable. Ignore a
 	// different installation's default inventory and preserve this legacy lookup.
 	if !hasReference && requestedDataDir == "" {
-		defaultInventory := filepath.Join(dataDir, Filename)
-		if defaultData, readErr := readPrivate(defaultInventory); readErr == nil {
+		if defaultData, _, readErr := readInventory(dataDir); readErr == nil {
 			var owner struct {
 				InstallDir string `yaml:"install_dir"`
 			}
@@ -370,24 +402,7 @@ func loadAtDataDir(dir, requestedDataDir string, allowInsecureOverride bool) (In
 				dataDir = canonical
 			}
 		} else if os.IsNotExist(readErr) {
-			legacyDefault := filepath.Join(dataDir, LegacyFilename)
-			if legacyData, legacyErr := readPrivate(legacyDefault); legacyErr == nil {
-				var owner struct {
-					InstallDir string `yaml:"install_dir"`
-				}
-				if yaml.Unmarshal(legacyData, &owner) != nil || owner.InstallDir == "" {
-					return inv, errors.New("installation inventory is invalid")
-				}
-				if owner.InstallDir != canonical {
-					dataDir = canonical
-				}
-			} else if !os.IsNotExist(legacyErr) {
-				return inv, legacyErr
-			} else if _, legacyErr := os.Lstat(filepath.Join(canonical, Filename)); legacyErr == nil {
-				dataDir = canonical
-			} else if legacyErr != nil && !os.IsNotExist(legacyErr) {
-				return inv, legacyErr
-			} else if _, legacyErr := os.Lstat(filepath.Join(canonical, LegacyFilename)); legacyErr == nil {
+			if _, _, legacyErr := readInventory(canonical); legacyErr == nil {
 				dataDir = canonical
 			} else if legacyErr != nil && !os.IsNotExist(legacyErr) {
 				return inv, legacyErr
@@ -399,18 +414,7 @@ func loadAtDataDir(dir, requestedDataDir string, allowInsecureOverride bool) (In
 	if err := CheckDirectoryWithPolicy(dataDir, true); err != nil {
 		return inv, err
 	}
-	inventoryPath := filepath.Join(dataDir, Filename)
-	data, err := readPrivate(inventoryPath)
-	migrating := false
-	if os.IsNotExist(err) {
-		// TODO(next major): remove reading and conversion of legacy JSON inventories.
-		legacyPath := filepath.Join(dataDir, LegacyFilename)
-		data, err = readPrivate(legacyPath)
-		migrating = err == nil
-		if migrating {
-			inventoryPath = legacyPath
-		}
-	}
+	data, _, err := readInventory(dataDir)
 	if err != nil {
 		return inv, err
 	}
@@ -482,17 +486,6 @@ func loadAtDataDir(dir, requestedDataDir string, allowInsecureOverride bool) (In
 			}
 		}
 	}
-	if migrating {
-		if err := save(inv); err != nil {
-			return inv, err
-		}
-		if err := os.Remove(inventoryPath); err != nil && !os.IsNotExist(err) {
-			return inv, err
-		}
-		if err := syncInventoryDirectory(dataDir); err != nil {
-			return inv, err
-		}
-	}
 	return inv, nil
 }
 
@@ -501,14 +494,15 @@ func loadForRegistration(dir, dataDir string, allowInsecureOverride bool) (Inven
 		return load(dir, allowInsecureOverride)
 	} else if !os.IsNotExist(err) {
 		return Inventory{}, err
+	} else if _, err := os.Lstat(filepath.Join(dir, LegacyReferenceFilename)); err == nil {
+		// TODO(next major): remove discovery of the previous install reference filename.
+		return load(dir, allowInsecureOverride)
+	} else if !os.IsNotExist(err) {
+		return Inventory{}, err
 	}
 	defaultDataDir, err := defaultInstallDataDir(dir)
 	if err == nil {
-		data, readErr := readPrivate(filepath.Join(defaultDataDir, Filename))
-		if os.IsNotExist(readErr) {
-			// TODO(next major): remove legacy inventory discovery here too.
-			data, readErr = readPrivate(filepath.Join(defaultDataDir, LegacyFilename))
-		}
+		data, _, readErr := readInventory(defaultDataDir)
 		if readErr == nil {
 			var owner Inventory
 			if yaml.Unmarshal(data, &owner) != nil || owner.InstallDir == "" {
@@ -521,7 +515,7 @@ func loadForRegistration(dir, dataDir string, allowInsecureOverride bool) (Inven
 			return Inventory{}, readErr
 		}
 	}
-	if _, err := os.Lstat(filepath.Join(dir, Filename)); err == nil {
+	if _, _, err := readInventory(dir); err == nil {
 		return loadAtDataDir(dir, dir, allowInsecureOverride)
 	} else if !os.IsNotExist(err) {
 		return Inventory{}, err
@@ -533,7 +527,28 @@ func save(inv Inventory) error {
 	if err != nil {
 		return err
 	}
-	return WritePrivateWithPolicy(filepath.Join(inv.DataDir, Filename), append(data, '\n'), inv.AllowInsecureInstallDir)
+	if err := WritePrivateWithPolicy(filepath.Join(inv.DataDir, Filename), append(data, '\n'), inv.AllowInsecureInstallDir); err != nil {
+		return err
+	}
+	// TODO(next major): remove cleanup of the previous installation inventory names.
+	for _, name := range []string{LegacyYAMLFilename, LegacyJSONFilename} {
+		legacyPath := filepath.Join(inv.DataDir, name)
+		legacyData, err := readPrivate(legacyPath)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		var legacy Inventory
+		if yaml.Unmarshal(legacyData, &legacy) != nil || legacy.ID != inv.ID || legacy.InstallDir != inv.InstallDir {
+			return errors.New("legacy installation inventory identity does not match")
+		}
+		if err := os.Remove(legacyPath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return syncInventoryDirectory(inv.DataDir)
 }
 
 // UpdateProgramHashesLocked records hashes for existing inventoried files.
@@ -594,7 +609,25 @@ func LockWithPolicy(dir string, allowInsecure bool) (io.Closer, error) {
 	if err := CheckDirectoryWithPolicy(dir, allowInsecure); err != nil {
 		return nil, err
 	}
-	return lockInventory(filepath.Join(dir, LockFilename))
+	lock, err := lockInventory(filepath.Join(dir, LockFilename))
+	if err != nil {
+		return nil, err
+	}
+	locks := lockGroup{lock}
+	// TODO(next major): remove locking compatibility for the previous filename.
+	legacyPath := filepath.Join(dir, LegacyLockFilename)
+	if _, err := os.Lstat(legacyPath); err == nil {
+		legacyLock, lockErr := lockInventory(legacyPath)
+		if lockErr != nil {
+			_ = locks.Close()
+			return nil, lockErr
+		}
+		locks = append(locks, legacyLock)
+	} else if !os.IsNotExist(err) {
+		_ = locks.Close()
+		return nil, err
+	}
+	return locks, nil
 }
 
 // LockNamed serializes an operation with its own lock file in a trusted
@@ -668,7 +701,7 @@ func RegisterWithDirectories(dir, docDir, dataDir, lockDir string, allowInsecure
 	}()
 	// Re-read after acquiring the shared data-directory lock. Two distinct
 	// executable directories must never overwrite one another's inventory.
-	if current, readErr := readPrivate(filepath.Join(dataDir, Filename)); readErr == nil {
+	if current, _, readErr := readInventory(dataDir); readErr == nil {
 		var owner Inventory
 		if err := yaml.Unmarshal(current, &owner); err != nil || owner.InstallDir != dir {
 			return errors.New("installation data directory is already owned by another installation")
@@ -723,7 +756,7 @@ func RegisterWithDirectories(dir, docDir, dataDir, lockDir string, allowInsecure
 		}
 		inv.Files = append(inv.Files, File{Name: name, Dir: resourceDir, SHA256: hash})
 	}
-	previousInventory, previousInventoryErr := readPrivate(filepath.Join(dataDir, Filename))
+	previousInventory, previousInventoryName, previousInventoryErr := readInventory(dataDir)
 	if previousInventoryErr != nil && !os.IsNotExist(previousInventoryErr) {
 		return fmt.Errorf("read previous installation inventory: %w", previousInventoryErr)
 	}
@@ -742,11 +775,33 @@ func RegisterWithDirectories(dir, docDir, dataDir, lockDir string, allowInsecure
 		ref, _ := json.Marshal(installReference{DataDir: dataDir})
 		refErr = WritePrivateWithPolicy(refPath, append(ref, '\n'), allowInsecure)
 	}
+	if refErr == nil {
+		// TODO(next major): remove cleanup of the previous reference filename.
+		legacyRef := filepath.Join(dir, LegacyReferenceFilename)
+		if _, legacyErr := readPrivate(legacyRef); legacyErr == nil {
+			refErr = os.Remove(legacyRef)
+			if os.IsNotExist(refErr) {
+				refErr = nil
+			}
+		} else if !os.IsNotExist(legacyErr) {
+			refErr = legacyErr
+		}
+	}
 	if refErr != nil {
 		inventoryPath := filepath.Join(dataDir, Filename)
 		var rollbackErr error
 		if previousInventoryErr == nil {
-			rollbackErr = WritePrivateWithPolicy(inventoryPath, previousInventory, allowInsecure)
+			if previousInventoryName != Filename {
+				rollbackErr = os.Remove(inventoryPath)
+				if os.IsNotExist(rollbackErr) {
+					rollbackErr = nil
+				}
+				if rollbackErr == nil {
+					rollbackErr = WritePrivateWithPolicy(filepath.Join(dataDir, previousInventoryName), previousInventory, allowInsecure)
+				}
+			} else {
+				rollbackErr = WritePrivateWithPolicy(inventoryPath, previousInventory, allowInsecure)
+			}
 		} else {
 			rollbackErr = os.Remove(inventoryPath)
 			if os.IsNotExist(rollbackErr) {
@@ -757,7 +812,11 @@ func RegisterWithDirectories(dir, docDir, dataDir, lockDir string, allowInsecure
 	}
 	if legacyInventory && dataDir != dir {
 		_ = os.Remove(filepath.Join(dir, Filename))
+		// TODO(next major): remove cleanup of old inventory and lock filenames.
+		_ = os.Remove(filepath.Join(dir, LegacyYAMLFilename))
+		_ = os.Remove(filepath.Join(dir, LegacyJSONFilename))
 		_ = os.Remove(filepath.Join(dir, LockFilename))
+		_ = os.Remove(filepath.Join(dir, LegacyLockFilename))
 		if legacyNotice != "" && filepath.Join(docDir, "peerimeter-agent.NOTICES.txt") != legacyNotice {
 			if oldHash, e := Hash(legacyNotice); e == nil && oldHash == legacyNoticeDigest {
 				_ = os.Remove(legacyNotice)
@@ -867,11 +926,26 @@ func registerProfileLocked(dir string, p Profile) error {
 	}
 	markerPath := filepath.Join(p.StateDir, MarkerFilename)
 	before, err := readPrivate(markerPath)
+	legacyMarkerPath := filepath.Join(p.StateDir, LegacyMarkerFilename)
+	legacyMarker := false
+	if os.IsNotExist(err) {
+		// TODO(next major): remove migration of the previous profile marker filename.
+		before, err = readPrivate(legacyMarkerPath)
+		legacyMarker = err == nil
+	}
 	expected := marker{Version: 1, InstallID: inv.ID, ProfileID: p.ID}
 	if err == nil {
 		var got marker
 		if json.Unmarshal(before, &got) != nil || got != expected {
 			return errors.New("persistent state belongs to another installation profile")
+		}
+		if legacyMarker {
+			if err := WritePrivateWithPolicy(markerPath, before, inv.AllowInsecureInstallDir); err != nil {
+				return err
+			}
+			if err := os.Remove(legacyMarkerPath); err != nil && !os.IsNotExist(err) {
+				return err
+			}
 		}
 	} else if os.IsNotExist(err) {
 		if p.ClaimRuntime {
@@ -914,6 +988,10 @@ func VerifyProfile(inv Inventory, p Profile) error {
 		return err
 	}
 	data, err := readPrivate(filepath.Join(p.StateDir, MarkerFilename))
+	if os.IsNotExist(err) {
+		// TODO(next major): remove reads of the previous profile marker filename.
+		data, err = readPrivate(filepath.Join(p.StateDir, LegacyMarkerFilename))
+	}
 	if err != nil {
 		return errors.New("installation profile marker is missing or untrusted")
 	}

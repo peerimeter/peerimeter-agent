@@ -79,7 +79,7 @@ function Assert-Package([string]$Directory) {
             if (([long]$rule.FileSystemRights -band (-bnot $allowed)) -ne 0) { throw 'Installed file grants untrusted write access' }
         }
     }
-    $inventory = Join-Path (Join-Path $resourceRoot 'State') '.peerimeter-agent.install.yaml'
+    $inventory = Join-Path (Join-Path $resourceRoot 'State') '.install.yaml'
     if (-not (Test-Path -LiteralPath $inventory -PathType Leaf)) { throw 'Installed package has no protected ownership inventory' }
     $inventoryACL = Get-Acl -LiteralPath $inventory
     foreach ($rule in $inventoryACL.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
@@ -118,7 +118,7 @@ function Remove-InstalledPackage([string]$Directory,[string]$ExternalCLI) {
         if (-not $done) { Show-RemovalDiagnostics $result.result_file; throw 'Windows package removal did not complete within 60 seconds' }
         Remove-Item -LiteralPath $result.result_file -Force
     } elseif ($result.state -ne 'removed') { throw 'Unrecognized package uninstall result' }
-    foreach ($path in @((Join-Path $Directory 'peerimeter-agent.exe'),(Join-Path $Directory 'wireguard.dll'),(Join-Path $Directory '.peerimeter-agent.install.ref'),(Join-Path (Join-Path $resourceRoot 'Documentation') 'peerimeter-agent.NOTICES.txt'),(Join-Path (Join-Path $resourceRoot 'State') '.peerimeter-agent.install.yaml'),(Join-Path (Join-Path $resourceRoot 'Locks') '.peerimeter-agent.install.lock'))) {
+    foreach ($path in @((Join-Path $Directory 'peerimeter-agent.exe'),(Join-Path $Directory 'wireguard.dll'),(Join-Path $Directory '.install.ref'),(Join-Path (Join-Path $resourceRoot 'Documentation') 'peerimeter-agent.NOTICES.txt'),(Join-Path (Join-Path $resourceRoot 'State') '.install.yaml'),(Join-Path (Join-Path $resourceRoot 'Locks') '.install.lock'))) {
         if (Test-Path -LiteralPath $path) { throw "Installed program member survived uninstall: $path" }
     }
     if ([IO.File]::ReadAllText($sentinel) -ne 'operator data stays') { throw 'Full uninstall removed unrelated installation-parent data' }

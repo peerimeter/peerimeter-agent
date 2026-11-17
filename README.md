@@ -91,13 +91,13 @@ inventory, lock and documentation go into a sibling `.peerimeter` resource
 directory. The binary locates default inventory from the current user's state
 directory (or the system state directory for root installs); running it as a
 different user therefore does not fall back to another user's inventory. A
-protected `.peerimeter-agent.install.ref` is written beside the binary only
+protected `.install.ref` is written beside the binary only
 when a non-default `--data-dir` is selected.
 
 Both installers report progress as they resolve or download the release, verify
-the package, install files and register the protected
-`.peerimeter-agent.install.yaml` inventory. Existing JSON inventories are
-converted the next time the installation is opened by the agent.
+the package, install files and register the protected `.install.yaml` inventory.
+Inventories from older releases are read and converted when the installation is
+next registered or updated.
 
 ### Linux and macOS
 

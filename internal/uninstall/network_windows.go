@@ -192,12 +192,16 @@ try {
     $parent = Get-Process -Id $p.parent_pid -ErrorAction SilentlyContinue
     if ($parent -and -not $parent.WaitForExit(30000)) { throw 'Initiating agent did not exit within 30 seconds; files preserved' }
     Lock-Existing $p.update_lock
+    Lock-Existing $p.legacy_update_lock
     Lock-Existing $p.lock
+    Lock-Existing $p.legacy_lock
     if ($p.data_lock) { Lock-Existing $p.data_lock }
+    if ($p.legacy_data_lock) { Lock-Existing $p.legacy_data_lock }
     foreach ($profile in $p.profiles) {
         if (Test-Path -LiteralPath $profile.state_dir) {
             No-Reparse $profile.state_dir
-            $markerPath = Join-Path $profile.state_dir '.peerimeter-agent.profile'
+            $markerPath = Join-Path $profile.state_dir '.profile'
+            if (-not (Test-Path -LiteralPath $markerPath)) { $markerPath = Join-Path $profile.state_dir '.peerimeter-agent.profile' }
             if (Test-Path -LiteralPath $markerPath) {
                 No-Reparse $markerPath
                 $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
@@ -223,9 +227,13 @@ try {
     foreach ($f in $p.files) { if ([IO.Path]::GetFileName($f.path) -eq 'agent.lock') { Remove-Leaf $f.path } }
     foreach ($f in $p.files) { if ($f.marker) { Remove-Leaf $f.path } }
     Remove-Leaf $p.lock
+    Remove-Leaf $p.legacy_lock
     if ($p.data_lock) { Remove-Leaf $p.data_lock }
+    if ($p.legacy_data_lock) { Remove-Leaf $p.legacy_data_lock }
     Remove-Leaf $p.inventory
+    foreach ($inventory in $p.legacy_inventories) { Remove-Leaf $inventory }
     if ($p.update_lock) { Remove-Leaf $p.update_lock }
+    if ($p.legacy_update_lock) { Remove-Leaf $p.legacy_update_lock }
     foreach ($h in $handles) { $h.Dispose() }; $handles.Clear()
     foreach ($dir in $p.directories) {
         if (Test-Path -LiteralPath $dir) {
@@ -238,7 +246,7 @@ try {
 finally {
     foreach ($h in $handles) { $h.Dispose() }
     foreach ($f in $p.files) { if (Exists $f.path) { $remaining += $f.path } }
-    foreach ($f in @($p.inventory,$p.lock,$p.data_lock,$p.update_lock)) { if ($f -and (Exists $f)) { $remaining += $f } }
+    foreach ($f in @($p.inventory,$p.lock,$p.legacy_lock,$p.data_lock,$p.legacy_data_lock,$p.update_lock,$p.legacy_update_lock) + @($p.legacy_inventories)) { if ($f -and (Exists $f)) { $remaining += $f } }
     try { Remove-Item -LiteralPath $Plan -Force; Remove-Item -LiteralPath $PSCommandPath -Force; Remove-Item -LiteralPath $work -Force } catch {
         $state = 'failed'; $remaining += $work; $message += ' Temporary helper cleanup was incomplete.'
     }
