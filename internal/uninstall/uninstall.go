@@ -24,7 +24,7 @@ import (
 type Options struct {
 	InstallDir, ConfigDir, StateDir, RuntimeDir string
 	DataDir, DocDir, LockDir                    string
-	DryRun                                      bool
+	DryRun, Purge                               bool
 }
 type removalFile struct {
 	Path   string `json:"path"`
@@ -46,6 +46,7 @@ type removalPlan struct {
 	LegacyInventories []string               `json:"legacy_inventories,omitempty"`
 	Files             []removalFile          `json:"files"`
 	Directories       []string               `json:"directories"`
+	PurgeDirs         []string               `json:"purge_directories,omitempty"`
 	Profiles          []installstate.Profile `json:"profiles"`
 	ResultFile        string                 `json:"result_file"`
 }
@@ -92,7 +93,7 @@ func resources(p installstate.Profile) []removalFile {
 	files = append(files, removalFile{Path: filepath.Join(p.StateDir, installstate.MarkerFilename), Marker: true}, removalFile{Path: filepath.Join(p.StateDir, installstate.LegacyMarkerFilename), Marker: true})
 	return files
 }
-func makePlan(inv installstate.Inventory) removalPlan {
+func makePlan(inv installstate.Inventory, purge bool) removalPlan {
 	inventoryName := installstate.Filename
 	if name, err := installstate.ExistingInventoryFilename(inv.DataDir); err == nil {
 		inventoryName = name
@@ -129,6 +130,26 @@ func makePlan(inv installstate.Inventory) removalPlan {
 				dirs[d] = true
 			}
 		}
+		if purge {
+			purgeDirs := []string{profile.StateDir}
+			if profile.ConfigOwned {
+				purgeDirs = append(purgeDirs, profile.ConfigDir)
+			}
+			if profile.LegacyConfigOwned {
+				purgeDirs = append(purgeDirs, profile.LegacyConfigDir)
+			}
+			if profile.PendingConfigOwned {
+				purgeDirs = append(purgeDirs, profile.PendingConfigDir)
+			}
+			if profile.RuntimeOwned {
+				purgeDirs = append(purgeDirs, profile.RuntimeDir)
+			}
+			for _, d := range purgeDirs {
+				if d != "" && !contains(p.PurgeDirs, d) {
+					p.PurgeDirs = append(p.PurgeDirs, d)
+				}
+			}
+		}
 	}
 	for _, f := range inv.Files {
 		path := installstate.ResourcePath(inv, f)
@@ -143,8 +164,18 @@ func makePlan(inv installstate.Inventory) removalPlan {
 	for d := range dirs {
 		p.Directories = append(p.Directories, d)
 	}
+	sort.Strings(p.PurgeDirs)
 	sort.Slice(p.Directories, func(i, j int) bool { return len(p.Directories[i]) > len(p.Directories[j]) })
 	return p
+}
+
+func contains(values []string, value string) bool {
+	for _, item := range values {
+		if item == value {
+			return true
+		}
+	}
+	return false
 }
 func validateOverrides(opts Options, inv installstate.Inventory) error {
 	for _, item := range []struct {
@@ -414,7 +445,7 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		}
 		inv.Profiles[i].PendingConfigOwned = pendingOwned
 	}
-	plan := makePlan(inv)
+	plan := makePlan(inv, opts.Purge)
 	if err := preflight(inv, plan); err != nil {
 		return err
 	}
@@ -433,6 +464,20 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		r.Paths = append(r.Paths, plan.Lock, plan.LegacyLock, plan.Inventory)
 		r.Paths = append(r.Paths, plan.UpdateLock, plan.LegacyUpdateLock)
 		r.Paths = append(r.Paths, plan.LegacyInventories...)
+		if opts.Purge {
+			r.Message = "In addition to the tracked install files, deletes every file and nested directory inside the recorded state, config and runtime directories."
+			for _, dir := range plan.PurgeDirs {
+				paths, err := listTree(dir)
+				if err != nil {
+					return err
+				}
+				for _, path := range paths {
+					if !contains(r.Paths, path) {
+						r.Paths = append(r.Paths, path)
+					}
+				}
+			}
+		}
 		if plan.DataLock != "" {
 			r.Paths = append(r.Paths, plan.DataLock, plan.LegacyDataLock)
 		}
@@ -493,7 +538,7 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		}
 		inv.Profiles[i].PendingConfigOwned = pendingOwned
 	}
-	plan = makePlan(inv)
+	plan = makePlan(inv, opts.Purge)
 	if err := preflight(inv, plan); err != nil {
 		return err
 	}
@@ -564,7 +609,7 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		}
 		inv.Profiles[i].PendingConfigOwned = pendingOwned
 	}
-	plan = makePlan(inv)
+	plan = makePlan(inv, opts.Purge)
 	if runtime.GOOS != "windows" {
 		held := map[string]bool{}
 		for _, p := range inv.Profiles {
@@ -602,7 +647,7 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 			held[p.RuntimeDir] = true
 		}
 	}
-	plan = makePlan(inv)
+	plan = makePlan(inv, opts.Purge)
 	if runtime.GOOS == "windows" {
 		result, err := scheduleRemoval(plan)
 		if err != nil {
@@ -623,6 +668,15 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		}
 		if removed {
 			removedFiles = append(removedFiles, f.Path)
+		}
+	}
+	if opts.Purge {
+		for _, dir := range plan.PurgeDirs {
+			purged, err := removeDirectoryContents(dir)
+			if err != nil {
+				return fmt.Errorf("partial uninstall; cannot purge %s: %w", dir, err)
+			}
+			removedFiles = append(removedFiles, purged...)
 		}
 	}
 	for _, f := range plan.Files {
@@ -749,6 +803,59 @@ func removeEmptyDirectory(path string) error {
 		return nil
 	}
 	return os.Remove(path)
+}
+
+func listTree(root string) ([]string, error) {
+	var paths []string
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if path != root {
+			paths = append(paths, path)
+		}
+		return nil
+	})
+	return paths, err
+}
+
+func removeDirectoryContents(root string) ([]string, error) {
+	info, err := os.Lstat(root)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("purge target changed type or became a symbolic link")
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+	var removed []string
+	for _, entry := range entries {
+		// Keep ownership and coordination markers until the normal marker
+		// removal phase so a partial purge can still be retried safely.
+		if entry.Name() == installstate.MarkerFilename || entry.Name() == installstate.ConfigMarkerFilename || entry.Name() == installstate.RuntimeMarkerFilename || entry.Name() == "agent.lock" {
+			continue
+		}
+		path := filepath.Join(root, entry.Name())
+		paths, err := listTree(path)
+		if err != nil {
+			return nil, err
+		}
+		removed = append(removed, path)
+		removed = append(removed, paths...)
+		if err := os.RemoveAll(path); err != nil {
+			return removed, err
+		}
+	}
+	return removed, nil
 }
 
 func requireNoOwnedRegistration(ctx context.Context, executable string, probe registrationProbe) error {

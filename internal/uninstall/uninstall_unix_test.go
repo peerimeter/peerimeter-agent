@@ -149,6 +149,54 @@ func TestDryRunIsReadOnlyAndListsManagedIdentity(t *testing.T) {
 	}
 }
 
+func TestPurgeDryRunListsAndRemovalDeletesNestedTrackedData(t *testing.T) {
+	dir, profile := prepareUninstall(t)
+	stateFile := filepath.Join(profile.StateDir, "managed", "network", "cache.json")
+	configFile := filepath.Join(profile.ConfigDir, "extra", "old.yaml")
+	for _, path := range []string{stateFile, configFile} {
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("remove me"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var dryRun bytes.Buffer
+	if err := Execute(context.Background(), Options{InstallDir: dir, DryRun: true, Purge: true}, &dryRun); err != nil {
+		t.Fatal(err)
+	}
+	var preview report
+	if err := json.Unmarshal(dryRun.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{stateFile, configFile} {
+		canonical, err := installstate.Canonical(expected)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !contains(preview.Paths, canonical) {
+			t.Fatalf("purge dry-run omitted %s: %v", expected, preview.Paths)
+		}
+		if _, err := os.Stat(expected); err != nil {
+			t.Fatalf("dry-run removed %s: %v", expected, err)
+		}
+	}
+	var out bytes.Buffer
+	probe := func(context.Context, string) (bool, error) { return false, nil }
+	if err := executeWithRegistrationProbe(context.Background(), Options{InstallDir: dir, Purge: true}, &out, probe); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{stateFile, configFile} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("purge left %s behind: %v", path, err)
+		}
+	}
+	var result report
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil || result.State != "removed" {
+		t.Fatalf("purge result = %s, %v", out.String(), err)
+	}
+}
+
 func TestUninstallRefusesPendingSelfUpdateRecovery(t *testing.T) {
 	dir, _ := prepareUninstall(t)
 	inv, err := installstate.Load(dir)

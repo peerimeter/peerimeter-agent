@@ -417,20 +417,28 @@ tracked as owned by that installation, including installed identity and keys:
 ```sh
 sudo peerimeter-agent uninstall --dry-run
 sudo peerimeter-agent uninstall
+# Also remove all contents of the tracked state/config/runtime directories:
+sudo peerimeter-agent uninstall --purge --dry-run
+sudo peerimeter-agent uninstall --purge
 # Select an installation in a custom program directory:
 sudo peerimeter-agent uninstall --install-dir '/opt/Peerimeter Agent' --dry-run
 ```
 
 Installers write a protected installation inventory. Full removal refuses
 arbitrary untracked paths, preserves unrelated files and original source
-configs, stops the owned service/agent first, and verifies ownership/locks
-before deletion. Windows uses a bounded helper after the running executable
-exits; a `pending` result names a temporary receipt reporting eventual removal
-or remaining failures. The shared system WireGuard driver is preserved. Repeated
-removal is safe; partial failures remain reportable and retryable. Removal and
+configs by default, stops the owned service/agent first, and verifies
+ownership/locks before deletion. `--purge` additionally removes all contents
+inside the recorded state, config, and runtime directories. Windows uses a
+bounded helper after the running executable exits; a `pending` result names a
+temporary receipt reporting eventual removal or remaining failures. The shared
+system WireGuard driver is preserved. Repeated removal is safe; partial failures
+remain reportable and retryable. Removal and
 migration are natively verified; see the [shared project progress
 tracker](https://github.com/peerimeter/.github/blob/main/docs/planning/progress.md)
 for exact tested commits and remaining limits.
+
+Review the complete purge list first with `--purge --dry-run`. Original source
+config files outside the recorded directories remain untouched.
 
 ## CLI output
 

@@ -40,6 +40,15 @@ type peerEntry struct {
 	endpoint string
 }
 
+func defaultNodeID(hostname string) (string, error) {
+	id := strings.TrimSpace(hostname)
+	id = strings.TrimSuffix(id, ".localdomain")
+	if id == "" {
+		return "", errors.New("cannot determine hostname for default node ID")
+	}
+	return id, nil
+}
+
 func eligiblePeerEntries(underlay []string, peers map[string]json.RawMessage) ([]peerEntry, []string) {
 	entries := make([]peerEntry, 0, len(peers))
 	routes := make([]string, 0, len(peers))
@@ -115,9 +124,13 @@ func newJoinCommand(app *application) *cobra.Command {
 		}
 		publicText := base64.StdEncoding.EncodeToString(public[:])
 		if nodeID == "" {
-			nodeID, err = os.Hostname()
-			if err != nil || strings.TrimSpace(nodeID) == "" {
+			hostname, hostErr := os.Hostname()
+			if hostErr != nil {
 				return errors.New("cannot determine hostname for default node ID")
+			}
+			nodeID, err = defaultNodeID(hostname)
+			if err != nil {
+				return err
 			}
 		}
 		underlay, err := discovery.PrimaryUnderlay(cmd.Context())

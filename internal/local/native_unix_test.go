@@ -15,6 +15,28 @@ import (
 	"time"
 )
 
+func TestPrepareDirectoryTightensExistingPermissions(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "state")
+	if err := os.Mkdir(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	guard, err := Acquire(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guard.Close()
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0711 {
+		t.Fatalf("directory mode = %#o, want 0711", got)
+	}
+}
+
 func TestUnixOperatorIdentityAndProtectedSocket(t *testing.T) {
 	uid := strconv.Itoa(os.Geteuid())
 	if got, err := resolveOperator(uid); err != nil || got != os.Geteuid() {
