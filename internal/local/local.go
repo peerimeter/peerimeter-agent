@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/peerimeter/peerimeter-agent/internal/ifname"
@@ -236,6 +237,7 @@ func Serve(ctx context.Context, dir string, ops Operations) (func() error, error
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(append(append([]byte(`{"config":`), data...), '}'))
 	})
+	var applyMu sync.Mutex
 	mux.HandleFunc("POST /v1/config/apply", func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			RuntimeID string `json:"runtime_id"`
@@ -248,15 +250,19 @@ func Serve(ctx context.Context, dir string, ops Operations) (func() error, error
 			write(w, nil, errors.New("running agent identity changed or config update is unavailable"))
 			return
 		}
+		applyMu.Lock()
+		defer applyMu.Unlock()
+		applyCtx, cancelApply := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
+		defer cancelApply()
 		rollback, err := ops.ReplaceConfig(request.Config)
 		if err == nil {
-			err = ops.Reload(r.Context())
+			err = ops.Reload(applyCtx)
 		}
 		if err != nil && rollback != nil {
 			err = errors.Join(err, rollback())
-			if ops.Reload != nil {
-				err = errors.Join(err, ops.Reload(r.Context()))
-			}
+			recoveryCtx, cancelRecovery := context.WithTimeout(context.Background(), 10*time.Second)
+			err = errors.Join(err, ops.Reload(recoveryCtx))
+			cancelRecovery()
 		}
 		write(w, map[string]string{"state": "reconciled"}, err)
 	})

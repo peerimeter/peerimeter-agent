@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/peerimeter/peerimeter-agent/internal/agent"
 	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/ifname"
@@ -16,6 +17,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"time"
 )
@@ -153,6 +155,18 @@ func staticCommandWithRefresh(ctx context.Context, commandName, path, override s
 		return installstate.RegisterProfile(filepath.Dir(exe), installstate.Profile{StateDir: layout.StateDir, RuntimeDir: layout.RuntimeDir, ClaimRuntime: true})
 	}
 	replaceConfig := func(data []byte) (func() error, error) {
+		var next config.Config
+		if err := json.Unmarshal(data, &next); err != nil {
+			return nil, errors.New("cannot decode refreshed configuration")
+		}
+		if err := config.Validate(next, runtime.GOOS); err != nil {
+			return nil, fmt.Errorf("refreshed configuration is invalid: %w", err)
+		}
+		unchanged := cfg
+		unchanged.Peers = next.Peers
+		if !reflect.DeepEqual(next, unchanged) {
+			return nil, errors.New("sync may only update the peer list")
+		}
 		previous, err := os.ReadFile(path)
 		if err != nil {
 			return nil, errors.New("cannot read the active configuration before sync")
