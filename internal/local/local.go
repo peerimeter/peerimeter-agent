@@ -150,11 +150,12 @@ func persistInterfaceChoice(path string, choice any) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.OpenFile(path+".new", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".new-*")
 	if err != nil {
 		return fmt.Errorf("cannot create local interface selection %s: %w", path, err)
 	}
-	defer os.Remove(path + ".new")
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
 	if _, err = tmp.Write(data); err != nil {
 		tmp.Close()
 		return fmt.Errorf("cannot write local interface selection %s: %w", path, err)
@@ -166,7 +167,7 @@ func persistInterfaceChoice(path string, choice any) error {
 	if err = tmp.Close(); err != nil {
 		return err
 	}
-	if err = os.Rename(path+".new", path); err != nil {
+	if err = os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("cannot persist local interface selection %s: %w", path, err)
 	}
 	return nil

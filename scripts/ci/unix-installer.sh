@@ -42,10 +42,10 @@ python3 - "$work/version.json" "$native_os" <<'PYVERSION'
 import json,sys
 v=json.load(open(sys.argv[1]));assert v['os']==sys.argv[2] and v['go_version']=='go1.27.4'
 PYVERSION
-[[ -f "$data_destination/.peerimeter-agent.install.yaml" ]]
+[[ -f "$data_destination/.install.yaml" ]]
 cp "$destination/peerimeter-agent" "$work/original.agent"
 cp "$doc_destination/peerimeter-agent.NOTICES.txt" "$work/original.notices"
-cp "$data_destination/.peerimeter-agent.install.yaml" "$work/original.inventory"
+cp "$data_destination/.install.yaml" "$work/original.inventory"
 expect_failure() {
   local pattern=$1
   shift
@@ -56,7 +56,7 @@ expect_failure() {
   if ! grep -Fq "$pattern" "$work/failure.log"; then cat "$work/failure.log" >&2; exit 1; fi
   cmp "$work/original.agent" "$destination/peerimeter-agent"
   cmp "$work/original.notices" "$doc_destination/peerimeter-agent.NOTICES.txt"
-  cmp "$work/original.inventory" "$data_destination/.peerimeter-agent.install.yaml"
+  cmp "$work/original.inventory" "$data_destination/.install.yaml"
 }
 expect_failure 'Binary checksum verification failed' sh "$installer" --binary "$work/peerimeter-agent" --sha256 "$(printf '%064d' 0)" --notices "$work/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notices_hash" --install-dir "$destination" "${install_dirs[@]}"
 expect_failure 'SHA-256 digest' sh "$installer" --binary "$work/peerimeter-agent" --sha256 "$hash
@@ -74,7 +74,7 @@ fi
 grep -Fq 'must not be symbolic links' "$work/failure.log"
 test -L "$doc_destination/peerimeter-agent.NOTICES.txt"
 cmp "$work/original.agent" "$destination/peerimeter-agent"
-cmp "$work/original.inventory" "$data_destination/.peerimeter-agent.install.yaml"
+cmp "$work/original.inventory" "$data_destination/.install.yaml"
 rm "$doc_destination/peerimeter-agent.NOTICES.txt"
 cp "$work/original.notices" "$doc_destination/peerimeter-agent.NOTICES.txt"
 echo 'PASS: existing destination symlink rejected without changing its target or installed binary'
@@ -169,8 +169,8 @@ python3 - "$work/removal.json" <<'PY'
 import json,sys
 assert json.load(open(sys.argv[1]))['state']=='removed'
 PY
-for member in peerimeter-agent .peerimeter-agent.install.ref; do test ! -e "$destination/$member"; done
-for path in "$doc_destination/peerimeter-agent.NOTICES.txt" "$data_destination/.peerimeter-agent.install.yaml" "$lock_destination/.peerimeter-agent.install.lock"; do test ! -e "$path"; done
+for member in peerimeter-agent .install.ref; do test ! -e "$destination/$member"; done
+for path in "$doc_destination/peerimeter-agent.NOTICES.txt" "$data_destination/.install.yaml" "$lock_destination/.install.lock"; do test ! -e "$path"; done
 cmp "$work/original.config" "$destination/operator.config"
 cmp "$work/original.key" "$destination/operator.key"
 "$work/uninstall-verifier" uninstall --json --install-dir "$destination" >"$work/repeated-removal.json"

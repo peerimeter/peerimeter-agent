@@ -103,10 +103,12 @@ func (s *Startup) RegisterProfile(p Profile) error {
 		return err
 	}
 	if !s.registered {
-		if _, err := os.Lstat(filepath.Join(p.StateDir, MarkerFilename)); err == nil {
-			return errors.New("persistent state belongs to an installed agent; source builds cannot adopt it")
-		} else if !os.IsNotExist(err) {
-			return err
+		for _, name := range []string{MarkerFilename, LegacyMarkerFilename} {
+			if _, err := os.Lstat(filepath.Join(p.StateDir, name)); err == nil {
+				return errors.New("persistent state belongs to an installed agent; source builds cannot adopt it")
+			} else if !os.IsNotExist(err) {
+				return err
+			}
 		}
 		return nil
 	}

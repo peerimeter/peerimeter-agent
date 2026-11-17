@@ -11,5 +11,5 @@ install -m 0755 "$source" "$work/package/peerimeter-agent"
 printf 'Native integration archive fixture; release packages include full dependency notices.\n' >"$work/package/peerimeter-agent.NOTICES.txt"
 if command -v sha256sum >/dev/null; then hash=$(sha256sum "$work/package/peerimeter-agent" | awk '{print $1}'); notice_hash=$(sha256sum "$work/package/peerimeter-agent.NOTICES.txt" | awk '{print $1}'); else hash=$(shasum -a 256 "$work/package/peerimeter-agent" | awk '{print $1}'); notice_hash=$(shasum -a 256 "$work/package/peerimeter-agent.NOTICES.txt" | awk '{print $1}'); fi
 sh "$repo/docs/install.sh" --binary "$work/package/peerimeter-agent" --sha256 "$hash" --notices "$work/package/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notice_hash" --install-dir "$destination" --doc-dir "${destination}.docs" --data-dir "${destination}.data" --lock-dir "${destination}.locks"
-[[ -f "${destination}.data/.peerimeter-agent.install.yaml" ]]
+[[ -f "${destination}.data/.install.yaml" ]]
 chmod 0755 "$destination"

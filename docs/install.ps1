@@ -162,10 +162,19 @@ try {
         Write-InstallerProgress 'Registering protected installation inventory.'
         $registerArgs = @('register-installation','--install-dir',$InstallDir,'--doc-dir',$DocDir,'--data-dir',$DataDir,'--lock-dir',$LockDir)
         & (Join-Path $InstallDir 'peerimeter-agent.exe') @registerArgs | Out-Null
-        $inventoryPath = Join-Path $DataDir '.peerimeter-agent.install.yaml'
-        $referencePath = Join-Path $InstallDir '.peerimeter-agent.install.ref'
-        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $inventoryPath -PathType Leaf)) { throw 'Installation inventory registration failed' }
-        if ((Test-Path -LiteralPath $referencePath) -and ((Get-Item -LiteralPath $referencePath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Installation reference is invalid' }
+        $inventoryPaths = @((Join-Path $DataDir '.install.yaml'),(Join-Path $DataDir '.peerimeter-agent.install.yaml'),(Join-Path $DataDir '.peerimeter-agent.install.json'))
+        $inventoryFound = $false
+        foreach ($inventoryPath in $inventoryPaths) {
+            if (Test-Path -LiteralPath $inventoryPath) {
+                $inventoryItem = Get-Item -LiteralPath $inventoryPath -Force
+                if (-not $inventoryItem.PSIsContainer -or ($inventoryItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Installation inventory registration failed' }
+                $inventoryFound = $true
+            }
+        }
+        if ($LASTEXITCODE -ne 0 -or -not $inventoryFound) { throw 'Installation inventory registration failed' }
+        foreach ($referencePath in @((Join-Path $InstallDir '.install.ref'),(Join-Path $InstallDir '.peerimeter-agent.install.ref'))) {
+            if ((Test-Path -LiteralPath $referencePath) -and ((Get-Item -LiteralPath $referencePath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Installation reference is invalid' }
+        }
     } catch {
         $failure = $_
         $rollbackErrors = @()

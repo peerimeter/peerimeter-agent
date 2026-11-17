@@ -21,7 +21,7 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/service"
 )
 
-const updateManifestName = ".peerimeter-agent.update.json"
+const updateManifestName = ".update.json"
 
 type helperManifest struct {
 	Version   string                  `json:"version"`

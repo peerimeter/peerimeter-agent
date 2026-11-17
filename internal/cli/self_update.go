@@ -440,12 +440,12 @@ func (s updateInventorySnapshot) matches(inv installstate.Inventory) bool {
 }
 
 func recoverInterruptedUpdate(installDir string, inv installstate.Inventory, goos string) (bool, error) {
-	_, err := os.Lstat(filepath.Join(inv.LockDir, selfupdate.JournalFilename))
-	if os.IsNotExist(err) {
-		return false, nil
-	}
+	_, found, err := selfupdate.FindJournal(inv)
 	if err != nil {
 		return false, err
+	}
+	if !found {
+		return false, nil
 	}
 	if goos == "windows" {
 		return true, scheduleWindowsRecovery(inv)

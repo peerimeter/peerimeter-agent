@@ -135,7 +135,7 @@ for destination in "$install_dir/peerimeter-agent" "$doc_dir/peerimeter-agent.NO
 done
 if [ -f "$install_dir/peerimeter-agent" ]; then cp -p "$install_dir/peerimeter-agent" "$work/original-agent"; old_binary=1; fi
 if [ -f "$doc_dir/peerimeter-agent.NOTICES.txt" ]; then cp -p "$doc_dir/peerimeter-agent.NOTICES.txt" "$work/original-notices"; old_notice=1; fi
-staged=$(mktemp "$install_dir/.peerimeter-agent.XXXXXX")
+staged=$(mktemp "$install_dir/.XXXXXX")
 staged_notice=$(mktemp "$doc_dir/.peerimeter-notices.XXXXXX")
 progress "Installing binary and notices to $install_dir."
 install -m 0755 "$binary" "$staged"
@@ -152,8 +152,17 @@ progress 'Registering protected installation inventory.'
 # The installed binary writes the protected inventory using the same audited
 # ownership/path rules as full uninstall. Source configs and keys are not claimed.
 "$install_dir/peerimeter-agent" register-installation --install-dir "$install_dir" --doc-dir "$doc_dir" --data-dir "$data_dir" --lock-dir "$lock_dir" >/dev/null
-[ -f "$data_dir/.peerimeter-agent.install.yaml" ] && [ ! -L "$data_dir/.peerimeter-agent.install.yaml" ] || { echo 'Installation inventory registration failed.' >&2; exit 1; }
-[ ! -e "$install_dir/.peerimeter-agent.install.ref" ] || { [ -f "$install_dir/.peerimeter-agent.install.ref" ] && [ ! -L "$install_dir/.peerimeter-agent.install.ref" ]; } || { echo 'Installation reference is invalid.' >&2; exit 1; }
+inventory_found=0
+for inventory_path in "$data_dir/.install.yaml" "$data_dir/.peerimeter-agent.install.yaml" "$data_dir/.peerimeter-agent.install.json"; do
+  if [ -e "$inventory_path" ] || [ -L "$inventory_path" ]; then
+    [ -f "$inventory_path" ] && [ ! -L "$inventory_path" ] || { echo 'Installation inventory registration failed.' >&2; exit 1; }
+    inventory_found=1
+  fi
+done
+[ "$inventory_found" -eq 1 ] || { echo 'Installation inventory registration failed.' >&2; exit 1; }
+for reference_path in "$install_dir/.install.ref" "$install_dir/.peerimeter-agent.install.ref"; do
+  [ ! -e "$reference_path" ] && [ ! -L "$reference_path" ] || { [ -f "$reference_path" ] && [ ! -L "$reference_path" ]; } || { echo 'Installation reference is invalid.' >&2; exit 1; }
+done
 completed=1
 printf 'Installation directories:\n  Install: %s\n  Documentation: %s\n  State: %s\n  Locks: %s\n' "$install_dir" "$doc_dir" "$data_dir" "$lock_dir"
 printf 'Installed Peerimeter Agent %s to %s/peerimeter-agent (%s/%s). Config and services are managed separately.\n' "$installed_version" "$install_dir" "$os" "$arch"

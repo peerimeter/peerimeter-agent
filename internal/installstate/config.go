@@ -7,7 +7,10 @@ import (
 	"path/filepath"
 )
 
-const ConfigMarkerFilename = ".peerimeter-agent.config"
+const ConfigMarkerFilename = ".config"
+
+// TODO(next major): remove reads and cleanup of the previous config marker filename.
+const LegacyConfigMarkerFilename = ".peerimeter-agent.config"
 
 // ValidateConfigClaim performs no writes. Service provisioning calls it before reading/reusing/creating snapshots.
 // Exclusive marker creation plus owner-checked rollback resolves competing claims.
@@ -17,6 +20,9 @@ func ValidateConfigClaim(dir, stateDir, configDir string) error {
 		return err
 	}
 	data, markerErr := readPrivate(filepath.Join(target, ConfigMarkerFilename))
+	if os.IsNotExist(markerErr) {
+		data, markerErr = readPrivate(filepath.Join(target, LegacyConfigMarkerFilename))
+	}
 	if os.IsNotExist(markerErr) {
 		return nil
 	}
@@ -108,6 +114,9 @@ func VerifyConfigDirectory(inv Inventory, p Profile, dir string) (bool, error) {
 	}
 	data, err := readPrivate(filepath.Join(dir, ConfigMarkerFilename))
 	if os.IsNotExist(err) {
+		data, err = readPrivate(filepath.Join(dir, LegacyConfigMarkerFilename))
+	}
+	if os.IsNotExist(err) {
 		return false, nil
 	}
 	if err != nil {
@@ -155,6 +164,9 @@ func ReleaseConfig(dir, stateDir, configDir string) error {
 			}
 		}
 		if e := os.Remove(filepath.Join(configDir, ConfigMarkerFilename)); e != nil && !os.IsNotExist(e) {
+			return e
+		}
+		if e := os.Remove(filepath.Join(configDir, LegacyConfigMarkerFilename)); e != nil && !os.IsNotExist(e) {
 			return e
 		}
 		entries, e := os.ReadDir(configDir)
