@@ -159,6 +159,9 @@ func TestUninstallListsFilesAndRequiresConfirmation(t *testing.T) {
 	if !strings.Contains(prompt.String(), filepath.Join(p.ConfigDir, "service.key")) {
 		t.Fatal("confirmation prompt omitted the installed private key")
 	}
+	if !strings.Contains(prompt.String(), p.ConfigDir) {
+		t.Fatal("confirmation prompt omitted a directory removal candidate")
+	}
 	if _, err := os.Stat(filepath.Join(p.ConfigDir, "service.key")); err != nil {
 		t.Fatalf("cancelled uninstall removed a file: %v", err)
 	}
