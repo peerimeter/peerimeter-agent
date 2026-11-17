@@ -152,9 +152,10 @@ func TestDryRunIsReadOnlyAndListsManagedIdentity(t *testing.T) {
 func TestPurgeDryRunListsAndRemovalDeletesNestedTrackedData(t *testing.T) {
 	dir, profile := prepareUninstall(t)
 	stateFile := filepath.Join(profile.StateDir, "managed", "network", "cache.json")
+	stateConfigMarker := filepath.Join(profile.StateDir, installstate.ConfigMarkerFilename)
 	configFile := filepath.Join(profile.ConfigDir, "extra", "old.yaml")
 	configLock := filepath.Join(profile.ConfigDir, "agent.lock")
-	for _, path := range []string{stateFile, configFile, configLock} {
+	for _, path := range []string{stateFile, stateConfigMarker, configFile, configLock} {
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -170,7 +171,7 @@ func TestPurgeDryRunListsAndRemovalDeletesNestedTrackedData(t *testing.T) {
 	if err := json.Unmarshal(dryRun.Bytes(), &preview); err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{stateFile, configFile, configLock} {
+	for _, expected := range []string{stateFile, stateConfigMarker, configFile, configLock} {
 		canonical, err := installstate.Canonical(expected)
 		if err != nil {
 			t.Fatal(err)
@@ -187,7 +188,7 @@ func TestPurgeDryRunListsAndRemovalDeletesNestedTrackedData(t *testing.T) {
 	if err := executeWithRegistrationProbe(context.Background(), Options{InstallDir: dir, Purge: true}, &out, probe); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{stateFile, configFile, configLock} {
+	for _, path := range []string{stateFile, stateConfigMarker, configFile, configLock} {
 		if _, err := os.Lstat(path); !os.IsNotExist(err) {
 			t.Fatalf("purge left %s behind: %v", path, err)
 		}
@@ -198,19 +199,17 @@ func TestPurgeDryRunListsAndRemovalDeletesNestedTrackedData(t *testing.T) {
 	}
 }
 
-func TestPurgePreservesCurrentAndLegacyMarkersUntilMarkerPhase(t *testing.T) {
+func TestPurgePreservesOnlyScheduledMarkersUntilMarkerPhase(t *testing.T) {
 	root := t.TempDir()
-	markers := []string{
-		installstate.MarkerFilename, installstate.LegacyMarkerFilename,
-		installstate.ConfigMarkerFilename, installstate.LegacyConfigMarkerFilename,
-		installstate.RuntimeMarkerFilename, installstate.LegacyRuntimeMarkerFilename,
-	}
-	for _, name := range append(markers, "agent.lock", "untracked.txt") {
+	markers := []string{installstate.MarkerFilename, installstate.LegacyMarkerFilename}
+	untrackedMarkers := []string{installstate.ConfigMarkerFilename, installstate.LegacyConfigMarkerFilename, installstate.RuntimeMarkerFilename, installstate.LegacyRuntimeMarkerFilename}
+	for _, name := range append(append(markers, untrackedMarkers...), "agent.lock", "untracked.txt") {
 		if err := os.WriteFile(filepath.Join(root, name), []byte("fixture"), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := removeDirectoryContents(root); err != nil {
+	planned := []removalFile{{Path: filepath.Join(root, installstate.MarkerFilename), Marker: true}, {Path: filepath.Join(root, installstate.LegacyMarkerFilename), Marker: true}}
+	if _, err := removeDirectoryContents(root, plannedMarkersForRoot(root, planned)); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range markers {
@@ -218,7 +217,7 @@ func TestPurgePreservesCurrentAndLegacyMarkersUntilMarkerPhase(t *testing.T) {
 			t.Fatalf("purge removed ownership marker %s before marker phase: %v", name, err)
 		}
 	}
-	for _, name := range []string{"agent.lock", "untracked.txt"} {
+	for _, name := range append(untrackedMarkers, "agent.lock", "untracked.txt") {
 		if _, err := os.Lstat(filepath.Join(root, name)); !os.IsNotExist(err) {
 			t.Fatalf("purge retained untracked entry %s: %v", name, err)
 		}

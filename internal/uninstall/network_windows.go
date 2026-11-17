@@ -178,7 +178,8 @@ function Purge-Directory([string]$Path,[bool]$Top) {
     if (-not (Exists $Path)) { return }
     No-Reparse $Path
     foreach ($item in Get-ChildItem -LiteralPath $Path -Force) {
-        if ($Top -and $item.Name -in @('.profile','.config','.runtime','.peerimeter-agent.profile','.peerimeter-agent.config','.peerimeter-agent.runtime')) { continue }
+        $scheduledMarker = @($p.files | Where-Object { $_.marker -and $_.path -ieq $item.FullName }).Count -gt 0
+        if ($Top -and $scheduledMarker) { continue }
         No-Reparse $item.FullName
         if ($item.PSIsContainer) {
             Purge-Directory $item.FullName $false
