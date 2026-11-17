@@ -3,6 +3,7 @@
 package uninstall
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -521,35 +522,62 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		}
 		return json.NewEncoder(out).Encode(r)
 	}
+	confirmedProfiles := len(inv.Profiles)
 	if !opts.Yes {
 		if opts.ConfirmIn == nil || opts.ConfirmOut == nil {
 			return errors.New("uninstall requires confirmation; use --yes to confirm non-interactively")
 		}
-		_, _ = fmt.Fprintln(opts.ConfirmOut, "The following files and directories will be removed:")
+		preview := make([]string, 0, len(plan.Files)+len(plan.Directories))
+		seen := map[string]bool{}
 		for _, f := range plan.Files {
-			_, _ = fmt.Fprintln(opts.ConfirmOut, "  "+f.Path)
+			if !seen[f.Path] {
+				preview = append(preview, f.Path)
+				seen[f.Path] = true
+			}
+		}
+		for _, dir := range plan.Directories {
+			if !seen[dir] {
+				preview = append(preview, dir)
+				seen[dir] = true
+			}
 		}
 		for _, path := range []string{plan.Lock, plan.LegacyLock, plan.Inventory, plan.UpdateLock, plan.LegacyUpdateLock, plan.DataLock, plan.LegacyDataLock} {
-			if path != "" {
-				_, _ = fmt.Fprintln(opts.ConfirmOut, "  "+path)
+			if path != "" && !seen[path] {
+				preview = append(preview, path)
+				seen[path] = true
 			}
 		}
 		for _, path := range plan.LegacyInventories {
-			_, _ = fmt.Fprintln(opts.ConfirmOut, "  "+path)
+			if !seen[path] {
+				preview = append(preview, path)
+				seen[path] = true
+			}
 		}
 		if opts.Purge {
 			for _, root := range plan.PurgeDirs {
-				_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-					if err == nil && path != root {
-						_, _ = fmt.Fprintln(opts.ConfirmOut, "  "+path)
+				paths, err := listTree(root)
+				if err != nil {
+					return fmt.Errorf("cannot list purge contents of %s: %w", root, err)
+				}
+				for _, path := range paths {
+					if !seen[path] {
+						preview = append(preview, path)
+						seen[path] = true
 					}
-					return nil
-				})
+				}
 			}
 		}
+		_, _ = fmt.Fprintln(opts.ConfirmOut, "The following files and directories will be removed:")
+		for _, path := range preview {
+			_, _ = fmt.Fprintln(opts.ConfirmOut, "  "+path)
+		}
+		if !opts.Purge {
+			_, _ = fmt.Fprintln(opts.ConfirmOut, "Non-empty directories are preserved unless --purge is enabled.")
+		}
 		_, _ = fmt.Fprint(opts.ConfirmOut, "Continue? [y/N] ")
-		var answer string
-		if _, err := fmt.Fscan(opts.ConfirmIn, &answer); err != nil || (answer != "y" && answer != "Y" && answer != "yes" && answer != "YES") {
+		answer, readErr := bufio.NewReader(opts.ConfirmIn).ReadString('\n')
+		answer = strings.TrimSpace(answer)
+		if (readErr != nil && !errors.Is(readErr, io.EOF)) || (answer != "y" && answer != "Y" && answer != "yes" && answer != "YES") {
 			return errors.New("uninstall cancelled")
 		}
 	}
@@ -574,6 +602,9 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	}
 	if reread.ID != inv.ID {
 		return errors.New("installation inventory changed before removal")
+	}
+	if len(reread.Profiles) != confirmedProfiles {
+		return errors.New("installation profiles changed before removal")
 	}
 	if _, found, err := selfupdate.FindJournal(reread); err != nil {
 		return err
