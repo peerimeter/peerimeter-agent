@@ -225,17 +225,20 @@ func TestPurgePreservesOnlyScheduledMarkersUntilMarkerPhase(t *testing.T) {
 }
 
 func TestPurgeRejectsRootsContainingInstallationMetadata(t *testing.T) {
-	for _, protected := range []string{"data", "locks"} {
+	for _, protected := range []string{"install", "data", "locks"} {
 		root := filepath.Join(string(filepath.Separator), "tmp", "peerimeter-purge-test")
-		inv := installstate.Inventory{DataDir: filepath.Join(root, "data"), LockDir: filepath.Join(root, "locks")}
-		if protected == "data" {
+		inv := installstate.Inventory{InstallDir: filepath.Join(root, "install"), DataDir: filepath.Join(root, "data"), LockDir: filepath.Join(root, "locks")}
+		if protected == "install" {
+			inv.InstallDir = filepath.Join(root, "state", "install")
+		} else if protected == "data" {
 			inv.DataDir = filepath.Join(root, "state", "inventory")
 		} else {
 			inv.LockDir = filepath.Join(root, "state", "locks")
 		}
 		plan := removalPlan{PurgeDirs: []string{filepath.Join(root, "state")}}
 		err := validatePurgeRoots(inv, plan)
-		if err == nil || !strings.Contains(err.Error(), inv.DataDir) && !strings.Contains(err.Error(), inv.LockDir) {
+		protectedPath := map[string]string{"install": inv.InstallDir, "data": inv.DataDir, "locks": inv.LockDir}[protected]
+		if err == nil || !strings.Contains(err.Error(), protectedPath) {
 			t.Fatalf("purge root was not rejected for nested %s directory: %v", protected, err)
 		}
 	}

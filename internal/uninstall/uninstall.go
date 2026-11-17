@@ -186,7 +186,7 @@ func purgeRootContains(root, path string) bool {
 
 func validatePurgeRoots(inv installstate.Inventory, plan removalPlan) error {
 	for _, root := range plan.PurgeDirs {
-		for _, protected := range []struct{ name, path string }{{"installation data", inv.DataDir}, {"installation lock", inv.LockDir}} {
+		for _, protected := range []struct{ name, path string }{{"installation", inv.InstallDir}, {"installation data", inv.DataDir}, {"installation lock", inv.LockDir}} {
 			if purgeRootContains(root, protected.path) {
 				return fmt.Errorf("purge directory %s contains the %s directory %s; refusing to delete installation metadata", root, protected.name, protected.path)
 			}
