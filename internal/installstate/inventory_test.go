@@ -1,11 +1,34 @@
 package installstate
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"testing"
 )
+
+func TestPrivateFileDisappearedDuringInspection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".runtime")
+	wrappedENOENT := fmt.Errorf("cannot verify extended permissions: %w", syscall.ENOENT)
+	if !privateFileDisappeared(path, wrappedENOENT) {
+		t.Fatal("wrapped ENOENT after the inspected file disappeared should be retried")
+	}
+	if privateFileDisappeared(path, &os.PathError{Op: "lstat", Path: path, Err: syscall.ENOENT}) {
+		t.Fatal("an initial Lstat miss must remain a not-exist result")
+	}
+	if err := os.WriteFile(path, []byte("marker"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if privateFileDisappeared(path, wrappedENOENT) {
+		t.Fatal("must not retry when the inspected path exists again")
+	}
+	if privateFileDisappeared(path, errors.New("unrelated inspection failure")) {
+		t.Fatal("must not retry unrelated inspection failures")
+	}
+}
 
 func TestCheckDirectoryRejectsWritableAncestor(t *testing.T) {
 	if runtime.GOOS == "windows" {

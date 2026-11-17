@@ -249,6 +249,9 @@ func readPrivate(path string) ([]byte, error) {
 
 func readPrivateOnce(path string) ([]byte, bool, error) {
 	if err := CheckFile(path); err != nil {
+		if privateFileDisappeared(path, err) {
+			return nil, true, nil
+		}
 		return nil, false, err
 	}
 	f, err := os.Open(path)
@@ -265,6 +268,9 @@ func readPrivateOnce(path string) ([]byte, bool, error) {
 		return nil, true, nil
 	}
 	if err := checkPrivate(path, before); err != nil {
+		if privateFileDisappeared(path, err) {
+			return nil, true, nil
+		}
 		return nil, false, err
 	}
 	data, err := io.ReadAll(io.LimitReader(f, MaxInventorySize+1))
@@ -276,6 +282,24 @@ func readPrivateOnce(path string) ([]byte, bool, error) {
 	}
 	return data, false, nil
 }
+
+// Darwin's ACL check opens a file after its metadata has already been
+// inspected. A concurrent owner can remove a private marker between those
+// operations. Retry only when a wrapped ENOENT came from that second open and
+// the path is still absent; an initial Lstat miss remains an ordinary
+// not-exist result for callers that distinguish missing markers.
+func privateFileDisappeared(path string, err error) bool {
+	if !errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return false
+	}
+	_, statErr := os.Lstat(path)
+	return errors.Is(statErr, os.ErrNotExist)
+}
+
 func WritePrivate(path string, data []byte) error {
 	return WritePrivateWithPolicy(path, data, false)
 }
