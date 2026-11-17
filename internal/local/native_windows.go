@@ -65,6 +65,8 @@ func prepareDirectory(dir string) error {
 	return nil
 }
 
+func prepareStateDirectory(dir string) error { return prepareDirectory(dir) }
+
 func prepareServiceDirectory(dir string) error {
 	if _, err := os.Lstat(dir); os.IsNotExist(err) {
 		return prepareDirectory(dir)
@@ -131,7 +133,7 @@ func inspectExistingStateDirectory(dir string) error {
 	}
 	return nil
 }
-func openStateLock(dir string, existing bool) (*os.File, error) {
+func openStateLock(dir string, existing, _ bool) (*os.File, error) {
 	if existing {
 		if err := inspectExistingStateDirectory(dir); err != nil {
 			return nil, err

@@ -78,21 +78,35 @@ func unixDefaults(target, rootConfig, rootState, rootRuntime string) Layout {
 	if runtime.GOOS != target || os.Geteuid() == 0 {
 		return Layout{rootConfig, rootState, rootRuntime}
 	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return Layout{rootConfig, rootState, rootRuntime}
+	config := absoluteEnvironmentPath("XDG_CONFIG_HOME")
+	state := absoluteEnvironmentPath("XDG_STATE_HOME")
+	runtimeDir := absoluteEnvironmentPath("XDG_RUNTIME_DIR")
+	var home string
+	if config == "" || state == "" {
+		var err error
+		home, err = os.UserHomeDir()
+		if err != nil || home == "" || !filepath.IsAbs(home) {
+			return Layout{rootConfig, rootState, rootRuntime}
+		}
 	}
-	config := os.Getenv("XDG_CONFIG_HOME")
 	if config == "" {
 		config = filepath.Join(home, ".config")
 	}
-	state := os.Getenv("XDG_STATE_HOME")
 	if state == "" {
 		state = filepath.Join(home, ".local", "state")
 	}
-	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
 	if runtimeDir == "" {
 		runtimeDir = filepath.Join(state, "peerimeter-agent", "run")
+	} else {
+		runtimeDir = filepath.Join(runtimeDir, "peerimeter-agent")
 	}
-	return Layout{filepath.Join(config, "peerimeter-agent"), filepath.Join(state, "peerimeter-agent"), filepath.Join(runtimeDir, "peerimeter-agent")}
+	return Layout{filepath.Join(config, "peerimeter-agent"), filepath.Join(state, "peerimeter-agent"), runtimeDir}
+}
+
+func absoluteEnvironmentPath(name string) string {
+	value := os.Getenv(name)
+	if !filepath.IsAbs(value) {
+		return ""
+	}
+	return filepath.Clean(value)
 }

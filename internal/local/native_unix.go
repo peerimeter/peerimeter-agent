@@ -28,6 +28,14 @@ func trustedDirectoryOwner(uid uint32) bool {
 }
 
 func prepareDirectory(dir string) error {
+	return prepareDirectoryWithSudoOwner(dir, false)
+}
+
+func prepareStateDirectory(dir string) error {
+	return prepareDirectoryWithSudoOwner(dir, true)
+}
+
+func prepareDirectoryWithSudoOwner(dir string, allowSudoOwner bool) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("cannot create protected agent state directory %s: %w", dir, err)
 	}
@@ -36,14 +44,14 @@ func prepareDirectory(dir string) error {
 		return fmt.Errorf("state directory %s must be owner-controlled (chmod 700 or 711), without group/other read or write access, and not a symbolic link", dir)
 	}
 	var stat unix.Stat_t
-	if unix.Stat(dir, &stat) != nil || !trustedDirectoryOwner(stat.Uid) {
+	if unix.Stat(dir, &stat) != nil || (stat.Uid != uint32(os.Geteuid()) && !(allowSudoOwner && trustedDirectoryOwner(stat.Uid))) {
 		return fmt.Errorf("state directory %s must belong to the current effective user", dir)
 	}
 	return nil
 }
 
 func prepareServiceDirectory(dir string) error { return prepareDirectory(dir) }
-func openStateLock(dir string, existing bool) (*os.File, error) {
+func openStateLock(dir string, existing, allowSudoOwner bool) (*os.File, error) {
 	// Lock the durable directory inode itself: alternate runtime directories must
 	// not permit competing managers, and no disposable lock file becomes identity.
 	fd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
@@ -51,7 +59,7 @@ func openStateLock(dir string, existing bool) (*os.File, error) {
 		return nil, fmt.Errorf("cannot open protected state directory lock %s: %w", dir, err)
 	}
 	var st unix.Stat_t
-	if unix.Fstat(fd, &st) != nil || !trustedDirectoryOwner(st.Uid) || st.Mode&0066 != 0 {
+	if unix.Fstat(fd, &st) != nil || (st.Uid != uint32(os.Geteuid()) && !(allowSudoOwner && trustedDirectoryOwner(st.Uid))) || st.Mode&0066 != 0 {
 		unix.Close(fd)
 		return nil, fmt.Errorf("state lock directory %s requires an owned directory without group/other read or write permissions", dir)
 	}
@@ -101,7 +109,7 @@ func listenWithHooks(dir, operator string, beforeListen, onClose func() error) (
 	if err := prepareDirectory(dir); err != nil {
 		return nil, err
 	}
-	runtimeLock, err := openStateLock(dir, false)
+	runtimeLock, err := openStateLock(dir, false, false)
 	if err != nil {
 		return nil, errors.New("another agent owns this runtime directory")
 	}
