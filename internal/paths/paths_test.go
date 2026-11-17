@@ -9,7 +9,7 @@ import (
 
 func TestDefaultLayouts(t *testing.T) {
 	for target, want := range map[string]Layout{"linux": {"/etc/peerimeter", "/var/lib/peerimeter-agent", "/run/peerimeter-agent"}, "darwin": {"/etc/peerimeter", "/Library/Application Support/Peerimeter", "/var/run/peerimeter-agent"}} {
-		if os.Geteuid() != 0 {
+		if target == runtime.GOOS && os.Geteuid() != 0 {
 			home, err := os.UserHomeDir()
 			if err != nil {
 				t.Fatal(err)

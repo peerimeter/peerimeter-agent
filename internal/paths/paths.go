@@ -19,9 +19,9 @@ func ResolveForOS(options Options, target string) (Layout, error) {
 	var result Layout
 	switch target {
 	case "linux":
-		result = unixDefaults("/etc/peerimeter", "/var/lib/peerimeter-agent", "/run/peerimeter-agent")
+		result = unixDefaults("linux", "/etc/peerimeter", "/var/lib/peerimeter-agent", "/run/peerimeter-agent")
 	case "darwin":
-		result = unixDefaults("/etc/peerimeter", "/Library/Application Support/Peerimeter", "/var/run/peerimeter-agent")
+		result = unixDefaults("darwin", "/etc/peerimeter", "/Library/Application Support/Peerimeter", "/var/run/peerimeter-agent")
 	case "windows":
 		base := os.Getenv("ProgramData")
 		if base == "" {
@@ -74,8 +74,8 @@ func ResolveForOS(options Options, target string) (Layout, error) {
 	return result, nil
 }
 
-func unixDefaults(rootConfig, rootState, rootRuntime string) Layout {
-	if os.Geteuid() == 0 {
+func unixDefaults(target, rootConfig, rootState, rootRuntime string) Layout {
+	if runtime.GOOS != target || os.Geteuid() == 0 {
 		return Layout{rootConfig, rootState, rootRuntime}
 	}
 	home, err := os.UserHomeDir()
