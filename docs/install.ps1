@@ -167,7 +167,7 @@ try {
         foreach ($inventoryPath in $inventoryPaths) {
             if (Test-Path -LiteralPath $inventoryPath) {
                 $inventoryItem = Get-Item -LiteralPath $inventoryPath -Force
-                if (-not $inventoryItem.PSIsContainer -or ($inventoryItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Installation inventory registration failed' }
+                if ($inventoryItem.PSIsContainer -or ($inventoryItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Installation inventory registration failed' }
                 $inventoryFound = $true
             }
         }
