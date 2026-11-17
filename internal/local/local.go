@@ -187,6 +187,7 @@ type Operations struct {
 	InstanceID  string
 	NetworkID   string
 	ConfigPath  string
+	PublicKey   string
 	Config      func() ([]byte, error)
 	ApplyConfig func(context.Context, []byte) error
 	// BeforeListen claims runtime ownership under its exclusive guard before any
@@ -222,7 +223,7 @@ func Serve(ctx context.Context, dir string, ops Operations) (func() error, error
 	runtimeID := hex.EncodeToString(runtimeIDBytes[:])
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/identity", func(w http.ResponseWriter, r *http.Request) {
-		write(w, map[string]string{"instance_id": ops.InstanceID, "runtime_id": runtimeID, "network_id": ops.NetworkID, "config_path": ops.ConfigPath}, nil)
+		write(w, map[string]string{"instance_id": ops.InstanceID, "runtime_id": runtimeID, "network_id": ops.NetworkID, "config_path": ops.ConfigPath, "public_key": ops.PublicKey}, nil)
 	})
 	mux.HandleFunc("GET /v1/config", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Peerimeter-Runtime-ID") != runtimeID || ops.Config == nil {
@@ -300,6 +301,7 @@ type Identity struct {
 	RuntimeID  string `json:"runtime_id"`
 	NetworkID  string `json:"network_id"`
 	ConfigPath string `json:"config_path"`
+	PublicKey  string `json:"public_key"`
 }
 
 func GetIdentity(ctx context.Context, dir string) (Identity, error) {
