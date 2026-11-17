@@ -243,24 +243,28 @@ peerimeter-agent config push --token-file /secure/join-token.txt \
 
 On Linux and macOS, protect the token file with owner-only permissions (for
 example, `chmod 600`). On Windows, allow access only to the current user,
-SYSTEM and Administrators. To join a network created in the service API, run:
+SYSTEM and Administrators. To register with a network created in the service
+API and save its configuration, run:
 
 ```sh
-cat /secure/join-token.txt | sudo peerimeter-agent join
+cat /secure/join-token.txt | peerimeter-agent join
 ```
 
 `join` generates a local WireGuard key if needed, registers its public key and
 the default-route physical interface's addresses, then receives a tunnel IPv4
 address from the network's API-configured CIDR. It selects a peer's LAN address
 when the reported CIDRs overlap; otherwise it uses that peer's STUN-observed
-public UDP mapping. While `join` runs in the foreground, it fetches peers every
-15 seconds and reconciles endpoint and peer changes without restarting the
-tunnel. The key, config, and shared service credential are stored in protected
-local files. Re-run `join` with the same token after a restart; the local key
-and node ID are reused. The shared token remains stored after the foreground
-process stops. Removing the protected `state-dir/managed/<network-id>.token`
-file only deletes the local credential; the service-side node record remains.
-There is not yet a `leave` command or server-side node revocation API.
+public UDP mapping. It saves the managed configuration and service credential,
+then exits without starting a tunnel. Add `--run` to start the tunnel and keep
+it in the foreground while fetching peers every 15 seconds and reconciling
+endpoint and peer changes. Starting the tunnel requires administrator/root
+privileges on macOS and Linux. The key, config, and shared service credential
+are stored in protected local files. Re-run `join` with the same token to
+refresh registration; the local key and node ID are reused. The shared token
+remains stored after the command exits. Removing the protected
+`state-dir/managed/<network-id>.token` file only deletes the local credential;
+the service-side node record remains. There is not yet a `leave` command or
+server-side node revocation API.
 
 Join tokens require HTTPS by default, while HTTP URLs on `localhost` or a
 loopback IP are allowed automatically for local development. For a non-local
@@ -270,7 +274,7 @@ network.
 
 The dashboard uses the service-wide API key for management. An agent's join
 token is scoped to its selected network. STUN is probed on the configured WireGuard
-listen port before the tunnel starts. If STUN is unavailable, same-LAN peers
+listen port during registration. If STUN is unavailable, same-LAN peers
 can still connect. UDP hole punching is best-effort and direct-only: symmetric
 NATs and UDP-blocking firewalls can prevent a connection. TURN/relay fallback
 is not included. A CIDR match only chooses a LAN candidate; a WireGuard
