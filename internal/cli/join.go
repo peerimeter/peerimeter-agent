@@ -39,6 +39,14 @@ type peerEntry struct {
 	endpoint string
 }
 
+type managedNetworkMetadata struct {
+	Version           int    `json:"version"`
+	APIURL            string `json:"api_url"`
+	NetworkID         string `json:"network_id"`
+	NodeID            string `json:"node_id"`
+	AllowInsecureHTTP bool   `json:"allow_insecure_http,omitempty"`
+}
+
 func defaultNodeID(hostname string) (string, error) {
 	id := strings.TrimSpace(hostname)
 	id = strings.TrimSuffix(id, ".localdomain")
@@ -191,6 +199,9 @@ func newJoinCommand(app *application) *cobra.Command {
 			return err
 		}
 		if err := saveManagedToken(filepath.Join(layout.StateDir, "managed", networkID+".token"), bundle.EnrollmentToken); err != nil {
+			return err
+		}
+		if err := saveManagedNetworkMetadata(layout.StateDir, managedNetworkMetadata{Version: 1, APIURL: bundle.APIURL, NetworkID: networkID, NodeID: nodeID, AllowInsecureHTTP: allowInsecureHTTP}); err != nil {
 			return err
 		}
 		if err := json.NewEncoder(app.out).Encode(map[string]any{"state": "registered", "network_id": networkID, "node_id": nodeID, "tunnel_address": registered.TunnelAddress, "peer_count": len(initial.Peers)}); err != nil {
