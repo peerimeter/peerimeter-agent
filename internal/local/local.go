@@ -238,6 +238,9 @@ func Serve(ctx context.Context, dir string, ops Operations) (func() error, error
 		_, _ = w.Write(append(append([]byte(`{"config":`), data...), '}'))
 	})
 	var applyMu sync.Mutex
+	var applyStateMu sync.Mutex
+	var applyWG sync.WaitGroup
+	applyStopping := false
 	mux.HandleFunc("POST /v1/config/apply", func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			RuntimeID string `json:"runtime_id"`
@@ -250,6 +253,15 @@ func Serve(ctx context.Context, dir string, ops Operations) (func() error, error
 			write(w, nil, errors.New("running agent identity changed or config update is unavailable"))
 			return
 		}
+		applyStateMu.Lock()
+		if applyStopping {
+			applyStateMu.Unlock()
+			write(w, nil, errors.New("agent is stopping"))
+			return
+		}
+		applyWG.Add(1)
+		applyStateMu.Unlock()
+		defer applyWG.Done()
 		applyMu.Lock()
 		defer applyMu.Unlock()
 		applyCtx, cancelApply := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
@@ -271,6 +283,10 @@ func Serve(ctx context.Context, dir string, ops Operations) (func() error, error
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 4096}
 	go func() { _ = server.Serve(listener) }()
 	return func() error {
+		applyStateMu.Lock()
+		applyStopping = true
+		applyStateMu.Unlock()
+		applyWG.Wait()
 		shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		// net/http ignores some listener Close errors. Explicit idempotent Close
