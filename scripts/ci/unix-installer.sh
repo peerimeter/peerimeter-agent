@@ -155,16 +155,16 @@ for p in sorted(root.iterdir()):
  s=p.lstat();out[p.name]=[s.st_mode,s.st_uid,s.st_gid,s.st_size,s.st_mtime_ns,hashlib.sha256(p.read_bytes()).hexdigest()]
 print(json.dumps(out,sort_keys=True))
 PY
-"$destination/peerimeter-agent" uninstall --json --install-dir "$destination" --dry-run >"$work/removal-dry-run.json"
-python3 - "$destination" "$work/before-dry-run.json" "$work/removal-dry-run.json" <<'PY'
+if printf 'n\n' | "$destination/peerimeter-agent" uninstall --json --install-dir "$destination" >"$work/confirmation.json" 2>"$work/confirmation.log"; then echo 'Uninstall ignored a declined confirmation.' >&2; exit 1; fi
+grep -F "$destination/peerimeter-agent" "$work/confirmation.log" >/dev/null
+python3 - "$destination" "$work/before-dry-run.json" <<'PY'
 import hashlib,json,pathlib,sys
 root=pathlib.Path(sys.argv[1]);out={}
 for p in sorted(root.iterdir()):
  s=p.lstat();out[p.name]=[s.st_mode,s.st_uid,s.st_gid,s.st_size,s.st_mtime_ns,hashlib.sha256(p.read_bytes()).hexdigest()]
-assert out==json.load(open(sys.argv[2])),'dry-run changed installed resources'
-assert json.load(open(sys.argv[3]))['state']=='dry_run'
+assert out==json.load(open(sys.argv[2])),'declined confirmation changed installed resources'
 PY
-"$destination/peerimeter-agent" uninstall --json --install-dir "$destination" >"$work/removal.json"
+"$destination/peerimeter-agent" uninstall --json --yes --install-dir "$destination" >"$work/removal.json"
 python3 - "$work/removal.json" <<'PY'
 import json,sys
 assert json.load(open(sys.argv[1]))['state']=='removed'
@@ -173,7 +173,7 @@ for member in peerimeter-agent .install.ref; do test ! -e "$destination/$member"
 for path in "$doc_destination/peerimeter-agent.NOTICES.txt" "$data_destination/.install.yaml" "$lock_destination/.install.lock"; do test ! -e "$path"; done
 cmp "$work/original.config" "$destination/operator.config"
 cmp "$work/original.key" "$destination/operator.key"
-"$work/uninstall-verifier" uninstall --json --install-dir "$destination" >"$work/repeated-removal.json"
+"$work/uninstall-verifier" uninstall --json --yes --install-dir "$destination" >"$work/repeated-removal.json"
 python3 - "$work/repeated-removal.json" <<'PY'
 import json,sys
 assert json.load(open(sys.argv[1]))['state']=='already_absent'

@@ -29,7 +29,7 @@ if "$other" service install --config "$source_config" --config-dir "$config_dir"
 fi
 snapshot >"$work/after-rejection.json"
 cmp "$work/before.json" "$work/after-rejection.json"
-"$other" uninstall --json --install-dir "$program" >"$work/removed.json"
+"$other" uninstall --json --yes --install-dir "$program" >"$work/removed.json"
 python3 - "$work/removed.json" <<'PY'
 import json,sys
 assert json.load(open(sys.argv[1]))['state']=='removed'

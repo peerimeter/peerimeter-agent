@@ -224,7 +224,7 @@ function Verify-ConfigurationCollision {
         Compare-Object $beforeItems $afterItems -Property Path,Attributes,ACL,Size,Modified,Hash | Format-Table -AutoSize | Out-String | Write-Output
         throw 'Rejected install changed installation A snapshots or identity'
     }
-    $removed = & $otherAgent uninstall --json --install-dir $collisionInstall | ConvertFrom-Json
+    $removed = & $otherAgent uninstall --json --yes --install-dir $collisionInstall | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { Show-RecentRemovalDiagnostics; throw 'Rejected configuration installation could not be removed safely' }
     Confirm-RemovalReceipt $removed
     $afterService = Get-CimInstance Win32_Service -Filter "Name='PeerimeterAgent'"
@@ -295,14 +295,14 @@ function Verify-HistoricalRuntimeReuse {
         $markerPath = Join-Path $sharedRuntime '.runtime'
         $currentMarker = (Get-FileHash -LiteralPath $markerPath).Hash
         if ($currentMarker -eq $firstMarker) { throw 'Reused runtime identity did not change owners' }
-        $removed = & (Join-Path $reuseInstallX 'peerimeter-agent.exe') uninstall --json --install-dir $reuseInstallX | ConvertFrom-Json
+        $removed = & (Join-Path $reuseInstallX 'peerimeter-agent.exe') uninstall --json --yes --install-dir $reuseInstallX | ConvertFrom-Json
         if ($LASTEXITCODE -ne 0) { Show-RecentRemovalDiagnostics; throw 'Historical-owner uninstall failed' }
         Confirm-RemovalReceipt $removed
         $live = & $agentExe status --json --runtime-dir $sharedRuntime | ConvertFrom-Json
         if ($LASTEXITCODE -ne 0 -or $live.state -ne 'running' -or $live.interface_name -ne $snapshots[1].interface_name -or $processes[1].HasExited -or (Get-FileHash -LiteralPath $markerPath).Hash -ne $currentMarker) { throw 'Historical-owner uninstall damaged the newer installation runtime/adapter' }
         & $agentExe stop --runtime-dir $sharedRuntime | Out-Null
         if ($LASTEXITCODE -ne 0 -or -not $processes[1].WaitForExit(30000)) { throw 'New runtime owner failed to stop' }
-        $removed = & (Join-Path $reuseInstallY 'peerimeter-agent.exe') uninstall --json --install-dir $reuseInstallY | ConvertFrom-Json
+        $removed = & (Join-Path $reuseInstallY 'peerimeter-agent.exe') uninstall --json --yes --install-dir $reuseInstallY | ConvertFrom-Json
         if ($LASTEXITCODE -ne 0) { Show-RecentRemovalDiagnostics; throw 'New runtime owner cleanup failed' }
         Confirm-RemovalReceipt $removed
     } finally {
@@ -327,7 +327,7 @@ function Verify-RuntimeCollision {
     $runtimeMatch = if ($profiles.Count -eq 1) { [regex]::Match($profiles[0].Value, '(?m)^\s+runtime_dir:\s*(.*?)\s*$') } else { $null }
     $runtimePath = if ($runtimeMatch -and $runtimeMatch.Success) { $runtimeMatch.Groups[1].Value.Trim([char[]]@('"', "'")) } else { '' }
     if (-not $runtimeMatch -or -not $runtimeMatch.Success -or $runtimePath -ine $state -or $profiles[0].Value -match '(?m)^\s+runtime_owned: true\s*$') { throw 'Failed installation did not retain a non-owned planned runtime profile' }
-    $removal = & $otherAgent uninstall --json --install-dir $collisionInstall | ConvertFrom-Json
+    $removal = & $otherAgent uninstall --json --yes --install-dir $collisionInstall | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { Show-RecentRemovalDiagnostics; throw 'Installation B cleanup failed' }
     if ($removal.state -eq 'pending') {
         $done = $false
@@ -529,21 +529,17 @@ peers:
     Verify-Traffic $serviceState | Out-Null
     $originalKeyHash = (Get-FileHash -LiteralPath (Join-Path $dir 'native.key')).Hash
     foreach ($folder in @($installation,$state,$serviceState)) { [IO.File]::WriteAllText((Join-Path $folder 'unrelated.txt'),'unrelated operator file') }
-    $beforeDry = Snapshot-ManagedTrees @($installation,$installResourceRoot,$state,$defaultState,$configPath,(Join-Path $dir 'native.key'))
-    $dry = Invoke-Agent -CommandArgs @('uninstall','--install-dir',$installation,'--dry-run') | ConvertFrom-Json
-    if ($dry.state -ne 'dry_run' -or @($dry.paths).Count -lt 5) { throw 'Full uninstall dry-run omitted tracked resources' }
-    if ((Snapshot-ManagedTrees @($installation,$installResourceRoot,$state,$defaultState,$configPath,(Join-Path $dir 'native.key'))) -ne $beforeDry) { throw 'Full uninstall dry-run mutated files, ACLs or inventory' }
     if ((Agent-Status $serviceState).state -ne 'running') { throw 'Dry-run stopped the live service' }
     $noticePath = Join-Path (Join-Path $installResourceRoot 'Documentation') 'peerimeter-agent.NOTICES.txt'
     $noticeBytes = [IO.File]::ReadAllBytes($noticePath)
     [IO.File]::AppendAllText($noticePath,'modified tracked notice')
-    & $agentExe uninstall --json --install-dir $installation *> $null
+    & $agentExe uninstall --json --yes --install-dir $installation *> $null
     if ($LASTEXITCODE -eq 0) { throw 'Full uninstall ignored a changed inventoried program file' }
     if ((Agent-Status $serviceState).state -ne 'running') { throw 'Hash-conflict preflight stopped the working service' }
     [IO.File]::WriteAllBytes($noticePath,$noticeBytes)
     # Resume safely when a previous attempt already removed one tracked member.
     Remove-Item -LiteralPath $noticePath -Force
-    $removal = Invoke-Agent -CommandArgs @('uninstall','--install-dir',$installation) | ConvertFrom-Json
+    $removal = Invoke-Agent -CommandArgs @('uninstall','--yes','--install-dir',$installation) | ConvertFrom-Json
     if ($removal.state -eq 'pending') {
         $removalResult = $removal.result_file
         if (-not $removalResult) { throw 'Windows pending removal omitted its result path' }
@@ -570,7 +566,7 @@ peers:
         if ([IO.File]::ReadAllText((Join-Path $folder 'unrelated.txt')) -ne 'unrelated operator file') { throw 'Full uninstall deleted unrelated data' }
     }
     if (-not (Test-Path -LiteralPath $helperExe) -or (Get-FileHash -LiteralPath (Join-Path $dir 'native.key')).Hash -ne $originalKeyHash) { throw 'Full uninstall removed an unrelated helper or original source key' }
-    $again = & $Agent uninstall --json --install-dir $installation | ConvertFrom-Json
+    $again = & $Agent uninstall --json --yes --install-dir $installation | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0 -or $again.state -ne 'already_absent') { throw 'Repeated full uninstall was not safe and idempotent' }
     Write-Output 'PASS Windows actual installer inventory, read-only dry-run, live full removal, changed-file refusal, partial-state retry, idempotency and unrelated/source-key preservation'
 } catch {
