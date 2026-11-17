@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strings"
@@ -449,6 +450,7 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	if err != nil {
 		return err
 	}
+	confirmedProfiles := append([]installstate.Profile(nil), inv.Profiles...)
 	if _, found, err := selfupdate.FindJournal(inv); err != nil {
 		return err
 	} else if found {
@@ -522,7 +524,6 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		}
 		return json.NewEncoder(out).Encode(r)
 	}
-	confirmedProfiles := len(inv.Profiles)
 	if !opts.Yes {
 		if opts.ConfirmIn == nil || opts.ConfirmOut == nil {
 			return errors.New("uninstall requires confirmation; use --yes to confirm non-interactively")
@@ -567,14 +568,26 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 				}
 			}
 		}
-		_, _ = fmt.Fprintln(opts.ConfirmOut, "The following files and directories will be removed:")
+		writeLine := func(line string) error {
+			_, err := fmt.Fprintln(opts.ConfirmOut, line)
+			return err
+		}
+		if err := writeLine("The following files and directories will be removed:"); err != nil {
+			return fmt.Errorf("cannot display uninstall preview: %w", err)
+		}
 		for _, path := range preview {
-			_, _ = fmt.Fprintln(opts.ConfirmOut, "  "+path)
+			if err := writeLine("  " + path); err != nil {
+				return fmt.Errorf("cannot display uninstall preview: %w", err)
+			}
 		}
 		if !opts.Purge {
-			_, _ = fmt.Fprintln(opts.ConfirmOut, "Non-empty directories are preserved unless --purge is enabled.")
+			if err := writeLine("Non-empty directories are preserved unless --purge is enabled."); err != nil {
+				return fmt.Errorf("cannot display uninstall preview: %w", err)
+			}
 		}
-		_, _ = fmt.Fprint(opts.ConfirmOut, "Continue? [y/N] ")
+		if _, err := fmt.Fprint(opts.ConfirmOut, "Continue? [y/N] "); err != nil {
+			return fmt.Errorf("cannot display uninstall confirmation prompt: %w", err)
+		}
 		answer, readErr := bufio.NewReader(opts.ConfirmIn).ReadString('\n')
 		answer = strings.TrimSpace(answer)
 		if (readErr != nil && !errors.Is(readErr, io.EOF)) || (answer != "y" && answer != "Y" && answer != "yes" && answer != "YES") {
@@ -603,7 +616,7 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	if reread.ID != inv.ID {
 		return errors.New("installation inventory changed before removal")
 	}
-	if len(reread.Profiles) != confirmedProfiles {
+	if !reflect.DeepEqual(reread.Profiles, confirmedProfiles) {
 		return errors.New("installation profiles changed before removal")
 	}
 	if _, found, err := selfupdate.FindJournal(reread); err != nil {
