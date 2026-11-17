@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
@@ -177,6 +178,23 @@ func contains(values []string, value string) bool {
 	}
 	return false
 }
+
+func purgeRootContains(root, path string) bool {
+	relative, err := filepath.Rel(root, path)
+	return err == nil && (relative == "." || relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)))
+}
+
+func validatePurgeRoots(inv installstate.Inventory, plan removalPlan) error {
+	for _, root := range plan.PurgeDirs {
+		for _, protected := range []struct{ name, path string }{{"installation data", inv.DataDir}, {"installation lock", inv.LockDir}} {
+			if purgeRootContains(root, protected.path) {
+				return fmt.Errorf("purge directory %s contains the %s directory %s; refusing to delete installation metadata", root, protected.name, protected.path)
+			}
+		}
+	}
+	return nil
+}
+
 func validateOverrides(opts Options, inv installstate.Inventory) error {
 	for _, item := range []struct {
 		value string
@@ -234,6 +252,9 @@ func verifyProfile(inv installstate.Inventory, p installstate.Profile) error {
 	return nil
 }
 func preflight(inv installstate.Inventory, p removalPlan) error {
+	if err := validatePurgeRoots(inv, p); err != nil {
+		return err
+	}
 	for _, dir := range []string{inv.InstallDir, inv.DocDir, inv.DataDir, inv.LockDir} {
 		if err := installstate.CheckDirectoryWithPolicy(dir, inv.AllowInsecureInstallDir); err != nil {
 			return err
@@ -841,7 +862,7 @@ func removeDirectoryContents(root string) ([]string, error) {
 	for _, entry := range entries {
 		// Keep ownership and coordination markers until the normal marker
 		// removal phase so a partial purge can still be retried safely.
-		if entry.Name() == installstate.MarkerFilename || entry.Name() == installstate.ConfigMarkerFilename || entry.Name() == installstate.RuntimeMarkerFilename || entry.Name() == "agent.lock" {
+		if entry.Name() == installstate.MarkerFilename || entry.Name() == installstate.LegacyMarkerFilename || entry.Name() == installstate.ConfigMarkerFilename || entry.Name() == installstate.LegacyConfigMarkerFilename || entry.Name() == installstate.RuntimeMarkerFilename || entry.Name() == installstate.LegacyRuntimeMarkerFilename {
 			continue
 		}
 		path := filepath.Join(root, entry.Name())

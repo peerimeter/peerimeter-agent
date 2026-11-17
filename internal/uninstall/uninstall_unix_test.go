@@ -153,7 +153,8 @@ func TestPurgeDryRunListsAndRemovalDeletesNestedTrackedData(t *testing.T) {
 	dir, profile := prepareUninstall(t)
 	stateFile := filepath.Join(profile.StateDir, "managed", "network", "cache.json")
 	configFile := filepath.Join(profile.ConfigDir, "extra", "old.yaml")
-	for _, path := range []string{stateFile, configFile} {
+	configLock := filepath.Join(profile.ConfigDir, "agent.lock")
+	for _, path := range []string{stateFile, configFile, configLock} {
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -169,7 +170,7 @@ func TestPurgeDryRunListsAndRemovalDeletesNestedTrackedData(t *testing.T) {
 	if err := json.Unmarshal(dryRun.Bytes(), &preview); err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{stateFile, configFile} {
+	for _, expected := range []string{stateFile, configFile, configLock} {
 		canonical, err := installstate.Canonical(expected)
 		if err != nil {
 			t.Fatal(err)
@@ -186,7 +187,7 @@ func TestPurgeDryRunListsAndRemovalDeletesNestedTrackedData(t *testing.T) {
 	if err := executeWithRegistrationProbe(context.Background(), Options{InstallDir: dir, Purge: true}, &out, probe); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{stateFile, configFile} {
+	for _, path := range []string{stateFile, configFile, configLock} {
 		if _, err := os.Lstat(path); !os.IsNotExist(err) {
 			t.Fatalf("purge left %s behind: %v", path, err)
 		}
@@ -194,6 +195,50 @@ func TestPurgeDryRunListsAndRemovalDeletesNestedTrackedData(t *testing.T) {
 	var result report
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil || result.State != "removed" {
 		t.Fatalf("purge result = %s, %v", out.String(), err)
+	}
+}
+
+func TestPurgePreservesCurrentAndLegacyMarkersUntilMarkerPhase(t *testing.T) {
+	root := t.TempDir()
+	markers := []string{
+		installstate.MarkerFilename, installstate.LegacyMarkerFilename,
+		installstate.ConfigMarkerFilename, installstate.LegacyConfigMarkerFilename,
+		installstate.RuntimeMarkerFilename, installstate.LegacyRuntimeMarkerFilename,
+	}
+	for _, name := range append(markers, "agent.lock", "untracked.txt") {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := removeDirectoryContents(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range markers {
+		if _, err := os.Lstat(filepath.Join(root, name)); err != nil {
+			t.Fatalf("purge removed ownership marker %s before marker phase: %v", name, err)
+		}
+	}
+	for _, name := range []string{"agent.lock", "untracked.txt"} {
+		if _, err := os.Lstat(filepath.Join(root, name)); !os.IsNotExist(err) {
+			t.Fatalf("purge retained untracked entry %s: %v", name, err)
+		}
+	}
+}
+
+func TestPurgeRejectsRootsContainingInstallationMetadata(t *testing.T) {
+	for _, protected := range []string{"data", "locks"} {
+		root := filepath.Join(string(filepath.Separator), "tmp", "peerimeter-purge-test")
+		inv := installstate.Inventory{DataDir: filepath.Join(root, "data"), LockDir: filepath.Join(root, "locks")}
+		if protected == "data" {
+			inv.DataDir = filepath.Join(root, "state", "inventory")
+		} else {
+			inv.LockDir = filepath.Join(root, "state", "locks")
+		}
+		plan := removalPlan{PurgeDirs: []string{filepath.Join(root, "state")}}
+		err := validatePurgeRoots(inv, plan)
+		if err == nil || !strings.Contains(err.Error(), inv.DataDir) && !strings.Contains(err.Error(), inv.LockDir) {
+			t.Fatalf("purge root was not rejected for nested %s directory: %v", protected, err)
+		}
 	}
 }
 
