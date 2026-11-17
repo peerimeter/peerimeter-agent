@@ -103,7 +103,7 @@ wait_status() {
    [[ ! -r "$log" ]] || tail -n 80 "$log" >&2
   done
  fi
- find "$runtime" -maxdepth 1 -ls >&2 2>/dev/null || true
+ find "${runtime:-$defaults_runtime}" -maxdepth 1 -ls >&2 2>/dev/null || true
  return 1
 }
 wait_interface_gone() {
