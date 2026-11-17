@@ -231,7 +231,7 @@ jobs:
           test "$ACTION_LOCK_RESULT" = success
 
   version:
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     outputs:
       tag: ${{ steps.semver.outputs.next }}
@@ -253,7 +253,7 @@ jobs:
   release:
     name: release
     needs: [check, version]
-    if: github.ref == 'refs/heads/main' && needs.version.outputs.bump != 'none'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.version.outputs.bump != 'none'
     runs-on: ubuntu-24.04
     permissions:
       contents: write

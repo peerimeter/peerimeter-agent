@@ -227,6 +227,23 @@ func profileForConfirmation(p installstate.Profile) confirmedProfile {
 	return confirmedProfile{p.ID, p.ConfigDir, p.LegacyConfigDir, p.PendingConfigDir, p.PendingRuntimeDir, p.StateDir, p.RuntimeDir, p.Service}
 }
 
+func listTree(root string) ([]string, error) {
+	var paths []string
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if path != root {
+			paths = append(paths, path)
+		}
+		return nil
+	})
+	return paths, err
+}
+
 func contains(values []string, value string) bool {
 	for _, item := range values {
 		if item == value {
@@ -966,58 +983,6 @@ func removeEmptyDirectory(path string) error {
 		return nil
 	}
 	return os.Remove(path)
-}
-
-func listTree(root string) ([]string, error) {
-	var paths []string
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if path != root {
-			paths = append(paths, path)
-		}
-		return nil
-	})
-	return paths, err
-}
-
-func removeDirectoryContents(root string, markers map[string]bool) ([]string, error) {
-	info, err := os.Lstat(root)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, errors.New("purge target changed type or became a symbolic link")
-	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return nil, err
-	}
-	var removed []string
-	for _, entry := range entries {
-		// Keep only markers scheduled for the normal marker-removal phase.
-		path := filepath.Join(root, entry.Name())
-		if markers[path] {
-			continue
-		}
-		paths, err := listTree(path)
-		if err != nil {
-			return nil, err
-		}
-		removed = append(removed, path)
-		removed = append(removed, paths...)
-		if err := os.RemoveAll(path); err != nil {
-			return removed, err
-		}
-	}
-	return removed, nil
 }
 
 func requireNoOwnedRegistration(ctx context.Context, executable string, probe registrationProbe) error {

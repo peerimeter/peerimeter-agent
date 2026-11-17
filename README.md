@@ -188,7 +188,7 @@ Recovery is operator-triggered rather than an automatic boot action.
 
 ### Publishing a release
 
-Start **Actions → Publish release → Run workflow** on `main`. The workflow
+Start **Actions → Peerimeter CI and Release → Run workflow** on `main`. The workflow
 uses the lockfile-verified `ietf-tools/semver-action` to read Conventional
 Commits since the latest stable tag: `feat` bumps minor, patch-level changes
 bump patch, and breaking changes bump major. If commits do not call for a version bump, package
