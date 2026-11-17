@@ -82,6 +82,9 @@ func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desire
 		if replaceConfig == nil {
 			return errors.New("configuration updates are unavailable")
 		}
+		if len(data) > config.MaxSize {
+			return errors.New("refreshed configuration exceeds the size limit")
+		}
 		mu.Lock()
 		defer mu.Unlock()
 		var next config.Config
