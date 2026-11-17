@@ -7,8 +7,12 @@ import (
 
 func newUninstallCommand(app *application) *cobra.Command {
 	var options uninstall.Options
-	cmd := &cobra.Command{Use: "uninstall", Short: "Remove this tracked agent installation and its managed data", Long: "Remove the selected installation and its tracked managed data. Operator-supplied original config files are preserved. Use --dry-run to inspect removal without changes; --purge also removes every file and nested directory inside tracked state, config and runtime directories.", Args: noArguments, RunE: app.handleResponse(func(cmd *cobra.Command) error { return uninstall.Execute(cmd.Context(), options, app.out) })}
-	cmd.Flags().BoolVar(&options.DryRun, "dry-run", false, "List owned resources without changing files, processes or services")
+	cmd := &cobra.Command{Use: "uninstall", Short: "Remove this tracked agent installation and its managed data", Long: "Remove the selected installation and its tracked managed data. The files to be removed are listed and confirmation is required unless --yes is supplied. Operator-supplied original config files are preserved. --purge also removes every file and nested directory inside tracked state, config and runtime directories.", Args: noArguments, RunE: app.handleResponse(func(cmd *cobra.Command) error {
+		options.ConfirmIn = app.in
+		options.ConfirmOut = app.promptOut
+		return uninstall.Execute(cmd.Context(), options, app.out)
+	})}
+	cmd.Flags().BoolVar(&options.Yes, "yes", false, "Confirm removal without prompting")
 	cmd.Flags().BoolVar(&options.Purge, "purge", false, "Also delete every file under tracked state, config and runtime directories")
 	cmd.Flags().StringVar(&options.InstallDir, "install-dir", "", "Tracked installation directory (defaults to this executable's directory)")
 	cmd.Flags().StringVar(&options.DocDir, "doc-dir", "", "Verify the recorded notices directory")
