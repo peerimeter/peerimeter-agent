@@ -93,6 +93,23 @@ function Assert-Package([string]$Directory) {
 function Remove-InstalledPackage([string]$Directory,[string]$ExternalCLI) {
     $binary = Join-Path $Directory 'peerimeter-agent.exe'
     $resourceRoot = Get-ResourceRoot $Directory
+    $before = @(Get-ChildItem -LiteralPath $Directory -Force -File | Sort-Object Name | ForEach-Object { $_.Name + ':' + (Get-FileHash -LiteralPath $_.FullName).Hash + ':' + (Get-Acl -LiteralPath $_.FullName).Sddl }) -join "`n"
+    $start = [Diagnostics.ProcessStartInfo]::new()
+    $start.FileName = $binary
+    $start.UseShellExecute = $false
+    $start.RedirectStandardInput = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    foreach ($argument in @('uninstall','--json','--install-dir',$Directory)) { $start.ArgumentList.Add($argument) }
+    $process = [Diagnostics.Process]::Start($start)
+    $process.StandardInput.WriteLine('n')
+    $process.StandardInput.Close()
+    [void]$process.StandardOutput.ReadToEnd()
+    $confirmationError = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
+    if ($process.ExitCode -eq 0 -or $confirmationError -notmatch 'uninstall cancelled' -or $confirmationError -notmatch [regex]::Escape($binary)) { throw 'Uninstall did not list resources and cancel after a declined confirmation' }
+    $after = @(Get-ChildItem -LiteralPath $Directory -Force -File | Sort-Object Name | ForEach-Object { $_.Name + ':' + (Get-FileHash -LiteralPath $_.FullName).Hash + ':' + (Get-Acl -LiteralPath $_.FullName).Sddl }) -join "`n"
+    if ($before -ne $after) { throw 'Declined uninstall changed installed files or ACLs' }
     $sentinel = Join-Path $Directory 'unrelated.txt'
     [IO.File]::WriteAllText($sentinel,'operator data stays')
     $result = & $binary uninstall --json --yes --install-dir $Directory | ConvertFrom-Json
