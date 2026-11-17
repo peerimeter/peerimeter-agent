@@ -19,9 +19,9 @@ func ResolveForOS(options Options, target string) (Layout, error) {
 	var result Layout
 	switch target {
 	case "linux":
-		result = Layout{"/etc/peerimeter", "/var/lib/peerimeter-agent", "/run/peerimeter-agent"}
+		result = unixDefaults("/etc/peerimeter", "/var/lib/peerimeter-agent", "/run/peerimeter-agent")
 	case "darwin":
-		result = Layout{"/etc/peerimeter", "/Library/Application Support/Peerimeter", "/var/run/peerimeter-agent"}
+		result = unixDefaults("/etc/peerimeter", "/Library/Application Support/Peerimeter", "/var/run/peerimeter-agent")
 	case "windows":
 		base := os.Getenv("ProgramData")
 		if base == "" {
@@ -72,4 +72,27 @@ func ResolveForOS(options Options, target string) (Layout, error) {
 		return Layout{}, errors.New("Unix config, state and runtime directories must be distinct")
 	}
 	return result, nil
+}
+
+func unixDefaults(rootConfig, rootState, rootRuntime string) Layout {
+	if os.Geteuid() == 0 {
+		return Layout{rootConfig, rootState, rootRuntime}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return Layout{rootConfig, rootState, rootRuntime}
+	}
+	config := os.Getenv("XDG_CONFIG_HOME")
+	if config == "" {
+		config = filepath.Join(home, ".config")
+	}
+	state := os.Getenv("XDG_STATE_HOME")
+	if state == "" {
+		state = filepath.Join(home, ".local", "state")
+	}
+	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
+	if runtimeDir == "" {
+		runtimeDir = filepath.Join(state, "peerimeter-agent", "run")
+	}
+	return Layout{filepath.Join(config, "peerimeter-agent"), filepath.Join(state, "peerimeter-agent"), filepath.Join(runtimeDir, "peerimeter-agent")}
 }

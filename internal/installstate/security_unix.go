@@ -124,7 +124,9 @@ func checkAncestorDirectoryTrust(path string, info os.FileInfo) error {
 		return errors.New("installation resource parent grants other write access")
 	}
 	if info.Mode().Perm()&0020 != 0 && !sticky && !androidSystemDir {
-		if uid == 0 || st.Uid != uid || st.Gid != uint32(os.Getegid()) || !hasPrivatePrimaryGroup(st.Uid, st.Gid) {
+		// A user-owned parent such as a macOS home/project directory may be
+		// group-writable. The managed resource itself remains private and owned.
+		if uid == 0 || st.Uid != uid {
 			return errors.New("installation resource parent grants group write access")
 		}
 	}

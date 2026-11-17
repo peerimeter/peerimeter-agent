@@ -221,10 +221,9 @@ The optional `config pull` and `config push` commands exchange version 1 network
 or node YAML with `peerimeter-service`. They do not change the static runtime or
 persist credentials. Each request needs the network ID and, for node config,
 the node ID. The Base64URL join token carries the HTTPS API URL and an
-`enrollment_token`; in the current service this value is the shared static API
-key, which grants read/write access to every stored network and node. Anyone
-holding the token has that access. The join bundle carries the selected network
-ID, but its shared API credential still has access to all networks. When
+`enrollment_token` scoped to the bundle's network. The service derives it from
+its static API key, so rotating that key invalidates existing enrollment
+tokens. When
 using `/api/v1/join-bundle?network_id=mesh-a`, pass its `token` field without
 the surrounding response JSON to `join` on stdin. The hostname is the default
 node ID.
@@ -265,8 +264,8 @@ service using plain HTTP, pass `--allow-insecure-http` to `join`. This sends the
 shared enrollment token without TLS and should only be used on a trusted
 network.
 
-The service still uses one shared API key, so the join token grants access to
-all networks and node registrations. STUN is probed on the configured WireGuard
+The dashboard uses the service-wide API key for management. An agent's join
+token is scoped to its selected network. STUN is probed on the configured WireGuard
 listen port before the tunnel starts. If STUN is unavailable, same-LAN peers
 can still connect. UDP hole punching is best-effort and direct-only: symmetric
 NATs and UDP-blocking firewalls can prevent a connection. TURN/relay fallback
@@ -324,8 +323,10 @@ control access.
 
 | Platform | Config and private keys (`--config-dir`) | Persistent state (`--state-dir`) | Local control (`--runtime-dir`) |
 | --- | --- | --- | --- |
-| Linux | `/etc/peerimeter` | `/var/lib/peerimeter-agent` | `/run/peerimeter-agent` |
-| macOS | `/etc/peerimeter` | `/Library/Application Support/Peerimeter` | `/var/run/peerimeter-agent` |
+| Linux, non-root | `$XDG_CONFIG_HOME/peerimeter-agent` (default `~/.config/peerimeter-agent`) | `$XDG_STATE_HOME/peerimeter-agent` (default `~/.local/state/peerimeter-agent`) | `$XDG_RUNTIME_DIR/peerimeter-agent` (state directory fallback) |
+| macOS, non-root | `$XDG_CONFIG_HOME/peerimeter-agent` (default `~/.config/peerimeter-agent`) | `$XDG_STATE_HOME/peerimeter-agent` (default `~/.local/state/peerimeter-agent`) | `$XDG_RUNTIME_DIR/peerimeter-agent` (state directory fallback) |
+| Linux, root | `/etc/peerimeter` | `/var/lib/peerimeter-agent` | `/run/peerimeter-agent` |
+| macOS, root | `/etc/peerimeter` | `/Library/Application Support/Peerimeter` | `/var/run/peerimeter-agent` |
 | Windows | `%ProgramData%\Peerimeter` | `%ProgramData%\Peerimeter` | `%ProgramData%\Peerimeter` |
 
 Overrides must be absolute. Unix directories are separate; on Windows an

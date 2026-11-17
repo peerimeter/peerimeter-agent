@@ -16,6 +16,17 @@ import (
 	"sync"
 )
 
+func trustedDirectoryOwner(uid uint32) bool {
+	if uid == uint32(os.Geteuid()) {
+		return true
+	}
+	if os.Geteuid() != 0 {
+		return false
+	}
+	requested, err := strconv.ParseUint(os.Getenv("SUDO_UID"), 10, 32)
+	return err == nil && requested > 0 && uint32(requested) == uid
+}
+
 func prepareDirectory(dir string) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("cannot create protected agent state directory %s: %w", dir, err)
@@ -25,7 +36,7 @@ func prepareDirectory(dir string) error {
 		return fmt.Errorf("state directory %s must be owner-controlled (chmod 700 or 711), without group/other read or write access, and not a symbolic link", dir)
 	}
 	var stat unix.Stat_t
-	if unix.Stat(dir, &stat) != nil || stat.Uid != uint32(os.Geteuid()) {
+	if unix.Stat(dir, &stat) != nil || !trustedDirectoryOwner(stat.Uid) {
 		return fmt.Errorf("state directory %s must belong to the current effective user", dir)
 	}
 	return nil
@@ -40,7 +51,7 @@ func openStateLock(dir string, existing bool) (*os.File, error) {
 		return nil, fmt.Errorf("cannot open protected state directory lock %s: %w", dir, err)
 	}
 	var st unix.Stat_t
-	if unix.Fstat(fd, &st) != nil || st.Uid != uint32(os.Geteuid()) || st.Mode&0066 != 0 {
+	if unix.Fstat(fd, &st) != nil || !trustedDirectoryOwner(st.Uid) || st.Mode&0066 != 0 {
 		unix.Close(fd)
 		return nil, fmt.Errorf("state lock directory %s requires an owned directory without group/other read or write permissions", dir)
 	}

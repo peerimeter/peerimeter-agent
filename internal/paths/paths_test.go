@@ -1,16 +1,36 @@
 package paths
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 )
 
 func TestDefaultLayouts(t *testing.T) {
-	for os, want := range map[string]Layout{"linux": {"/etc/peerimeter", "/var/lib/peerimeter-agent", "/run/peerimeter-agent"}, "darwin": {"/etc/peerimeter", "/Library/Application Support/Peerimeter", "/var/run/peerimeter-agent"}} {
-		got, err := ResolveForOS(Options{}, os)
+	for target, want := range map[string]Layout{"linux": {"/etc/peerimeter", "/var/lib/peerimeter-agent", "/run/peerimeter-agent"}, "darwin": {"/etc/peerimeter", "/Library/Application Support/Peerimeter", "/var/run/peerimeter-agent"}} {
+		if os.Geteuid() != 0 {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				t.Fatal(err)
+			}
+			config := os.Getenv("XDG_CONFIG_HOME")
+			if config == "" {
+				config = filepath.Join(home, ".config")
+			}
+			state := os.Getenv("XDG_STATE_HOME")
+			if state == "" {
+				state = filepath.Join(home, ".local", "state")
+			}
+			runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
+			if runtimeDir == "" {
+				runtimeDir = filepath.Join(state, "peerimeter-agent", "run")
+			}
+			want = Layout{filepath.Join(config, "peerimeter-agent"), filepath.Join(state, "peerimeter-agent"), filepath.Join(runtimeDir, "peerimeter-agent")}
+		}
+		got, err := ResolveForOS(Options{}, target)
 		if err != nil || got != want {
-			t.Fatalf("%s: %+v %v", os, got, err)
+			t.Fatalf("%s: %+v %v", target, got, err)
 		}
 	}
 }
