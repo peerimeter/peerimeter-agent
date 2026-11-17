@@ -25,6 +25,13 @@ func staticCommand(ctx context.Context, commandName, path, override string, layo
 }
 
 func staticCommandWithRefresh(ctx context.Context, commandName, path, override string, layout paths.Layout, operator string, out io.Writer, backend platform.Backend, remoteReload func(context.Context) (config.Config, error), refresh time.Duration) error {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return errors.New("cannot make static config path absolute")
+	}
 	if commandName == "run" {
 		installstate.TrustSudoUserForRun()
 		secret.TrustSudoUserForRun()
@@ -145,11 +152,17 @@ func staticCommandWithRefresh(ctx context.Context, commandName, path, override s
 		}
 		return installstate.RegisterProfile(filepath.Dir(exe), installstate.Profile{StateDir: layout.StateDir, RuntimeDir: layout.RuntimeDir, ClaimRuntime: true})
 	}
-	configPath, err := filepath.Abs(path)
-	if err != nil {
-		return err
+	replaceConfig := func(data []byte) (func() error, error) {
+		previous, err := os.ReadFile(path)
+		if err != nil {
+			return nil, errors.New("cannot read the active configuration before sync")
+		}
+		if err := writeConfigFile(path, data); err != nil {
+			return nil, errors.New("cannot securely update the active configuration")
+		}
+		return func() error { return writeConfigFile(path, previous) }, nil
 	}
 	return agent.RunManagedWithRefresh(ctx, backend, desired, layout.RuntimeDir, reload, operator, local.InstanceID(layout.StateDir), ready, func() error {
 		return installstate.ReleaseRuntime(filepath.Dir(exe), layout.StateDir, layout.RuntimeDir)
-	}, refresh, filepath.Clean(configPath))
+	}, refresh, path, replaceConfig)
 }

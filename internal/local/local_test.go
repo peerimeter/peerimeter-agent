@@ -65,7 +65,14 @@ func TestLocalChannel(t *testing.T) {
 	ctx := context.Background()
 	var reloaded atomic.Bool
 	var stopped atomic.Bool
-	closeServer, err := Serve(ctx, dir, Operations{InstanceID: "instance", NetworkID: "test", ConfigPath: filepath.Join(dir, "service.yaml"), Snapshot: func(context.Context) (platform.Snapshot, error) {
+	var appliedConfig string
+	closeServer, err := Serve(ctx, dir, Operations{InstanceID: "instance", NetworkID: "test", ConfigPath: filepath.Join(dir, "service.yaml"), Config: func() ([]byte, error) {
+		return []byte(`{"network":{"id":"test"}}`), nil
+	}, ReplaceConfig: func(data []byte) (func() error, error) {
+		previous := appliedConfig
+		appliedConfig = string(data)
+		return func() error { appliedConfig = previous; return nil }, nil
+	}, Snapshot: func(context.Context) (platform.Snapshot, error) {
 		return platform.Snapshot{NetworkID: "test", State: "running", Peers: []platform.PeerState{}}, nil
 	}, Reload: func(context.Context) error { reloaded.Store(true); return nil }, Stop: func() { stopped.Store(true) }})
 	if err != nil {
@@ -73,8 +80,22 @@ func TestLocalChannel(t *testing.T) {
 	}
 	defer closeServer()
 	identity, err := GetIdentity(ctx, dir)
-	if err != nil || identity.InstanceID != "instance" || identity.NetworkID != "test" || identity.ConfigPath != filepath.Join(dir, "service.yaml") {
+	if err != nil || identity.InstanceID != "instance" || identity.RuntimeID == "" || identity.NetworkID != "test" || identity.ConfigPath != filepath.Join(dir, "service.yaml") {
 		t.Fatalf("GetIdentity() = %+v, %v", identity, err)
+	}
+	config, err := GetConfig(ctx, dir, identity)
+	if err != nil || string(config) != `{"network":{"id":"test"}}` {
+		t.Fatalf("GetConfig() = %s, %v", config, err)
+	}
+	staleIdentity := identity
+	staleIdentity.RuntimeID = "previous-runtime"
+	var staleOutput bytes.Buffer
+	if err := ApplyConfig(ctx, dir, staleIdentity, []byte("stale-config"), &staleOutput); err == nil || appliedConfig != "" {
+		t.Fatalf("ApplyConfig accepted stale runtime identity: error = %v, config = %q", err, appliedConfig)
+	}
+	var applied bytes.Buffer
+	if err := ApplyConfig(ctx, dir, identity, []byte("new-config"), &applied); err != nil || appliedConfig != "new-config" || !reloaded.Load() {
+		t.Fatalf("ApplyConfig() = %v, config = %q, reloaded = %t", err, appliedConfig, reloaded.Load())
 	}
 	var out bytes.Buffer
 	if err = Request(ctx, dir, "status", &out); err != nil || !bytes.Contains(out.Bytes(), []byte(`"state":"running"`)) {

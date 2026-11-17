@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -21,7 +22,7 @@ func newSyncCommand(app *application) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Refresh joined peers and reconcile the running agent",
-		Long:  "When a joined network has saved Service API metadata, sync pulls its current peer list, updates the configuration file used by the running agent, and reloads the tunnel. It verifies the selected network matches the running network. --config, if supplied, must identify that active file. Without complete saved metadata it reloads the local configuration as before. With multiple joined networks, --network-id is required. Older joins may need --api-url and --node-id once.",
+		Long:  "When a joined network has saved Service API metadata, sync pulls its current peer list, updates the configuration file used by the running agent, and reloads the tunnel. It verifies the selected network matches the running network. --config, if supplied, must identify that active file. Windows UNC config paths are not supported. Without complete saved metadata it reloads the local configuration as before. With multiple joined networks, --network-id is required. Older joins may need --api-url and --node-id once.",
 		Args:  noArguments,
 		RunE: app.handleResponse(func(cmd *cobra.Command) error {
 			layout, err := paths.Resolve(dirs)
@@ -81,13 +82,17 @@ func newSyncCommand(app *application) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client, saveMigration, err := managedServiceClient(options, layout)
+			configData, err := local.GetConfig(cmd.Context(), layout.RuntimeDir, identity)
 			if err != nil {
 				return err
 			}
-			current, err := config.Load(configPath)
+			var current config.Config
+			if err := json.Unmarshal(configData, &current); err != nil {
+				return errors.New("running agent returned an invalid configuration")
+			}
+			client, saveMigration, err := managedServiceClient(options, layout)
 			if err != nil {
-				return fmt.Errorf("cannot load joined network configuration: %w", err)
+				return err
 			}
 			if current.Network.ID != networkID {
 				return errors.New("joined configuration network ID does not match --network-id")
@@ -110,11 +115,8 @@ func newSyncCommand(app *application) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := writeConfigFile(configPath, data); err != nil {
-				return errors.New("cannot securely update joined network configuration")
-			}
-			if err := local.Request(cmd.Context(), layout.RuntimeDir, "reload", app.out); err != nil {
-				return fmt.Errorf("peer list updated in local config, but the running tunnel could not be reloaded: %w", err)
+			if err := local.ApplyConfig(cmd.Context(), layout.RuntimeDir, identity, data, app.out); err != nil {
+				return fmt.Errorf("cannot apply refreshed peer configuration: %w", err)
 			}
 			return nil
 		}),
@@ -136,13 +138,17 @@ func syncConfigPath(override, runtimePath string) (string, error) {
 	if runtimePath == "" {
 		return "", errors.New("running agent did not report its configuration path; restart it with the updated agent before syncing")
 	}
-	runtimePath, err := filepath.Abs(runtimePath)
-	if err != nil {
+	if !filepath.IsAbs(runtimePath) || runtime.GOOS == "windows" && strings.HasPrefix(strings.ReplaceAll(runtimePath, "/", "\\"), `\\`) {
 		return "", errors.New("cannot resolve running agent configuration path")
 	}
 	runtimePath = filepath.Clean(runtimePath)
 	if override == "" {
 		return runtimePath, nil
+	}
+	var err error
+	override, err = filepath.EvalSymlinks(override)
+	if err != nil {
+		return "", errors.New("cannot resolve --config path")
 	}
 	override, err = filepath.Abs(override)
 	if err != nil {

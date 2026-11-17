@@ -3,6 +3,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"sync"
@@ -32,12 +33,12 @@ func Run(ctx context.Context, backend platform.Backend, desired platform.Desired
 // RunManaged exposes only protected local control after the native tunnel starts.
 // Reload validation happens before the backend touches OS state.
 func RunManaged(ctx context.Context, backend platform.Backend, desired platform.Desired, dir string, reload func() (platform.Desired, error), operator, instanceID string, beforeServe, onClose func() error) (result error) {
-	return RunManagedWithRefresh(ctx, backend, desired, dir, func(context.Context) (platform.Desired, error) { return reload() }, operator, instanceID, beforeServe, onClose, 0)
+	return RunManagedWithRefresh(ctx, backend, desired, dir, func(context.Context) (platform.Desired, error) { return reload() }, operator, instanceID, beforeServe, onClose, 0, "", nil)
 }
 
 // RunManagedWithRefresh periodically obtains desired state from reload while
 // preserving the same local authenticated control surface as static mode.
-func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desired platform.Desired, dir string, reload func(context.Context) (platform.Desired, error), operator, instanceID string, beforeServe, onClose func() error, interval time.Duration, configPaths ...string) (result error) {
+func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desired platform.Desired, dir string, reload func(context.Context) (platform.Desired, error), operator, instanceID string, beforeServe, onClose func() error, interval time.Duration, configPath string, replaceConfig func([]byte) (func() error, error)) (result error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	session, err := backend.Start(ctx, desired)
@@ -51,6 +52,7 @@ func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desire
 		result = errors.Join(result, session.Close(cleanup))
 	}()
 	var mu sync.Mutex
+	currentDesired := desired
 	reconcile := func(ctx context.Context) error {
 		mu.Lock()
 		defer mu.Unlock()
@@ -61,13 +63,19 @@ func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desire
 		if next.Config.Network.ID != desired.Config.Network.ID || next.InterfaceName != desired.InterfaceName {
 			return errors.New("reload cannot change the local network identity or interface")
 		}
-		return session.Reconcile(ctx, next)
-	}
-	configPath := ""
-	if len(configPaths) != 0 {
-		configPath = configPaths[0]
+		if err := session.Reconcile(ctx, next); err != nil {
+			return err
+		}
+		currentDesired = next
+		return nil
 	}
 	closeControl, err := local.Serve(ctx, dir, local.Operations{Operator: operator, InstanceID: instanceID, NetworkID: desired.Config.Network.ID, ConfigPath: configPath, BeforeListen: beforeServe, OnClose: onClose,
+		Config: func() ([]byte, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			return json.Marshal(currentDesired.Config)
+		},
+		ReplaceConfig: replaceConfig,
 		Snapshot: func(ctx context.Context) (platform.Snapshot, error) {
 			mu.Lock()
 			defer mu.Unlock()

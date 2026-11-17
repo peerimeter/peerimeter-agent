@@ -3,6 +3,7 @@
 package local
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -181,10 +182,12 @@ func ValidateOperator(operator string) error {
 
 type Operations struct {
 	// Operator delegates local control only; private configuration remains protected.
-	Operator   string
-	InstanceID string
-	NetworkID  string
-	ConfigPath string
+	Operator      string
+	InstanceID    string
+	NetworkID     string
+	ConfigPath    string
+	Config        func() ([]byte, error)
+	ReplaceConfig func([]byte) (func() error, error)
 	// BeforeListen claims runtime ownership under its exclusive guard before any
 	// existing Unix socket can be removed. Windows calls it after exclusive pipe creation.
 	BeforeListen func() error
@@ -211,9 +214,51 @@ func Serve(ctx context.Context, dir string, ops Operations) (func() error, error
 	if err := ctx.Err(); err != nil {
 		return nil, errors.Join(err, listener.Close())
 	}
+	var runtimeIDBytes [16]byte
+	if _, err := rand.Read(runtimeIDBytes[:]); err != nil {
+		return nil, errors.Join(errors.New("cannot create local runtime identity"), listener.Close())
+	}
+	runtimeID := hex.EncodeToString(runtimeIDBytes[:])
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/identity", func(w http.ResponseWriter, r *http.Request) {
-		write(w, map[string]string{"instance_id": ops.InstanceID, "network_id": ops.NetworkID, "config_path": ops.ConfigPath}, nil)
+		write(w, map[string]string{"instance_id": ops.InstanceID, "runtime_id": runtimeID, "network_id": ops.NetworkID, "config_path": ops.ConfigPath}, nil)
+	})
+	mux.HandleFunc("GET /v1/config", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Peerimeter-Runtime-ID") != runtimeID || ops.Config == nil {
+			write(w, nil, errors.New("running agent identity changed or config is unavailable"))
+			return
+		}
+		data, err := ops.Config()
+		if err != nil {
+			write(w, nil, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(append(append([]byte(`{"config":`), data...), '}'))
+	})
+	mux.HandleFunc("POST /v1/config/apply", func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			RuntimeID string `json:"runtime_id"`
+			NetworkID string `json:"network_id"`
+			Config    []byte `json:"config"`
+		}
+		decoder := json.NewDecoder(io.LimitReader(r.Body, (2<<20)+1))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&request); err != nil || decoder.Decode(new(any)) != io.EOF || request.RuntimeID != runtimeID || request.NetworkID != ops.NetworkID || ops.ReplaceConfig == nil || ops.Reload == nil {
+			write(w, nil, errors.New("running agent identity changed or config update is unavailable"))
+			return
+		}
+		rollback, err := ops.ReplaceConfig(request.Config)
+		if err == nil {
+			err = ops.Reload(r.Context())
+		}
+		if err != nil && rollback != nil {
+			err = errors.Join(err, rollback())
+			if ops.Reload != nil {
+				err = errors.Join(err, ops.Reload(r.Context()))
+			}
+		}
+		write(w, map[string]string{"state": "reconciled"}, err)
 	})
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) { s, err := ops.Snapshot(r.Context()); write(w, s, err) })
 	mux.HandleFunc("GET /v1/peers", func(w http.ResponseWriter, r *http.Request) {
@@ -240,6 +285,7 @@ func Serve(ctx context.Context, dir string, ops Operations) (func() error, error
 
 type Identity struct {
 	InstanceID string `json:"instance_id"`
+	RuntimeID  string `json:"runtime_id"`
 	NetworkID  string `json:"network_id"`
 	ConfigPath string `json:"config_path"`
 }
@@ -262,6 +308,72 @@ func GetIdentity(ctx context.Context, dir string) (Identity, error) {
 		return Identity{}, errors.New("cannot read local agent identity")
 	}
 	return identity, nil
+}
+
+func GetConfig(ctx context.Context, dir string, identity Identity) ([]byte, error) {
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx, dir) }, DisableKeepAlives: true}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 15 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://local/v1/config", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Peerimeter-Runtime-ID", identity.RuntimeID)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, errors.New("agent is not reachable through its local control channel; check service status and permissions")
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Config json.RawMessage `json:"config"`
+		Error  string          `json:"error"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&result); err != nil || resp.StatusCode != http.StatusOK || len(result.Config) == 0 {
+		if result.Error != "" {
+			return nil, errors.New(result.Error)
+		}
+		return nil, errors.New("cannot read running agent configuration")
+	}
+	return result.Config, nil
+}
+
+func ApplyConfig(ctx context.Context, dir string, identity Identity, data []byte, out io.Writer) error {
+	body, err := json.Marshal(struct {
+		RuntimeID string `json:"runtime_id"`
+		NetworkID string `json:"network_id"`
+		Config    []byte `json:"config"`
+	}{identity.RuntimeID, identity.NetworkID, data})
+	if err != nil {
+		return err
+	}
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx, dir) }, DisableKeepAlives: true}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://local/v1/config/apply", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return errors.New("agent is not reachable through its local control channel; check service status and permissions")
+	}
+	defer resp.Body.Close()
+	response, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return errors.New("cannot read local agent response")
+	}
+	if resp.StatusCode != http.StatusOK {
+		var message struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(response, &message) != nil || message.Error == "" {
+			return errors.New("local agent request failed")
+		}
+		return errors.New(message.Error)
+	}
+	_, err = out.Write(response)
+	return err
 }
 
 func write(w http.ResponseWriter, value any, err error) {
