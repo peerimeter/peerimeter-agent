@@ -183,6 +183,8 @@ type Operations struct {
 	// Operator delegates local control only; private configuration remains protected.
 	Operator   string
 	InstanceID string
+	NetworkID  string
+	ConfigPath string
 	// BeforeListen claims runtime ownership under its exclusive guard before any
 	// existing Unix socket can be removed. Windows calls it after exclusive pipe creation.
 	BeforeListen func() error
@@ -211,7 +213,7 @@ func Serve(ctx context.Context, dir string, ops Operations) (func() error, error
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/identity", func(w http.ResponseWriter, r *http.Request) {
-		write(w, map[string]string{"instance_id": ops.InstanceID}, nil)
+		write(w, map[string]string{"instance_id": ops.InstanceID, "network_id": ops.NetworkID, "config_path": ops.ConfigPath}, nil)
 	})
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) { s, err := ops.Snapshot(r.Context()); write(w, s, err) })
 	mux.HandleFunc("GET /v1/peers", func(w http.ResponseWriter, r *http.Request) {
@@ -235,6 +237,33 @@ func Serve(ctx context.Context, dir string, ops Operations) (func() error, error
 		return errors.Join(server.Shutdown(shutdown), listener.Close())
 	}, nil
 }
+
+type Identity struct {
+	InstanceID string `json:"instance_id"`
+	NetworkID  string `json:"network_id"`
+	ConfigPath string `json:"config_path"`
+}
+
+func GetIdentity(ctx context.Context, dir string) (Identity, error) {
+	var identity Identity
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx, dir) }, DisableKeepAlives: true}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 15 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://local/v1/identity", nil)
+	if err != nil {
+		return identity, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return identity, errors.New("agent is not reachable through its local control channel; check service status and permissions")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&identity) != nil {
+		return Identity{}, errors.New("cannot read local agent identity")
+	}
+	return identity, nil
+}
+
 func write(w http.ResponseWriter, value any, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil {

@@ -293,9 +293,9 @@ reloads the running tunnel. With one joined network, it is selected
 automatically; with multiple networks, pass `--network-id`. Older joins may
 need `--api-url` and `--node-id` once. Without saved service metadata, `sync`
 keeps its local behavior and reloads the current configuration. It updates
-`service.yaml` when that installed config belongs to the joined network;
-otherwise it updates `<network-id>.yaml`. Use `--config` to select another
-active config path explicitly.
+the configuration file currently used by the running agent, after verifying
+that the selected network matches the running network. `--config`, when used,
+must identify that same active file; sync refuses to update a different file.
 
 | Command | Output or action |
 | --- | --- |
