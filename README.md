@@ -287,22 +287,28 @@ sudo peerimeter-agent stop       # graceful tunnel/route cleanup
 
 On Windows, run the same commands from an elevated terminal.
 
-For a network joined with `join`, `sync` downloads the latest registered peer
-list from the saved Service API URL, updates the joined network YAML, then
-reloads the running tunnel. With one joined network, it is selected
+For a network joined with `join`, `sync` refreshes this node's primary physical
+interface and local addresses in its service registration, then downloads the
+latest peer list and applies it to the configuration currently used by the
+running agent. It verifies that the selected network matches the running
+network. `--config`, when used, must identify that same active file; sync
+refuses to update a different file. On Windows, sync also refuses UNC paths
+for the active configuration. With one joined network, it is selected
 automatically; with multiple networks, pass `--network-id`. Older joins may
 need `--api-url` and `--node-id` once. Without saved service metadata, `sync`
-keeps its local behavior and reloads the current configuration. It updates
-the configuration file currently used by the running agent, after verifying
-that the selected network matches the running network. `--config`, when used,
-must identify that same active file; sync refuses to update a different file.
-On Windows, sync also refuses UNC paths for the active configuration.
+keeps its local behavior and reloads the current configuration.
+
+While the WireGuard tunnel owns its UDP listen port, `sync` cannot bind that
+port for a STUN probe. In that case it preserves the last registered public
+endpoint while publishing fresh local interface addresses. A changed public
+NAT mapping therefore still requires a later successful endpoint probe; STUN
+does not guarantee reachability.
 
 | Command | Output or action |
 | --- | --- |
 | `status` | Readable local agent and adapter state; `--watch` refreshes continuously (`--json` for scripts) |
 | `wg` / `wg show` | Traditional WireGuard-style interface and peer listing |
-| `sync` | Refresh joined peers from the Service API when available, then reconcile the running tunnel; otherwise reload local configuration |
+| `sync` | Refresh the joined node registration and peer list when available, then reconcile the tunnel; otherwise reload local configuration |
 | `stop` | Stop the tunnel and clean up routes |
 
 `status` reads actual local adapter state through a protected Unix socket or

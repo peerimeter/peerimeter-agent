@@ -21,8 +21,8 @@ func newSyncCommand(app *application) *cobra.Command {
 	var dirs paths.Options
 	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Refresh joined peers and reconcile the running agent",
-		Long:  "When a joined network has saved Service API metadata, sync pulls its current peer list, updates the configuration file used by the running agent, and reloads the tunnel. It verifies the selected network matches the running network. --config, if supplied, must identify that active file. Windows UNC config paths are not supported. Without complete saved metadata it reloads the local configuration as before. With multiple joined networks, --network-id is required. Older joins may need --api-url and --node-id once.",
+		Short: "Refresh this node's registration and reconcile the running agent",
+		Long:  "For a joined network, sync updates this node's primary interface addresses in the Service API, then pulls the current peer list and applies it to the running agent configuration. It verifies the selected network matches the running network. --config, if supplied, must identify that active file. Windows UNC config paths are not supported. Without complete saved metadata it reloads the local configuration as before. With one joined network, --network-id is optional; with multiple joined networks it is required. Older joins may need --api-url and --node-id once. It preserves the last public endpoint when STUN cannot bind the configured WireGuard port.",
 		Args:  noArguments,
 		RunE: app.handleResponse(func(cmd *cobra.Command) error {
 			layout, err := paths.Resolve(dirs)
@@ -101,6 +101,9 @@ func newSyncCommand(app *application) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := refreshManagedRegistration(cmd.Context(), client, networkID, nodeID, underlay, current); err != nil {
+				return err
+			}
 			updated, err := refreshManagedPeers(cmd.Context(), client, networkID, nodeID, underlay.Addresses, current)
 			if err != nil {
 				return err
@@ -123,7 +126,7 @@ func newSyncCommand(app *application) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&networkID, "network-id", "", "Joined network ID (required when multiple networks are joined)")
 	cmd.Flags().StringVar(&nodeID, "node-id", "", "Node ID (defaults to the joined node; required if not saved)")
-	cmd.Flags().StringVar(&configPath, "config", "", "WireGuard configuration path (defaults to the joined network YAML)")
+	cmd.Flags().StringVar(&configPath, "config", "", "WireGuard configuration path (must match the running agent's active config)")
 	cmd.Flags().StringVar(&apiURL, "api-url", "", "Service API URL (required once for older joins without saved service metadata)")
 	cmd.Flags().BoolVar(&allowInsecureHTTP, "allow-insecure-http", false, "Allow a non-local HTTP API URL (sends the enrollment token without TLS)")
 	directoryFlags(cmd, &dirs)

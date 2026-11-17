@@ -238,6 +238,27 @@ func (c *Client) PullPeers(ctx context.Context, networkID, nodeID string) (PeerS
 	return result, nil
 }
 
+// PullNetworkPeers returns every registered node document, including the
+// caller. It is used to retain this node's last known public endpoint when
+// STUN cannot bind the WireGuard listen port during a sync.
+func (c *Client) PullNetworkPeers(ctx context.Context, networkID string) (PeerSet, error) {
+	if !validID(networkID) {
+		return PeerSet{}, errors.New("network ID is invalid")
+	}
+	data, err := c.request(ctx, http.MethodGet, "/api/v1/networks/"+url.PathEscape(networkID)+"/peers", nil)
+	if err != nil {
+		return PeerSet{}, err
+	}
+	if !validPeerSet(data) {
+		return PeerSet{}, errors.New("service returned an invalid peer list")
+	}
+	var result PeerSet
+	if err := json.Unmarshal(data, &result); err != nil || result.Version != 1 || result.Peers == nil {
+		return PeerSet{}, errors.New("service returned an invalid peer list")
+	}
+	return result, nil
+}
+
 func (c *Client) RegisterNode(ctx context.Context, networkID, nodeID string, registration NodeRegistration) (RegisteredNode, error) {
 	if !validID(networkID) || !validID(nodeID) || !validNodeRegistration(registration) {
 		return RegisteredNode{}, errors.New("node registration is invalid")
