@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/discovery"
@@ -69,7 +68,7 @@ func eligiblePeerEntries(underlay []string, peers map[string]json.RawMessage) ([
 
 func newJoinCommand(app *application) *cobra.Command {
 	var networkID, nodeID, operator string
-	var allowInsecureHTTP, runAfterJoin bool
+	var allowInsecureHTTP bool
 	var listenPort int
 	var dirs paths.Options
 	cmd := &cobra.Command{Use: "join", Short: "Register this agent with a service-managed network", Args: noArguments, RunE: app.handle(func(cmd *cobra.Command) error {
@@ -197,17 +196,13 @@ func newJoinCommand(app *application) *cobra.Command {
 		if err := json.NewEncoder(app.out).Encode(map[string]any{"state": "registered", "network_id": networkID, "node_id": nodeID, "tunnel_address": registered.TunnelAddress, "peer_count": len(initial.Peers)}); err != nil {
 			return err
 		}
-		if !runAfterJoin {
-			return nil
-		}
-		return staticCommandWithRefresh(cmd.Context(), "run", configPath, "", layout, operator, app.out, app.backend, loadConfig, 15*time.Second)
+		return nil
 	})}
-	cmd.Long = "Register this agent using a network-scoped Base64URL token read from stdin and save its managed configuration. The network ID comes from the token; the node ID defaults to the machine hostname. Use --run to start the tunnel after registration."
+	cmd.Long = "Register this agent using a network-scoped Base64URL token read from stdin and save its managed configuration. The network ID comes from the token; the node ID defaults to the machine hostname. Start a tunnel separately with run --config."
 	cmd.Flags().StringVar(&nodeID, "node-id", "", "Optional stable node ID (defaults to hostname)")
 	cmd.Flags().IntVar(&listenPort, "listen-port", 51820, "WireGuard UDP listen port")
 	cmd.Flags().StringVar(&operator, "operator", "", "Authorized local username/UID or Windows account/SID")
 	cmd.Flags().BoolVar(&allowInsecureHTTP, "allow-insecure-http", false, "Allow HTTP API URLs outside localhost (sends the enrollment token without TLS)")
-	cmd.Flags().BoolVar(&runAfterJoin, "run", false, "Start the tunnel after registration")
 	directoryFlags(cmd, &dirs)
 	return cmd
 }
