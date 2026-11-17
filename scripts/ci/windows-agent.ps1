@@ -208,7 +208,7 @@ function Verify-ConfigurationCollision {
     # Compare A's own resources only. The shared ProgramData namespace also
     # contains B's independently installed inventory, which this operation may
     # legitimately create while rejecting A's private service configuration.
-    $defaultProfileFiles = @('service.yaml','service.key','network.json','ownership','agent.lock','.peerimeter-agent.profile','.peerimeter-agent.runtime','.peerimeter-agent.config') | ForEach-Object { Join-Path $defaultState $_ }
+    $defaultProfileFiles = @('service.yaml','service.key','network.yaml','network.json','ownership','agent.lock','.peerimeter-agent.profile','.peerimeter-agent.runtime','.peerimeter-agent.config') | ForEach-Object { Join-Path $defaultState $_ }
     $defaultProfileSnapshotRoots = @($installResourceRoot) + $defaultProfileFiles
     $before = Snapshot-ManagedTrees $defaultProfileSnapshotRoots
     $beforeService = Get-CimInstance Win32_Service -Filter "Name='PeerimeterAgent'"
@@ -322,9 +322,11 @@ function Verify-RuntimeCollision {
     $process = Start-Process -FilePath $otherAgent -ArgumentList $arguments -RedirectStandardOutput (Join-Path $dir 'collision.log') -RedirectStandardError (Join-Path $dir 'collision-error.log') -PassThru
     if (-not $process.WaitForExit(8000)) { Stop-Process -Id $process.Id -Force; throw 'Installation B failed to reject the occupied runtime promptly' }
     if ($process.ExitCode -eq 0) { throw 'Installation B accepted installation A runtime' }
-    $inventory = Get-Content -LiteralPath (Join-Path (Join-Path (Get-InstallResourceRoot $collisionInstall) 'State') '.peerimeter-agent.install.json') -Raw | ConvertFrom-Json
-    $profiles = @($inventory.profiles)
-    if ($profiles.Count -ne 1 -or $profiles[0].runtime_owned -or $profiles[0].runtime_dir -ne $state) { throw 'Failed installation did not retain a non-owned planned runtime profile' }
+    $inventory = Get-Content -LiteralPath (Join-Path (Join-Path (Get-InstallResourceRoot $collisionInstall) 'State') '.peerimeter-agent.install.yaml') -Raw
+    $profiles = [regex]::Matches($inventory, '(?ms)^[ \t]*- id:.*?(?=^[ \t]*- id:|\z)')
+    $runtimeMatch = if ($profiles.Count -eq 1) { [regex]::Match($profiles[0].Value, '(?m)^\s+runtime_dir:\s*(.*?)\s*$') } else { $null }
+    $runtimePath = if ($runtimeMatch -and $runtimeMatch.Success) { $runtimeMatch.Groups[1].Value.Trim([char[]]@('"', "'")) } else { '' }
+    if (-not $runtimeMatch -or -not $runtimeMatch.Success -or $runtimePath -ine $state -or $profiles[0].Value -match '(?m)^\s+runtime_owned: true\s*$') { throw 'Failed installation did not retain a non-owned planned runtime profile' }
     $removal = & $otherAgent uninstall --json --install-dir $collisionInstall | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { Show-RecentRemovalDiagnostics; throw 'Installation B cleanup failed' }
     if ($removal.state -eq 'pending') {
@@ -391,7 +393,7 @@ try {
     $archive = Join-Path $dir 'native package.zip'
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive
     & (Join-Path $PSScriptRoot '..\..\docs\install.ps1') -Archive $archive -SHA256 (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -InstallDir $installation
-    if (-not (Test-Path -LiteralPath (Join-Path (Join-Path $installResourceRoot 'State') '.peerimeter-agent.install.json'))) { throw 'Verified installer did not register its protected inventory' }
+    if (-not (Test-Path -LiteralPath (Join-Path (Join-Path $installResourceRoot 'State') '.peerimeter-agent.install.yaml'))) { throw 'Verified installer did not register its protected inventory' }
     Copy-Item -LiteralPath $Helper -Destination $helperExe
     Protect-Resource $helperExe $true
     $securePassword = ConvertTo-SecureString ('Pm!' + [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')) -AsPlainText -Force
@@ -561,7 +563,7 @@ peers:
     $serviceInstalled = $false
     Assert-Removed
     if (Get-Service -Name 'PeerimeterAgent' -ErrorAction SilentlyContinue) { throw 'Full uninstall left an SCM registration' }
-    foreach ($path in @($agentExe,(Join-Path $installation 'wireguard.dll'),(Join-Path $installation '.peerimeter-agent.install.ref'),(Join-Path (Join-Path $installResourceRoot 'Documentation') 'peerimeter-agent.NOTICES.txt'),(Join-Path (Join-Path $installResourceRoot 'State') '.peerimeter-agent.install.json'),(Join-Path (Join-Path $installResourceRoot 'Locks') '.peerimeter-agent.install.lock'),(Join-Path $serviceState 'service.key'),(Join-Path $serviceState 'service.yaml'),(Join-Path $serviceState 'ownership'),(Join-Path $serviceState 'agent.lock'),(Join-Path $state 'ownership'),(Join-Path $state 'agent.lock'),(Join-Path $serviceState '.peerimeter-agent.profile'),(Join-Path $state '.peerimeter-agent.profile'),(Join-Path $defaultState 'service.yaml'),(Join-Path $defaultState 'service.key'),(Join-Path $defaultState 'ownership'),(Join-Path $defaultState 'agent.lock'),(Join-Path $defaultState '.peerimeter-agent.profile'),(Join-Path $defaultState '.peerimeter-agent.runtime'))) {
+    foreach ($path in @($agentExe,(Join-Path $installation 'wireguard.dll'),(Join-Path $installation '.peerimeter-agent.install.ref'),(Join-Path (Join-Path $installResourceRoot 'Documentation') 'peerimeter-agent.NOTICES.txt'),(Join-Path (Join-Path $installResourceRoot 'State') '.peerimeter-agent.install.yaml'),(Join-Path (Join-Path $installResourceRoot 'Locks') '.peerimeter-agent.install.lock'),(Join-Path $serviceState 'service.key'),(Join-Path $serviceState 'service.yaml'),(Join-Path $serviceState 'ownership'),(Join-Path $serviceState 'agent.lock'),(Join-Path $state 'ownership'),(Join-Path $state 'agent.lock'),(Join-Path $serviceState '.peerimeter-agent.profile'),(Join-Path $state '.peerimeter-agent.profile'),(Join-Path $defaultState 'service.yaml'),(Join-Path $defaultState 'service.key'),(Join-Path $defaultState 'ownership'),(Join-Path $defaultState 'agent.lock'),(Join-Path $defaultState '.peerimeter-agent.profile'),(Join-Path $defaultState '.peerimeter-agent.runtime'))) {
         if (Test-Path -LiteralPath $path) { throw "Tracked resource survived full uninstall: $path" }
     }
     foreach ($folder in @($installation,$state,$serviceState,$defaultState)) {

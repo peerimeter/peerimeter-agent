@@ -20,6 +20,7 @@ import (
 
 	"github.com/peerimeter/peerimeter-agent/internal/ifname"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
+	"gopkg.in/yaml.v3"
 )
 
 func DefaultDirectory() string {
@@ -95,18 +96,37 @@ func PrepareDirectory(dir string) error { return prepareDirectory(dir) }
 
 // InterfaceChoice persists the local Linux name independently of display names.
 func (g *Guard) InterfaceChoice(id, display, override string) (string, error) {
-	path := filepath.Join(g.dir, "network.json")
+	path := filepath.Join(g.dir, "network.yaml")
+	// TODO(next major): remove the legacy network.json read and conversion.
+	legacyPath := filepath.Join(g.dir, "network.json")
 	var old struct {
-		NetworkID     string `json:"network_id"`
-		InterfaceName string `json:"interface_name"`
+		NetworkID     string `yaml:"network_id"`
+		InterfaceName string `yaml:"interface_name"`
 	}
 	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		data, err = os.ReadFile(legacyPath)
+		if err == nil {
+			path = legacyPath
+		}
+	}
 	if err == nil {
-		if json.Unmarshal(data, &old) != nil || old.NetworkID != id || ifname.Validate(old.InterfaceName) != nil {
+		dec := yaml.NewDecoder(strings.NewReader(string(data)))
+		dec.KnownFields(true)
+		if dec.Decode(&old) != nil || old.NetworkID != id || ifname.Validate(old.InterfaceName) != nil {
 			return "", errors.New("state directory is associated with another or invalid network")
 		}
 		if override != "" && override != old.InterfaceName {
 			return "", errors.New("persisted interface selection differs from override; explicit safe migration is required")
+		}
+		if path == legacyPath {
+			path = filepath.Join(g.dir, "network.yaml")
+			if err := persistInterfaceChoice(path, old); err != nil {
+				return "", err
+			}
+			if err := os.Remove(legacyPath); err != nil && !os.IsNotExist(err) {
+				return "", fmt.Errorf("cannot remove migrated local interface selection %s: %w", legacyPath, err)
+			}
 		}
 		return old.InterfaceName, nil
 	}
@@ -119,27 +139,37 @@ func (g *Guard) InterfaceChoice(id, display, override string) (string, error) {
 	}
 	old.NetworkID = id
 	old.InterfaceName = name
-	data, _ = json.Marshal(old)
+	if err := persistInterfaceChoice(path, old); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
+func persistInterfaceChoice(path string, choice any) error {
+	data, err := yaml.Marshal(choice)
+	if err != nil {
+		return err
+	}
 	tmp, err := os.OpenFile(path+".new", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
-		return "", fmt.Errorf("cannot create local interface selection %s: %w", path, err)
+		return fmt.Errorf("cannot create local interface selection %s: %w", path, err)
 	}
 	defer os.Remove(path + ".new")
 	if _, err = tmp.Write(data); err != nil {
 		tmp.Close()
-		return "", fmt.Errorf("cannot write local interface selection %s: %w", path, err)
+		return fmt.Errorf("cannot write local interface selection %s: %w", path, err)
 	}
 	if err = tmp.Sync(); err != nil {
 		tmp.Close()
-		return "", errors.New("cannot sync local interface selection")
+		return errors.New("cannot sync local interface selection")
 	}
 	if err = tmp.Close(); err != nil {
-		return "", err
+		return err
 	}
 	if err = os.Rename(path+".new", path); err != nil {
-		return "", fmt.Errorf("cannot persist local interface selection %s: %w", path, err)
+		return fmt.Errorf("cannot persist local interface selection %s: %w", path, err)
 	}
-	return name, nil
+	return nil
 }
 
 // ValidateOperator resolves a control-channel delegate without changing OS state.

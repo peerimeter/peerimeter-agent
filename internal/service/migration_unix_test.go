@@ -59,7 +59,7 @@ func migrationFixture(t *testing.T) (Config, [32]byte, map[string][]byte) {
 	if err := os.Remove(installedConfig); err != nil {
 		t.Fatal(err)
 	}
-	preserved := map[string][]byte{"network.json": []byte(`{"network_id":"migration-network","interface_name":"wg-persisted"}`), "ownership": []byte("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n")}
+	preserved := map[string][]byte{"network.yaml": []byte("network_id: migration-network\ninterface_name: wg-persisted\n"), "ownership": []byte("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n")}
 	for name, data := range preserved {
 		if err := os.WriteFile(filepath.Join(legacy, name), data, 0600); err != nil {
 			t.Fatal(err)

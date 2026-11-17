@@ -152,7 +152,7 @@ progress 'Registering protected installation inventory.'
 # The installed binary writes the protected inventory using the same audited
 # ownership/path rules as full uninstall. Source configs and keys are not claimed.
 "$install_dir/peerimeter-agent" register-installation --install-dir "$install_dir" --doc-dir "$doc_dir" --data-dir "$data_dir" --lock-dir "$lock_dir" >/dev/null
-[ -f "$data_dir/.peerimeter-agent.install.json" ] && [ ! -L "$data_dir/.peerimeter-agent.install.json" ] || { echo 'Installation inventory registration failed.' >&2; exit 1; }
+[ -f "$data_dir/.peerimeter-agent.install.yaml" ] && [ ! -L "$data_dir/.peerimeter-agent.install.yaml" ] || { echo 'Installation inventory registration failed.' >&2; exit 1; }
 [ ! -e "$install_dir/.peerimeter-agent.install.ref" ] || { [ -f "$install_dir/.peerimeter-agent.install.ref" ] && [ ! -L "$install_dir/.peerimeter-agent.install.ref" ]; } || { echo 'Installation reference is invalid.' >&2; exit 1; }
 completed=1
 printf 'Installation directories:\n  Install: %s\n  Documentation: %s\n  State: %s\n  Locks: %s\n' "$install_dir" "$doc_dir" "$data_dir" "$lock_dir"
