@@ -195,6 +195,16 @@ func validatePurgeRoots(inv installstate.Inventory, plan removalPlan) error {
 	return nil
 }
 
+func plannedMarkersForRoot(root string, files []removalFile) map[string]bool {
+	markers := make(map[string]bool)
+	for _, file := range files {
+		if file.Marker && filepath.Dir(file.Path) == root {
+			markers[file.Path] = true
+		}
+	}
+	return markers
+}
+
 func validateOverrides(opts Options, inv installstate.Inventory) error {
 	for _, item := range []struct {
 		value string
@@ -693,7 +703,7 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	}
 	if opts.Purge {
 		for _, dir := range plan.PurgeDirs {
-			purged, err := removeDirectoryContents(dir)
+			purged, err := removeDirectoryContents(dir, plannedMarkersForRoot(dir, plan.Files))
 			if err != nil {
 				return fmt.Errorf("partial uninstall; cannot purge %s: %w", dir, err)
 			}
@@ -843,7 +853,7 @@ func listTree(root string) ([]string, error) {
 	return paths, err
 }
 
-func removeDirectoryContents(root string) ([]string, error) {
+func removeDirectoryContents(root string, markers map[string]bool) ([]string, error) {
 	info, err := os.Lstat(root)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -860,12 +870,11 @@ func removeDirectoryContents(root string) ([]string, error) {
 	}
 	var removed []string
 	for _, entry := range entries {
-		// Keep ownership and coordination markers until the normal marker
-		// removal phase so a partial purge can still be retried safely.
-		if entry.Name() == installstate.MarkerFilename || entry.Name() == installstate.LegacyMarkerFilename || entry.Name() == installstate.ConfigMarkerFilename || entry.Name() == installstate.LegacyConfigMarkerFilename || entry.Name() == installstate.RuntimeMarkerFilename || entry.Name() == installstate.LegacyRuntimeMarkerFilename {
+		// Keep only markers scheduled for the normal marker-removal phase.
+		path := filepath.Join(root, entry.Name())
+		if markers[path] {
 			continue
 		}
-		path := filepath.Join(root, entry.Name())
 		paths, err := listTree(path)
 		if err != nil {
 			return nil, err
