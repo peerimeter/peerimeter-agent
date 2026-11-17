@@ -210,9 +210,9 @@ active="$agent"
 "$agent" service start
 wait_status "$agent" '' "$base/default-status.json"
 check_layout "$defaults_config" "$defaults_state" "$defaults_runtime"
-as_operator "$agent" status --json >"$base/default-operator.json"
-as_operator "$agent" wg --json >"$base/default-operator-peers.json"
-as_operator "$agent" sync
+as_operator "$agent" status --json --runtime-dir "$defaults_runtime" >"$base/default-operator.json"
+as_operator "$agent" wg --json --runtime-dir "$defaults_runtime" >"$base/default-operator-peers.json"
+as_operator "$agent" sync --runtime-dir "$defaults_runtime"
 bash "$repo/scripts/ci/unix-config-collision.sh" "$agent" "$source_config" "$defaults_config" "$defaults_runtime" "$base"
 snapshot "$defaults_config" "$defaults_state" >"$base/default-durable.json"
 "$agent" service stop
