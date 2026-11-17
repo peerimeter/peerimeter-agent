@@ -450,7 +450,6 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	if err != nil {
 		return err
 	}
-	confirmedProfiles := append([]installstate.Profile(nil), inv.Profiles...)
 	if _, found, err := selfupdate.FindJournal(inv); err != nil {
 		return err
 	} else if found {
@@ -481,6 +480,7 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		}
 		inv.Profiles[i].PendingConfigOwned = pendingOwned
 	}
+	confirmedProfiles := append([]installstate.Profile(nil), inv.Profiles...)
 	plan := makePlan(inv, opts.Purge)
 	if err := preflight(inv, plan); err != nil {
 		return err
@@ -616,9 +616,6 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	if reread.ID != inv.ID {
 		return errors.New("installation inventory changed before removal")
 	}
-	if !reflect.DeepEqual(reread.Profiles, confirmedProfiles) {
-		return errors.New("installation profiles changed before removal")
-	}
 	if _, found, err := selfupdate.FindJournal(reread); err != nil {
 		return err
 	} else if found {
@@ -646,6 +643,9 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 			return pendingErr
 		}
 		inv.Profiles[i].PendingConfigOwned = pendingOwned
+	}
+	if !reflect.DeepEqual(inv.Profiles, confirmedProfiles) {
+		return errors.New("installation profiles changed before removal")
 	}
 	plan = makePlan(inv, opts.Purge)
 	if err := preflight(inv, plan); err != nil {
