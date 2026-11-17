@@ -244,7 +244,7 @@ peerimeter-agent config push --token-file /secure/join-token.txt \
 On Linux and macOS, protect the token file with owner-only permissions (for
 example, `chmod 600`). On Windows, allow access only to the current user,
 SYSTEM and Administrators. To register with a network created in the service
-API and save its configuration for a machine-wide service, run:
+API and save its managed configuration, run:
 
 ```sh
 cat /secure/join-token.txt | sudo peerimeter-agent join
@@ -254,8 +254,11 @@ cat /secure/join-token.txt | sudo peerimeter-agent join
 the default-route physical interface's addresses, then receives a tunnel IPv4
 address from the network's API-configured CIDR. It selects a peer's LAN address
 when the reported CIDRs overlap; otherwise it uses that peer's STUN-observed
-public UDP mapping. It saves the managed configuration and service credential,
-then exits without starting a tunnel. Add `--run` to start the tunnel and keep
+public UDP mapping. It saves the managed configuration as
+`<config-dir>/<network-id>.yaml` and the service credential, then exits without
+starting a tunnel. An installed service continues using its `service.yaml`
+snapshot and does not load this per-network file; automatic handoff to a running
+service is planned work. Add `--run` to start the tunnel and keep
 it in the foreground while fetching peers every 15 seconds and reconciling
 endpoint and peer changes. Starting the tunnel requires administrator/root
 privileges on macOS and Linux. The key, config, and shared service credential
@@ -263,10 +266,11 @@ are stored in protected local files. When using `--run` with elevated
 privileges, run registration with the same privileges too, so both commands
 use the same configuration and state directories. If you register as an
 unprivileged user, pass the same `--config-dir`, `--state-dir` and
-`--runtime-dir` values to the later elevated command. Re-run `join` with the
-same token to refresh registration; repeat the original `--node-id` if you
-specified one. Otherwise the node ID defaults to the machine hostname and may
-refer to a different node if that hostname changes. The shared token remains
+`--runtime-dir` values to the later elevated command. To refresh registration,
+repeat the same token and any original `--node-id` and `--listen-port` values.
+Without `--node-id`, the node ID defaults to the machine hostname; without
+`--listen-port`, the port defaults to 51820. Changing either on a later Join
+can register a different node or update the peer port. The shared token remains
 stored after the command exits. Removing the protected
 `state-dir/managed/<network-id>.token` file only deletes the local credential;
 the service-side node record remains. There is not yet a `leave` command or
