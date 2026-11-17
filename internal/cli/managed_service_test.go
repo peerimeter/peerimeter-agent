@@ -72,6 +72,11 @@ func TestSyncConfigPathMatchesRunningAgent(t *testing.T) {
 	if err := os.WriteFile(runtimePath, []byte("version: 1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	var err error
+	runtimePath, err = filepath.EvalSymlinks(runtimePath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	got, err := syncConfigPath("", runtimePath)
 	if err != nil || got != runtimePath {
 		t.Fatalf("syncConfigPath() = %q, %v; want %q", got, err, runtimePath)
