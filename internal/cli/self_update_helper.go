@@ -23,6 +23,9 @@ import (
 
 const updateManifestName = ".update.json"
 
+// TODO(next major): remove fallback for update manifests staged by older agents.
+const legacyUpdateManifestName = ".peerimeter-agent.update.json"
+
 type helperManifest struct {
 	Version   string                  `json:"version"`
 	InstallID string                  `json:"installation_id"`
@@ -276,6 +279,12 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) error {
 	}
 	defer func() { _ = scheduleWindowsCleanup(transactionDir) }()
 	manifestPath := filepath.Join(transactionDir, updateManifestName)
+	if _, err := os.Lstat(manifestPath); os.IsNotExist(err) {
+		// TODO(next major): remove fallback for the previous update manifest name.
+		manifestPath = filepath.Join(transactionDir, legacyUpdateManifestName)
+	} else if err != nil {
+		return err
+	}
 	if err := installstate.CheckPrivateFile(manifestPath); err != nil {
 		return err
 	}
