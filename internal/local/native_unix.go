@@ -49,17 +49,18 @@ func prepareDirectoryWithSudoOwner(dir string, allowSudoOwner bool) error {
 	}
 	defer unix.Close(fd)
 	var stat unix.Stat_t
-	if unix.Fstat(fd, &stat) != nil || stat.Mode&unix.S_IFMT != unix.S_IFDIR || (stat.Uid != uint32(os.Geteuid()) && !(allowSudoOwner && trustedDirectoryOwner(stat.Uid))) {
+	if unix.Fstat(fd, &stat) != nil || uint32(stat.Mode)&uint32(unix.S_IFMT) != uint32(unix.S_IFDIR) || (stat.Uid != uint32(os.Geteuid()) && !(allowSudoOwner && trustedDirectoryOwner(stat.Uid))) {
 		return fmt.Errorf("state directory %s must belong to the current effective user", dir)
 	}
 	// Existing XDG directories are often created as 0755. Once ownership and
 	// the non-symlink path are verified, remove group/other access instead of
 	// making the user repair the directory by hand.
-	if stat.Mode&0066 != 0 {
+	mode := uint32(stat.Mode)
+	if mode&0066 != 0 {
 		if !allowSudoOwner {
 			return fmt.Errorf("state directory %s must be owner-controlled (chmod 700 or 711), without group/other read or write access, and not a symbolic link", dir)
 		}
-		if err := unix.Fchmod(fd, uint32(stat.Mode&^uint16(0066))); err != nil {
+		if err := unix.Fchmod(fd, mode&^uint32(0066)); err != nil {
 			return fmt.Errorf("cannot protect state directory %s: %w", dir, err)
 		}
 	}
