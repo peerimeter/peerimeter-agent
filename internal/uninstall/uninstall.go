@@ -12,7 +12,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"sort"
 	"strings"
@@ -172,6 +171,60 @@ func makePlan(inv installstate.Inventory, purge bool) removalPlan {
 	sort.Strings(p.PurgeDirs)
 	sort.Slice(p.Directories, func(i, j int) bool { return len(p.Directories[i]) > len(p.Directories[j]) })
 	return p
+}
+
+type confirmedProfile struct {
+	ID, ConfigDir, LegacyConfigDir, PendingConfigDir, PendingRuntimeDir string
+	StateDir, RuntimeDir                                                string
+	Service                                                             bool
+}
+
+func samePathSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[string]int, len(a))
+	for _, path := range a {
+		seen[path]++
+	}
+	for _, path := range b {
+		if seen[path] == 0 {
+			return false
+		}
+		seen[path]--
+	}
+	return true
+}
+
+func sameConfirmedPlan(a, b removalPlan) bool {
+	if len(a.Files) != len(b.Files) || !samePathSet(a.Directories, b.Directories) || !samePathSet(a.PurgeDirs, b.PurgeDirs) || len(a.Profiles) != len(b.Profiles) {
+		return false
+	}
+	files := make(map[string]removalFile, len(a.Files))
+	for _, file := range a.Files {
+		files[file.Path] = file
+	}
+	for _, file := range b.Files {
+		if files[file.Path] != file {
+			return false
+		}
+	}
+	profiles := make(map[confirmedProfile]int, len(a.Profiles))
+	for _, p := range a.Profiles {
+		profiles[profileForConfirmation(p)]++
+	}
+	for _, p := range b.Profiles {
+		profile := profileForConfirmation(p)
+		if profiles[profile] == 0 {
+			return false
+		}
+		profiles[profile]--
+	}
+	return true
+}
+
+func profileForConfirmation(p installstate.Profile) confirmedProfile {
+	return confirmedProfile{p.ID, p.ConfigDir, p.LegacyConfigDir, p.PendingConfigDir, p.PendingRuntimeDir, p.StateDir, p.RuntimeDir, p.Service}
 }
 
 func contains(values []string, value string) bool {
@@ -480,11 +533,11 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		}
 		inv.Profiles[i].PendingConfigOwned = pendingOwned
 	}
-	confirmedProfiles := append([]installstate.Profile(nil), inv.Profiles...)
 	plan := makePlan(inv, opts.Purge)
 	if err := preflight(inv, plan); err != nil {
 		return err
 	}
+	confirmedPlan := plan
 	// Refuse an untracked native registration before any tombstone or lock-file
 	// mutation, so legacy service migration remains available after refusal.
 	if !hasTrackedService(inv.Profiles) {
@@ -644,10 +697,11 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		}
 		inv.Profiles[i].PendingConfigOwned = pendingOwned
 	}
-	if !reflect.DeepEqual(inv.Profiles, confirmedProfiles) {
-		return errors.New("installation profiles changed before removal")
+	updatedPlan := makePlan(inv, opts.Purge)
+	if !sameConfirmedPlan(confirmedPlan, updatedPlan) {
+		return errors.New("installation profiles or removal resources changed before removal")
 	}
-	plan = makePlan(inv, opts.Purge)
+	plan = updatedPlan
 	if err := preflight(inv, plan); err != nil {
 		return err
 	}
