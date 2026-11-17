@@ -244,10 +244,10 @@ peerimeter-agent config push --token-file /secure/join-token.txt \
 On Linux and macOS, protect the token file with owner-only permissions (for
 example, `chmod 600`). On Windows, allow access only to the current user,
 SYSTEM and Administrators. To register with a network created in the service
-API and save its configuration, run:
+API and save its configuration for a machine-wide service, run:
 
 ```sh
-cat /secure/join-token.txt | peerimeter-agent join
+cat /secure/join-token.txt | sudo peerimeter-agent join
 ```
 
 `join` generates a local WireGuard key if needed, registers its public key and
@@ -259,9 +259,15 @@ then exits without starting a tunnel. Add `--run` to start the tunnel and keep
 it in the foreground while fetching peers every 15 seconds and reconciling
 endpoint and peer changes. Starting the tunnel requires administrator/root
 privileges on macOS and Linux. The key, config, and shared service credential
-are stored in protected local files. Re-run `join` with the same token to
-refresh registration; the local key and node ID are reused. The shared token
-remains stored after the command exits. Removing the protected
+are stored in protected local files. When using `--run` with elevated
+privileges, run registration with the same privileges too, so both commands
+use the same configuration and state directories. If you register as an
+unprivileged user, pass the same `--config-dir`, `--state-dir` and
+`--runtime-dir` values to the later elevated command. Re-run `join` with the
+same token to refresh registration; repeat the original `--node-id` if you
+specified one. Otherwise the node ID defaults to the machine hostname and may
+refer to a different node if that hostname changes. The shared token remains
+stored after the command exits. Removing the protected
 `state-dir/managed/<network-id>.token` file only deletes the local credential;
 the service-side node record remains. There is not yet a `leave` command or
 server-side node revocation API.
