@@ -183,12 +183,12 @@ func ValidateOperator(operator string) error {
 
 type Operations struct {
 	// Operator delegates local control only; private configuration remains protected.
-	Operator      string
-	InstanceID    string
-	NetworkID     string
-	ConfigPath    string
-	Config        func() ([]byte, error)
-	ReplaceConfig func([]byte) (func() error, error)
+	Operator    string
+	InstanceID  string
+	NetworkID   string
+	ConfigPath  string
+	Config      func() ([]byte, error)
+	ApplyConfig func(context.Context, []byte) error
 	// BeforeListen claims runtime ownership under its exclusive guard before any
 	// existing Unix socket can be removed. Windows calls it after exclusive pipe creation.
 	BeforeListen func() error
@@ -246,7 +246,7 @@ func Serve(ctx context.Context, dir string, ops Operations) (func() error, error
 		}
 		decoder := json.NewDecoder(io.LimitReader(r.Body, (2<<20)+1))
 		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&request); err != nil || decoder.Decode(new(any)) != io.EOF || request.RuntimeID != runtimeID || request.NetworkID != ops.NetworkID || ops.ReplaceConfig == nil || ops.Reload == nil {
+		if err := decoder.Decode(&request); err != nil || decoder.Decode(new(any)) != io.EOF || request.RuntimeID != runtimeID || request.NetworkID != ops.NetworkID || ops.ApplyConfig == nil {
 			write(w, nil, errors.New("running agent identity changed or config update is unavailable"))
 			return
 		}
@@ -254,17 +254,7 @@ func Serve(ctx context.Context, dir string, ops Operations) (func() error, error
 		defer applyMu.Unlock()
 		applyCtx, cancelApply := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
 		defer cancelApply()
-		rollback, err := ops.ReplaceConfig(request.Config)
-		if err == nil {
-			err = ops.Reload(applyCtx)
-		}
-		if err != nil && rollback != nil {
-			err = errors.Join(err, rollback())
-			recoveryCtx, cancelRecovery := context.WithTimeout(context.Background(), 10*time.Second)
-			err = errors.Join(err, ops.Reload(recoveryCtx))
-			cancelRecovery()
-		}
-		write(w, map[string]string{"state": "reconciled"}, err)
+		write(w, map[string]string{"state": "reconciled"}, ops.ApplyConfig(applyCtx, request.Config))
 	})
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) { s, err := ops.Snapshot(r.Context()); write(w, s, err) })
 	mux.HandleFunc("GET /v1/peers", func(w http.ResponseWriter, r *http.Request) {

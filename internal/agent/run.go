@@ -2,15 +2,21 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
+	"reflect"
+	"runtime"
 	"sync"
 	"time"
 
+	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
+	"gopkg.in/yaml.v3"
 )
 
 func Run(ctx context.Context, backend platform.Backend, desired platform.Desired) error {
@@ -53,9 +59,7 @@ func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desire
 	}()
 	var mu sync.Mutex
 	currentDesired := desired
-	reconcile := func(ctx context.Context) error {
-		mu.Lock()
-		defer mu.Unlock()
+	reconcileLocked := func(ctx context.Context) error {
 		next, err := reload(ctx)
 		if err != nil {
 			return err
@@ -69,13 +73,55 @@ func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desire
 		currentDesired = next
 		return nil
 	}
+	reconcile := func(ctx context.Context) error {
+		mu.Lock()
+		defer mu.Unlock()
+		return reconcileLocked(ctx)
+	}
+	applyConfig := func(ctx context.Context, data []byte) error {
+		if replaceConfig == nil {
+			return errors.New("configuration updates are unavailable")
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		var next config.Config
+		decoder := yaml.NewDecoder(bytes.NewReader(data))
+		decoder.KnownFields(true)
+		if err := decoder.Decode(&next); err != nil {
+			return errors.New("cannot decode refreshed configuration")
+		}
+		var extra any
+		if err := decoder.Decode(&extra); err != io.EOF {
+			return errors.New("refreshed configuration must contain one YAML document")
+		}
+		if err := config.Validate(next, runtime.GOOS); err != nil {
+			return errors.Join(errors.New("refreshed configuration is invalid"), err)
+		}
+		unchanged := currentDesired.Config
+		unchanged.Peers = next.Peers
+		if !reflect.DeepEqual(next, unchanged) {
+			return errors.New("sync may only update the peer list")
+		}
+		rollback, err := replaceConfig(data)
+		if err != nil {
+			return err
+		}
+		err = reconcileLocked(ctx)
+		if err != nil && rollback != nil {
+			err = errors.Join(err, rollback())
+			recoveryCtx, cancelRecovery := context.WithTimeout(context.Background(), 10*time.Second)
+			err = errors.Join(err, reconcileLocked(recoveryCtx))
+			cancelRecovery()
+		}
+		return err
+	}
 	closeControl, err := local.Serve(ctx, dir, local.Operations{Operator: operator, InstanceID: instanceID, NetworkID: desired.Config.Network.ID, ConfigPath: configPath, BeforeListen: beforeServe, OnClose: onClose,
 		Config: func() ([]byte, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			return json.Marshal(currentDesired.Config)
 		},
-		ReplaceConfig: replaceConfig,
+		ApplyConfig: applyConfig,
 		Snapshot: func(ctx context.Context) (platform.Snapshot, error) {
 			mu.Lock()
 			defer mu.Unlock()
