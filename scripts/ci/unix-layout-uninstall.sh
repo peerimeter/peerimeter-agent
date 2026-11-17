@@ -94,6 +94,16 @@ wait_status() {
   sleep 0.3
  done
  echo 'Installed service did not publish local status.' >&2
+ if [[ $(uname -s) == Linux ]]; then
+  systemctl status --no-pager peerimeter-agent.service >&2 || true
+  journalctl --no-pager -n 80 -u peerimeter-agent.service >&2 || true
+ else
+  launchctl print system/com.peerimeter.agent >&2 || true
+  for log in /var/log/system.log /var/log/install.log; do
+   [[ ! -r "$log" ]] || tail -n 80 "$log" >&2
+  done
+ fi
+ find "$runtime" -maxdepth 1 -ls >&2 2>/dev/null || true
  return 1
 }
 wait_interface_gone() {
