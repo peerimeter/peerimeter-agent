@@ -73,6 +73,9 @@ func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desire
 		if next.Config.Network.ID != desired.Config.Network.ID || next.InterfaceName != desired.InterfaceName {
 			return errors.New("reload cannot change the local network identity or interface")
 		}
+		if next.PrivateKey != desired.PrivateKey {
+			return errors.New("reload cannot change the local WireGuard key")
+		}
 		if err := session.Reconcile(ctx, next); err != nil {
 			return err
 		}
