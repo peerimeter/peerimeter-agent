@@ -37,7 +37,7 @@ func RunManaged(ctx context.Context, backend platform.Backend, desired platform.
 
 // RunManagedWithRefresh periodically obtains desired state from reload while
 // preserving the same local authenticated control surface as static mode.
-func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desired platform.Desired, dir string, reload func(context.Context) (platform.Desired, error), operator, instanceID string, beforeServe, onClose func() error, interval time.Duration) (result error) {
+func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desired platform.Desired, dir string, reload func(context.Context) (platform.Desired, error), operator, instanceID string, beforeServe, onClose func() error, interval time.Duration, configPaths ...string) (result error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	session, err := backend.Start(ctx, desired)
@@ -63,7 +63,11 @@ func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desire
 		}
 		return session.Reconcile(ctx, next)
 	}
-	closeControl, err := local.Serve(ctx, dir, local.Operations{Operator: operator, InstanceID: instanceID, BeforeListen: beforeServe, OnClose: onClose,
+	configPath := ""
+	if len(configPaths) != 0 {
+		configPath = configPaths[0]
+	}
+	closeControl, err := local.Serve(ctx, dir, local.Operations{Operator: operator, InstanceID: instanceID, NetworkID: desired.Config.Network.ID, ConfigPath: configPath, BeforeListen: beforeServe, OnClose: onClose,
 		Snapshot: func(ctx context.Context) (platform.Snapshot, error) {
 			mu.Lock()
 			defer mu.Unlock()

@@ -145,7 +145,11 @@ func staticCommandWithRefresh(ctx context.Context, commandName, path, override s
 		}
 		return installstate.RegisterProfile(filepath.Dir(exe), installstate.Profile{StateDir: layout.StateDir, RuntimeDir: layout.RuntimeDir, ClaimRuntime: true})
 	}
+	configPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
 	return agent.RunManagedWithRefresh(ctx, backend, desired, layout.RuntimeDir, reload, operator, local.InstanceID(layout.StateDir), ready, func() error {
 		return installstate.ReleaseRuntime(filepath.Dir(exe), layout.StateDir, layout.RuntimeDir)
-	}, refresh)
+	}, refresh, filepath.Clean(configPath))
 }

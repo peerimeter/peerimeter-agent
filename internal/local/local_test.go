@@ -65,13 +65,17 @@ func TestLocalChannel(t *testing.T) {
 	ctx := context.Background()
 	var reloaded atomic.Bool
 	var stopped atomic.Bool
-	closeServer, err := Serve(ctx, dir, Operations{Snapshot: func(context.Context) (platform.Snapshot, error) {
+	closeServer, err := Serve(ctx, dir, Operations{InstanceID: "instance", NetworkID: "test", ConfigPath: filepath.Join(dir, "service.yaml"), Snapshot: func(context.Context) (platform.Snapshot, error) {
 		return platform.Snapshot{NetworkID: "test", State: "running", Peers: []platform.PeerState{}}, nil
 	}, Reload: func(context.Context) error { reloaded.Store(true); return nil }, Stop: func() { stopped.Store(true) }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer closeServer()
+	identity, err := GetIdentity(ctx, dir)
+	if err != nil || identity.InstanceID != "instance" || identity.NetworkID != "test" || identity.ConfigPath != filepath.Join(dir, "service.yaml") {
+		t.Fatalf("GetIdentity() = %+v, %v", identity, err)
+	}
 	var out bytes.Buffer
 	if err = Request(ctx, dir, "status", &out); err != nil || !bytes.Contains(out.Bytes(), []byte(`"state":"running"`)) {
 		t.Fatalf("%s %v", out.String(), err)

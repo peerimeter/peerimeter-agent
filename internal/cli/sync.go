@@ -21,7 +21,7 @@ func newSyncCommand(app *application) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Refresh joined peers and reconcile the running agent",
-		Long:  "When a joined network has saved Service API metadata, sync pulls its current peer list, updates the local network configuration, and reloads the running tunnel. Otherwise it reloads the local configuration as before. With multiple joined networks, --network-id is required. Older joins may need --api-url and --node-id once.",
+		Long:  "When a joined network has saved Service API metadata, sync pulls its current peer list, updates the configuration file used by the running agent, and reloads the tunnel. It verifies the selected network matches the running network. --config, if supplied, must identify that active file. Without complete saved metadata it reloads the local configuration as before. With multiple joined networks, --network-id is required. Older joins may need --api-url and --node-id once.",
 		Args:  noArguments,
 		RunE: app.handleResponse(func(cmd *cobra.Command) error {
 			layout, err := paths.Resolve(dirs)
@@ -70,11 +70,21 @@ func newSyncCommand(app *application) *cobra.Command {
 				return errors.New("--node-id is required because this network has no saved node ID")
 			}
 			options := serviceConfigOptions{networkID: networkID, nodeID: nodeID, apiURL: apiURL, allowInsecureHTTP: allowInsecureHTTP}
+			identity, err := local.GetIdentity(cmd.Context(), layout.RuntimeDir)
+			if err != nil {
+				return err
+			}
+			if identity.NetworkID != networkID {
+				return fmt.Errorf("running agent network %q does not match selected network %q", identity.NetworkID, networkID)
+			}
+			configPath, err = syncConfigPath(configPath, identity.ConfigPath)
+			if err != nil {
+				return err
+			}
 			client, saveMigration, err := managedServiceClient(options, layout)
 			if err != nil {
 				return err
 			}
-			configPath = syncConfigPath(configPath, layout.ConfigDir, networkID)
 			current, err := config.Load(configPath)
 			if err != nil {
 				return fmt.Errorf("cannot load joined network configuration: %w", err)
@@ -122,13 +132,24 @@ func shouldFallbackToLocalSync(metadata managedNetworkMetadata, metadataErr erro
 	return (metadataErr != nil || metadata.NodeID == "") && nodeID == "" && apiURL == ""
 }
 
-func syncConfigPath(override, configDir, networkID string) string {
-	if override != "" {
-		return override
+func syncConfigPath(override, runtimePath string) (string, error) {
+	if runtimePath == "" {
+		return "", errors.New("running agent did not report its configuration path; restart it with the updated agent before syncing")
 	}
-	servicePath := filepath.Join(configDir, "service.yaml")
-	if cfg, err := config.Load(servicePath); err == nil && cfg.Network.ID == networkID {
-		return servicePath
+	runtimePath, err := filepath.Abs(runtimePath)
+	if err != nil {
+		return "", errors.New("cannot resolve running agent configuration path")
 	}
-	return filepath.Join(configDir, networkID+".yaml")
+	runtimePath = filepath.Clean(runtimePath)
+	if override == "" {
+		return runtimePath, nil
+	}
+	override, err = filepath.Abs(override)
+	if err != nil {
+		return "", errors.New("cannot resolve --config path")
+	}
+	if filepath.Clean(override) != runtimePath {
+		return "", errors.New("--config must identify the configuration file used by the running agent")
+	}
+	return runtimePath, nil
 }
