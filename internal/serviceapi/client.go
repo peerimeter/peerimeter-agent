@@ -22,7 +22,7 @@ const maxConfigSize = 1 << 20
 const maxBundleSize = 8 << 10
 
 // JoinBundle is the decoded Base64URL JSON token returned by the service.
-// enrollment_token is currently the service's shared static API key.
+// enrollment_token is scoped to the bundle's network by the service.
 type JoinBundle struct {
 	Version         int    `json:"version"`
 	APIURL          string `json:"api_url"`
