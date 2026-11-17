@@ -42,7 +42,7 @@ func newConfigAPICommand(app *application) *cobra.Command {
 		if err := validateConfigSelection(pull); err != nil {
 			return err
 		}
-		client, err := managedServiceClient(pull, layout)
+		client, saveMigration, err := managedServiceClient(pull, layout)
 		if err != nil {
 			return err
 		}
@@ -53,6 +53,9 @@ func newConfigAPICommand(app *application) *cobra.Command {
 			data, err = client.PullNode(cmd.Context(), pull.networkID, pull.nodeID)
 		}
 		if err != nil {
+			return err
+		}
+		if err := saveMigration(); err != nil {
 			return err
 		}
 		var value any
@@ -85,7 +88,7 @@ func newConfigAPICommand(app *application) *cobra.Command {
 		if err := validateConfigSelection(push); err != nil {
 			return err
 		}
-		client, err := managedServiceClient(push, layout)
+		client, saveMigration, err := managedServiceClient(push, layout)
 		if err != nil {
 			return err
 		}
@@ -107,6 +110,9 @@ func newConfigAPICommand(app *application) *cobra.Command {
 			err = client.PushNode(cmd.Context(), push.networkID, push.nodeID, data)
 		}
 		if err != nil {
+			return err
+		}
+		if err := saveMigration(); err != nil {
 			return err
 		}
 		return writeJSONLine(app.out, map[string]string{"state": "config_pushed", "kind": push.kind, "network_id": push.networkID})
@@ -226,41 +232,44 @@ func readManagedNetworkMetadata(stateDir, networkID string) (managedNetworkMetad
 	return metadata, nil
 }
 
-func managedServiceClient(options serviceConfigOptions, layout paths.Layout) (*serviceapi.Client, error) {
+func managedServiceClient(options serviceConfigOptions, layout paths.Layout) (*serviceapi.Client, func() error, error) {
 	if !validManagedNetworkID(options.networkID) {
-		return nil, errors.New("--network-id is invalid")
+		return nil, nil, errors.New("--network-id is invalid")
 	}
 	metadata, metadataErr := readManagedNetworkMetadata(layout.StateDir, options.networkID)
 	apiURL := options.apiURL
 	allowInsecureHTTP := options.allowInsecureHTTP
 	if apiURL == "" {
 		if metadataErr != nil {
-			return nil, metadataErr
+			return nil, nil, metadataErr
 		}
 		apiURL = metadata.APIURL
 		allowInsecureHTTP = allowInsecureHTTP || metadata.AllowInsecureHTTP
 	}
 	token, err := secret.ReadProtectedText(filepath.Join(layout.StateDir, "managed", options.networkID+".token"), 16<<10)
 	if err != nil {
-		return nil, errors.New("managed network credential is unavailable; run join before config pull or push")
+		return nil, nil, errors.New("managed network credential is unavailable; run join before config pull or push")
 	}
 	bundle := serviceapi.JoinBundle{Version: 1, APIURL: apiURL, NetworkID: options.networkID, EnrollmentToken: strings.TrimSpace(token)}
 	encoded, err := json.Marshal(bundle)
 	if err != nil {
-		return nil, errors.New("could not validate managed service credential")
+		return nil, nil, errors.New("could not validate managed service credential")
 	}
 	validated, err := serviceapi.DecodeJoinTokenWithInsecureHTTP(base64.RawURLEncoding.EncodeToString(encoded), allowInsecureHTTP)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// TODO(peerimeter): Remove this legacy migration after all supported join versions save service metadata.
-	if metadataErr != nil && options.apiURL != "" {
-		metadata := managedNetworkMetadata{Version: 1, APIURL: validated.APIURL, NetworkID: options.networkID, NodeID: options.nodeID, AllowInsecureHTTP: allowInsecureHTTP}
-		if err := saveManagedNetworkMetadata(layout.StateDir, metadata); err != nil {
-			return nil, err
-		}
+	needsMigration := metadataErr != nil && options.apiURL != "" || metadataErr == nil && metadata.NodeID == "" && options.nodeID != ""
+	if needsMigration {
+		metadata = managedNetworkMetadata{Version: 1, APIURL: validated.APIURL, NetworkID: options.networkID, NodeID: options.nodeID, AllowInsecureHTTP: allowInsecureHTTP}
 	}
-	return serviceapi.New(validated), nil
+	return serviceapi.New(validated), func() error {
+		if !needsMigration {
+			return nil
+		}
+		return saveManagedNetworkMetadata(layout.StateDir, metadata)
+	}, nil
 }
 
 func saveManagedNetworkMetadata(stateDir string, metadata managedNetworkMetadata) error {

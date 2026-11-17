@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 
+	"github.com/peerimeter/peerimeter-agent/internal/paths"
 	"github.com/peerimeter/peerimeter-agent/internal/secret"
 )
 
@@ -26,6 +28,62 @@ func TestValidateConfigSelection(t *testing.T) {
 			err := validateConfigSelection(tc.opts)
 			if (err == nil) != tc.ok {
 				t.Fatalf("validateConfigSelection() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestManagedServiceMigrationIsSavedOnlyWhenRequested(t *testing.T) {
+	stateDir := t.TempDir()
+	managedDir := filepath.Join(stateDir, "managed")
+	if err := os.MkdirAll(managedDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	tokenPath := filepath.Join(managedDir, "mesh.token")
+	if err := writeConfigFile(tokenPath, []byte("secret-key\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	metadataPath := filepath.Join(managedDir, "mesh.json")
+	_, saveMigration, err := managedServiceClient(serviceConfigOptions{
+		networkID: "mesh", nodeID: "node-1", apiURL: "http://localhost:8080",
+	}, paths.Layout{StateDir: stateDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(metadataPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("migration metadata exists before API success: stat error = %v", err)
+	}
+	if err := saveMigration(); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := readManagedNetworkMetadata(stateDir, "mesh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.APIURL != "http://localhost:8080" || metadata.NodeID != "node-1" {
+		t.Fatalf("saved migration metadata = %+v", metadata)
+	}
+}
+
+func TestShouldFallbackToLocalSync(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		metadata    managedNetworkMetadata
+		metadataErr error
+		nodeID      string
+		apiURL      string
+		want        bool
+	}{
+		{name: "missing metadata uses local reload", metadataErr: errors.New("missing"), want: true},
+		{name: "empty saved node uses local reload", metadata: managedNetworkMetadata{}, want: true},
+		{name: "explicit node completes metadata", metadata: managedNetworkMetadata{}, nodeID: "node-1"},
+		{name: "API URL opts into migration", metadataErr: errors.New("missing"), nodeID: "node-1", apiURL: "http://localhost:8080"},
+		{name: "complete metadata uses service", metadata: managedNetworkMetadata{NodeID: "node-1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldFallbackToLocalSync(tc.metadata, tc.metadataErr, tc.nodeID, tc.apiURL); got != tc.want {
+				t.Fatalf("shouldFallbackToLocalSync() = %t, want %t", got, tc.want)
 			}
 		})
 	}
