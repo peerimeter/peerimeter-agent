@@ -149,6 +149,21 @@ func TestDryRunIsReadOnlyAndListsManagedIdentity(t *testing.T) {
 	}
 }
 
+func TestUninstallListsFilesAndRequiresConfirmation(t *testing.T) {
+	dir, p := prepareUninstall(t)
+	var prompt bytes.Buffer
+	err := Execute(context.Background(), Options{InstallDir: dir, ConfirmIn: strings.NewReader("n\n"), ConfirmOut: &prompt}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "uninstall cancelled") {
+		t.Fatalf("uninstall without affirmative confirmation returned %v", err)
+	}
+	if !strings.Contains(prompt.String(), filepath.Join(p.ConfigDir, "service.key")) {
+		t.Fatal("confirmation prompt omitted the installed private key")
+	}
+	if _, err := os.Stat(filepath.Join(p.ConfigDir, "service.key")); err != nil {
+		t.Fatalf("cancelled uninstall removed a file: %v", err)
+	}
+}
+
 func TestPurgeDryRunListsAndRemovalDeletesNestedTrackedData(t *testing.T) {
 	dir, profile := prepareUninstall(t)
 	stateFile := filepath.Join(profile.StateDir, "managed", "network", "cache.json")
@@ -185,7 +200,7 @@ func TestPurgeDryRunListsAndRemovalDeletesNestedTrackedData(t *testing.T) {
 	}
 	var out bytes.Buffer
 	probe := func(context.Context, string) (bool, error) { return false, nil }
-	if err := executeWithRegistrationProbe(context.Background(), Options{InstallDir: dir, Purge: true}, &out, probe); err != nil {
+	if err := executeWithRegistrationProbe(context.Background(), Options{InstallDir: dir, Purge: true, Yes: true}, &out, probe); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{stateFile, stateConfigMarker, configFile, configLock} {
@@ -255,7 +270,7 @@ func TestUninstallRefusesPendingSelfUpdateRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	err = Execute(context.Background(), Options{InstallDir: dir}, &out)
+	err = Execute(context.Background(), Options{InstallDir: dir, Yes: true}, &out)
 	if err == nil || !strings.Contains(err.Error(), "recovered with `peerimeter-agent self-update`") {
 		t.Fatalf("uninstall did not preserve pending recovery files: %v", err)
 	}
@@ -275,7 +290,7 @@ func TestUninstallRefusesActiveSelfUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer updateLock.Close()
-	if err := Execute(context.Background(), Options{InstallDir: dir}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "self-update is using this installation") {
+	if err := Execute(context.Background(), Options{InstallDir: dir, Yes: true}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "self-update is using this installation") {
 		t.Fatalf("uninstall did not respect active update ownership: %v", err)
 	}
 	current, err := installstate.Load(dir)
@@ -298,7 +313,7 @@ func TestFullRemovalPreservesUnrelatedAndSupportsRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := snapshotTree(t, filepath.Dir(dir))
-	if err := Execute(context.Background(), Options{InstallDir: dir}, &bytes.Buffer{}); err == nil {
+	if err := Execute(context.Background(), Options{InstallDir: dir, Yes: true}, &bytes.Buffer{}); err == nil {
 		t.Fatal("changed program file was removed")
 	}
 	if !reflect.DeepEqual(before, snapshotTree(t, filepath.Dir(dir))) {
@@ -309,7 +324,7 @@ func TestFullRemovalPreservesUnrelatedAndSupportsRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := Execute(context.Background(), Options{InstallDir: dir}, &out); err != nil {
+	if err := Execute(context.Background(), Options{InstallDir: dir, Yes: true}, &out); err != nil {
 		t.Fatal(err)
 	}
 	var result report
@@ -329,7 +344,7 @@ func TestFullRemovalPreservesUnrelatedAndSupportsRetry(t *testing.T) {
 		}
 	}
 	out.Reset()
-	if err := Execute(context.Background(), Options{InstallDir: dir}, &out); err != nil {
+	if err := Execute(context.Background(), Options{InstallDir: dir, Yes: true}, &out); err != nil {
 		t.Fatal(err)
 	}
 	_ = json.Unmarshal(out.Bytes(), &result)
@@ -356,7 +371,7 @@ func TestLivePersistentGuardPreventsDeletion(t *testing.T) {
 	updateLockPath := filepath.Join(inv.LockDir, selfupdate.UpdateLockFilename)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	executeErr := executeWithRegistrationProbe(ctx, Options{InstallDir: dir}, &bytes.Buffer{}, func(context.Context, string) (bool, error) {
+	executeErr := executeWithRegistrationProbe(ctx, Options{InstallDir: dir, Yes: true}, &bytes.Buffer{}, func(context.Context, string) (bool, error) {
 		return false, nil
 	})
 	if executeErr == nil {
@@ -394,7 +409,7 @@ func TestUntrackedOverrideAndSymlinkRefused(t *testing.T) {
 	if err := os.Symlink(source, key); err != nil {
 		t.Fatal(err)
 	}
-	if err := Execute(context.Background(), Options{InstallDir: dir}, &bytes.Buffer{}); err == nil {
+	if err := Execute(context.Background(), Options{InstallDir: dir, Yes: true}, &bytes.Buffer{}); err == nil {
 		t.Fatal("symlink resource was followed during removal")
 	}
 	b, e := os.ReadFile(source)
@@ -438,7 +453,7 @@ func TestOwnedDaemonStopsEvenWhenNetworkSnapshotFails(t *testing.T) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := Execute(ctx, Options{InstallDir: dir}, &bytes.Buffer{}); err != nil {
+	if err := Execute(ctx, Options{InstallDir: dir, Yes: true}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-done; err != nil {
@@ -480,7 +495,7 @@ func TestFailedForeignConfigIntentDoesNotDeleteInstalledCredentials(t *testing.T
 		t.Fatal("foreign configuration provision was authorized")
 	}
 	before := snapshotTree(t, pa.ConfigDir)
-	if err := Execute(context.Background(), Options{InstallDir: program}, &bytes.Buffer{}); err != nil {
+	if err := Execute(context.Background(), Options{InstallDir: program, Yes: true}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(before, snapshotTree(t, pa.ConfigDir)) {
@@ -516,7 +531,7 @@ func TestUntrackedNativeRegistrationBlocksProgramAndIdentityDeletion(t *testing.
 		}
 		return true, nil
 	}
-	err = executeWithRegistrationProbe(context.Background(), Options{InstallDir: dir}, &out, probe)
+	err = executeWithRegistrationProbe(context.Background(), Options{InstallDir: dir, Yes: true}, &out, probe)
 	if err == nil || !strings.Contains(err.Error(), "untracked native service") {
 		t.Fatalf("untracked registration was not reported incomplete: %v", err)
 	}
@@ -547,7 +562,7 @@ func TestForeignRegistrationDoesNotBlockRemovalAndInspectionFailureDoes(t *testi
 			}
 			return false, nil
 		}
-		err := executeWithRegistrationProbe(context.Background(), Options{InstallDir: dir}, &bytes.Buffer{}, probe)
+		err := executeWithRegistrationProbe(context.Background(), Options{InstallDir: dir, Yes: true}, &bytes.Buffer{}, probe)
 		if inspectionError {
 			if !errors.Is(err, failure) {
 				t.Fatal("inspection failure was ignored")

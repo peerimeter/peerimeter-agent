@@ -25,7 +25,9 @@ import (
 type Options struct {
 	InstallDir, ConfigDir, StateDir, RuntimeDir string
 	DataDir, DocDir, LockDir                    string
-	DryRun, Purge                               bool
+	DryRun, Purge, Yes                          bool
+	ConfirmIn                                   io.Reader
+	ConfirmOut                                  io.Writer
 }
 type removalFile struct {
 	Path   string `json:"path"`
@@ -518,6 +520,38 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 			}
 		}
 		return json.NewEncoder(out).Encode(r)
+	}
+	if !opts.Yes {
+		if opts.ConfirmIn == nil || opts.ConfirmOut == nil {
+			return errors.New("uninstall requires confirmation; use --yes to confirm non-interactively")
+		}
+		_, _ = fmt.Fprintln(opts.ConfirmOut, "The following files and directories will be removed:")
+		for _, f := range plan.Files {
+			_, _ = fmt.Fprintln(opts.ConfirmOut, "  "+f.Path)
+		}
+		for _, path := range []string{plan.Lock, plan.LegacyLock, plan.Inventory, plan.UpdateLock, plan.LegacyUpdateLock, plan.DataLock, plan.LegacyDataLock} {
+			if path != "" {
+				_, _ = fmt.Fprintln(opts.ConfirmOut, "  "+path)
+			}
+		}
+		for _, path := range plan.LegacyInventories {
+			_, _ = fmt.Fprintln(opts.ConfirmOut, "  "+path)
+		}
+		if opts.Purge {
+			for _, root := range plan.PurgeDirs {
+				_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+					if err == nil && path != root {
+						_, _ = fmt.Fprintln(opts.ConfirmOut, "  "+path)
+					}
+					return nil
+				})
+			}
+		}
+		_, _ = fmt.Fprint(opts.ConfirmOut, "Continue? [y/N] ")
+		var answer string
+		if _, err := fmt.Fscan(opts.ConfirmIn, &answer); err != nil || (answer != "y" && answer != "Y" && answer != "yes" && answer != "YES") {
+			return errors.New("uninstall cancelled")
+		}
 	}
 	updateLock, err := selfupdate.LockUpdate(inv)
 	if err != nil {

@@ -415,13 +415,12 @@ configuration and keys. Top-level `uninstall` explicitly deletes all resources
 tracked as owned by that installation, including installed identity and keys:
 
 ```sh
-sudo peerimeter-agent uninstall --dry-run
 sudo peerimeter-agent uninstall
+sudo peerimeter-agent uninstall --yes
 # Also remove all contents of the tracked state/config/runtime directories:
-sudo peerimeter-agent uninstall --purge --dry-run
 sudo peerimeter-agent uninstall --purge
 # Select an installation in a custom program directory:
-sudo peerimeter-agent uninstall --install-dir '/opt/Peerimeter Agent' --dry-run
+sudo peerimeter-agent uninstall --install-dir '/opt/Peerimeter Agent'
 ```
 
 Installers write a protected installation inventory. Full removal refuses
@@ -437,8 +436,9 @@ migration are natively verified; see the [shared project progress
 tracker](https://github.com/peerimeter/.github/blob/main/docs/planning/progress.md)
 for exact tested commits and remaining limits.
 
-Review the complete purge list first with `--purge --dry-run`. Original source
-config files outside the recorded directories remain untouched.
+Without `--yes`, uninstall lists the files and directories to be removed and
+asks for confirmation. `--yes` skips the prompt for scripted use. Original
+source config files outside the recorded directories remain untouched.
 
 ## CLI output
 
