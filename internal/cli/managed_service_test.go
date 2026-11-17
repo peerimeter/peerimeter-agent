@@ -69,6 +69,9 @@ func TestShouldFallbackToLocalSync(t *testing.T) {
 
 func TestSyncConfigPathMatchesRunningAgent(t *testing.T) {
 	runtimePath := filepath.Join(t.TempDir(), "active.yaml")
+	if err := os.WriteFile(runtimePath, []byte("version: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	got, err := syncConfigPath("", runtimePath)
 	if err != nil || got != runtimePath {
 		t.Fatalf("syncConfigPath() = %q, %v; want %q", got, err, runtimePath)
@@ -77,7 +80,11 @@ func TestSyncConfigPathMatchesRunningAgent(t *testing.T) {
 	if err != nil || got != runtimePath {
 		t.Fatalf("syncConfigPath(explicit active path) = %q, %v", got, err)
 	}
-	if _, err := syncConfigPath(filepath.Join(t.TempDir(), "other.yaml"), runtimePath); err == nil {
+	otherPath := filepath.Join(t.TempDir(), "other.yaml")
+	if err := os.WriteFile(otherPath, []byte("version: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := syncConfigPath(otherPath, runtimePath); err == nil {
 		t.Fatal("syncConfigPath accepted a file other than the running agent's configuration")
 	}
 	if _, err := syncConfigPath("", ""); err == nil {

@@ -296,6 +296,7 @@ keeps its local behavior and reloads the current configuration. It updates
 the configuration file currently used by the running agent, after verifying
 that the selected network matches the running network. `--config`, when used,
 must identify that same active file; sync refuses to update a different file.
+On Windows, sync also refuses UNC paths for the active configuration.
 
 | Command | Output or action |
 | --- | --- |

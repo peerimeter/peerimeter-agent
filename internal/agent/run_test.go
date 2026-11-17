@@ -71,7 +71,7 @@ func TestManagedRefreshStopsBeforeSessionCleanup(t *testing.T) {
 			<-refreshCtx.Done()
 			doneOnce.Do(func() { close(refreshDone) })
 			return platform.Desired{}, refreshCtx.Err()
-		}, "", "instance", nil, nil, time.Millisecond)
+		}, "", "instance", nil, nil, time.Millisecond, "", nil)
 	}()
 	<-f.started
 	select {
