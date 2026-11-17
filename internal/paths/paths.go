@@ -100,7 +100,12 @@ func unixDefaults(target, rootConfig, rootState, rootRuntime string) Layout {
 	} else {
 		runtimeDir = filepath.Join(runtimeDir, "peerimeter-agent")
 	}
-	return Layout{filepath.Join(config, "peerimeter-agent"), filepath.Join(state, "peerimeter-agent"), runtimeDir}
+	configDir := filepath.Join(config, "peerimeter-agent")
+	stateDir := filepath.Join(state, "peerimeter-agent")
+	if configDir == stateDir {
+		configDir = filepath.Join(configDir, "config")
+	}
+	return Layout{configDir, stateDir, runtimeDir}
 }
 
 func absoluteEnvironmentPath(name string) string {
