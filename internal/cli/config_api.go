@@ -63,6 +63,9 @@ func newConfigAPICommand(app *application) *cobra.Command {
 		if err != nil {
 			return errors.New("could not encode pulled configuration as YAML")
 		}
+		if err := os.MkdirAll(filepath.Dir(pull.file), 0o700); err != nil {
+			return errors.New("could not create protected configuration directory")
+		}
 		if err := writeConfigFile(pull.file, data); err != nil {
 			return errors.New("could not securely write pulled configuration")
 		}
@@ -166,10 +169,13 @@ func resolveConfigSelection(options *serviceConfigOptions, layout paths.Layout) 
 		}
 		options.nodeID = metadata.NodeID
 	}
+	if options.kind == "node" && !validManagedNetworkID(options.nodeID) {
+		return errors.New("--node-id is invalid")
+	}
 	if options.file == "" && options.kind == "network" {
-		options.file = filepath.Join(layout.ConfigDir, "service-"+options.networkID+".yaml")
+		options.file = filepath.Join(layout.ConfigDir, "service-api", options.networkID, "network.yaml")
 	} else if options.file == "" && options.kind == "node" && options.nodeID != "" {
-		options.file = filepath.Join(layout.ConfigDir, "service-"+options.networkID+"-node.yaml")
+		options.file = filepath.Join(layout.ConfigDir, "service-api", options.networkID, "nodes", options.nodeID+".yaml")
 	}
 	return nil
 }
@@ -247,6 +253,7 @@ func managedServiceClient(options serviceConfigOptions, layout paths.Layout) (*s
 	if err != nil {
 		return nil, err
 	}
+	// TODO(peerimeter): Remove this legacy migration after all supported join versions save service metadata.
 	if metadataErr != nil && options.apiURL != "" {
 		metadata := managedNetworkMetadata{Version: 1, APIURL: validated.APIURL, NetworkID: options.networkID, NodeID: options.nodeID, AllowInsecureHTTP: allowInsecureHTTP}
 		if err := saveManagedNetworkMetadata(layout.StateDir, metadata); err != nil {
@@ -281,6 +288,9 @@ func validateConfigSelection(options serviceConfigOptions) error {
 	}
 	if options.kind == "node" && options.nodeID == "" {
 		return errors.New("--node-id is required when --kind is node")
+	}
+	if options.kind == "node" && !validManagedNetworkID(options.nodeID) {
+		return errors.New("--node-id is invalid")
 	}
 	if options.kind == "network" && options.nodeID != "" {
 		return errors.New("--node-id is only valid with --kind node")

@@ -59,6 +59,7 @@ func newSyncCommand(app *application) *cobra.Command {
 			}
 
 			metadata, metadataErr := readManagedNetworkMetadata(layout.StateDir, networkID)
+			// TODO(peerimeter): Remove the local-only fallback when legacy joins no longer need compatibility.
 			if metadataErr != nil && apiURL == "" {
 				return local.Request(cmd.Context(), layout.RuntimeDir, "reload", app.out)
 			}

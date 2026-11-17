@@ -224,10 +224,10 @@ Parent directories must be trusted.
 The optional `config pull` and `config push` commands exchange version 1 network
 or node YAML with `peerimeter-service`. After `join`, they use the saved
 network-scoped enrollment token and service URL, and default to the joined
-network. They use separate Service API YAML files (`service-<network-id>.yaml`
-for network configs and `service-<network-id>-node.yaml` for node configs), so
-pull and push do not overwrite or upload the WireGuard configuration created
-by `join`. When only one network is joined,
+network. They use separate Service API YAML files under
+`<config-dir>/service-api/<network-id>/` (`network.yaml` for network configs,
+`nodes/<node-id>.yaml` for node configs), so pull and push do not overwrite or
+upload the WireGuard configuration created by `join`. When only one network is joined,
 `--network-id` is optional; it is required when multiple networks are joined.
 For node YAML, the joined node ID is used by default. `--file` and `--node-id`
 can override the local file and node selection. Older joins that did not save
