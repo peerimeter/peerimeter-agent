@@ -307,6 +307,49 @@ func TestPurgePreservesOnlyScheduledMarkersUntilMarkerPhase(t *testing.T) {
 	}
 }
 
+func TestPurgeDoesNotFollowSymlinkRootsOrEntries(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "purge")
+	target := filepath.Join(base, "outside")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(target, 0700); err != nil {
+		t.Fatal(err)
+	}
+	outsideFile := filepath.Join(target, "keep.txt")
+	if err := os.WriteFile(outsideFile, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "outside-link")); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := removeDirectoryContents(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "outside-link")); !os.IsNotExist(err) {
+		t.Fatalf("purge retained child symlink: %v", err)
+	}
+	if _, err := os.Stat(outsideFile); err != nil {
+		t.Fatalf("purge followed child symlink and removed its target: %v", err)
+	}
+	if len(removed) != 1 || removed[0] != filepath.Join(root, "outside-link") {
+		t.Fatalf("removed paths = %v, want only the child symlink", removed)
+	}
+
+	linkRoot := filepath.Join(base, "root-link")
+	if err := os.Symlink(target, linkRoot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := removeDirectoryContents(linkRoot, nil); err == nil {
+		t.Fatal("purge accepted a symlink root")
+	}
+	if _, err := os.Stat(outsideFile); err != nil {
+		t.Fatalf("purge through symlink root removed its target: %v", err)
+	}
+}
+
 func TestPurgeRejectsRootsContainingInstallationMetadata(t *testing.T) {
 	for _, protected := range []string{"install", "data", "locks"} {
 		root := filepath.Join(string(filepath.Separator), "tmp", "peerimeter-purge-test")
