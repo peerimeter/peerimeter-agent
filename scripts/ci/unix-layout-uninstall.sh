@@ -254,7 +254,7 @@ with (root/'queued-process.log').open('w') as log:
     time.sleep(.05)
   # A FIFO reader proves the native image has executed, rather than merely
   # being forked but not yet loaded when the installed path is deleted.
-  removed=subprocess.run([agent,'uninstall','--json','--install-dir',program],capture_output=True,text=True,timeout=30,check=True)
+  removed=subprocess.run([agent,'uninstall','--json','--yes','--install-dir',program],capture_output=True,text=True,timeout=30,check=True)
   assert json.loads(removed.stdout)['state']=='removed'
   os.write(fd,config.encode());os.close(fd);fd=None
   assert process.wait(timeout=10)!=0,'deleted installed image restarted as an untracked manager'
@@ -285,23 +285,23 @@ as_operator "$agent" sync --runtime-dir "$new_runtime"
 echo 'PASS: current agent manages a live service with separate directories and preserves protected profile data.'
 
 for directory in "$program" "$new_config" "$new_state" "$new_runtime"; do printf 'unrelated operator file\n' >"$directory/unrelated.txt"; done
-snapshot "$program" "$new_config" "$new_state" "$new_runtime" "$service_file" >"$base/before-dry-run.json"
-"$agent" uninstall --json --install-dir "$program" --dry-run >"$base/dry-run.json"
-check_state "$base/dry-run.json" dry_run
-snapshot "$program" "$new_config" "$new_state" "$new_runtime" "$service_file" >"$base/after-dry-run.json"
-cmp "$base/before-dry-run.json" "$base/after-dry-run.json"
+snapshot "$program" "$new_config" "$new_state" "$new_runtime" "$service_file" >"$base/before-confirm.json"
+if printf 'n\n' | "$agent" uninstall --json --install-dir "$program" >"$base/confirm.json" 2>"$base/confirm.log"; then echo 'Uninstall ignored a declined confirmation.' >&2; exit 1; fi
+grep -F "$new_config/service.key" "$base/confirm.log" >/dev/null
+snapshot "$program" "$new_config" "$new_state" "$new_runtime" "$service_file" >"$base/after-confirm.json"
+cmp "$base/before-confirm.json" "$base/after-confirm.json"
 "$agent" status --json --runtime-dir "$new_runtime" >"$base/still-running-after-dry-run.json"
 # Refuse hash-changed owned program resources without stopping the working
 # service. Restoring and then omitting a previously removed member exercises retry
 # from a partial inventory cleanup, without adding production-only fault hooks.
 cp "$program.docs/peerimeter-agent.NOTICES.txt" "$base/notices.original"
 printf 'operator changed tracked notice\n' >>"$program.docs/peerimeter-agent.NOTICES.txt"
-if "$agent" uninstall --json --install-dir "$program" >"$base/changed-file.log" 2>&1; then echo 'Uninstall ignored changed owned-file hash.' >&2; exit 1; fi
+if "$agent" uninstall --json --yes --install-dir "$program" >"$base/changed-file.log" 2>&1; then echo 'Uninstall ignored changed owned-file hash.' >&2; exit 1; fi
 [[ -f "$new_config/service.key" && -f "$program.data/.install.yaml" ]]
 "$agent" status --json --runtime-dir "$new_runtime" >"$base/still-running-after-rejection.json"
 cp "$base/notices.original" "$program.docs/peerimeter-agent.NOTICES.txt"
 rm "$program.docs/peerimeter-agent.NOTICES.txt"
-"$agent" uninstall --json --install-dir "$program" >"$base/removed.json"
+"$agent" uninstall --json --yes --install-dir "$program" >"$base/removed.json"
 check_state "$base/removed.json" removed
 wait_interface_gone "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["interface_name"])' "$base/managed-status.json")"
 active=''
@@ -310,7 +310,7 @@ for path in "$program/peerimeter-agent" "$program/.install.ref" "$program/.peeri
 for directory in "$program" "$new_config" "$new_state" "$new_runtime"; do [[ $(cat "$directory/unrelated.txt") == 'unrelated operator file' ]]; done
 "$source_cli" uninstall --json --install-dir "$program" >"$base/already-absent.json"
 check_state "$base/already-absent.json" already_absent
-"$program_default/peerimeter-agent" uninstall --json --install-dir "$program_default" >"$base/default-removed.json"
+"$program_default/peerimeter-agent" uninstall --json --yes --install-dir "$program_default" >"$base/default-removed.json"
 check_state "$base/default-removed.json" removed
 [[ $(cat "$default_sentinel") == 'unrelated shared-bin resource' ]]
 for member in peerimeter-agent .install.ref .peerimeter-agent.install.ref; do [[ ! -e "$program_default/$member" ]]; done

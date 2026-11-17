@@ -30,7 +30,7 @@ runtime=re.search(r'(?m)^\s+runtime_dir:\s*(.*?)\s*$',profiles[0])
 assert runtime and os.path.realpath(runtime.group(1).strip('"\''))==os.path.realpath(sys.argv[2]),'planned runtime path was not retained'
 assert not re.search(r'(?m)^\s+runtime_owned: true\s*$',profiles[0]),'failed installation claimed another installation runtime'
 PY
-"$other_agent" uninstall --json --install-dir "$other" >"$work/removal.json"
+"$other_agent" uninstall --json --yes --install-dir "$other" >"$work/removal.json"
 python3 - "$work/removal.json" <<'PY'
 import json,sys
 assert json.load(open(sys.argv[1]))['state']=='removed'
@@ -87,13 +87,13 @@ try:
  second,before_second=start(1)
  marker_second=(runtime/'.runtime').read_bytes()
  assert marker_second!=marker_before,'runtime profile identity did not change when reused'
- result=subprocess.run([str(programs[0]/'peerimeter-agent'),'uninstall','--json','--install-dir',str(programs[0])],capture_output=True,text=True,timeout=30,check=True)
+ result=subprocess.run([str(programs[0]/'peerimeter-agent'),'uninstall','--json','--yes','--install-dir',str(programs[0])],capture_output=True,text=True,timeout=30,check=True)
  assert json.loads(result.stdout)['state']=='removed'
  assert (runtime/'.runtime').read_bytes()==marker_second,'historical owner removed or replaced the new runtime identity'
  after=json.loads(cli(['status','--json','--runtime-dir',str(runtime)]).stdout)
  assert after['state']=='running' and after['interface_name']==before_second['interface_name'],'historical owner stopped or recreated the new manager/tunnel'
  cli(['stop','--runtime-dir',str(runtime)]);assert second.wait(timeout=15)==0
- result=subprocess.run([str(programs[1]/'peerimeter-agent'),'uninstall','--json','--install-dir',str(programs[1])],capture_output=True,text=True,timeout=30,check=True)
+ result=subprocess.run([str(programs[1]/'peerimeter-agent'),'uninstall','--json','--yes','--install-dir',str(programs[1])],capture_output=True,text=True,timeout=30,check=True)
  assert json.loads(result.stdout)['state']=='removed'
 finally:
  for process in processes:
