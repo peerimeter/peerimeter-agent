@@ -105,6 +105,9 @@ func unixDefaults(target, rootConfig, rootState, rootRuntime string) Layout {
 	if configDir == stateDir {
 		configDir = filepath.Join(configDir, "config")
 	}
+	if runtimeDir == configDir || runtimeDir == stateDir {
+		runtimeDir = filepath.Join(runtimeDir, "run")
+	}
 	return Layout{configDir, stateDir, runtimeDir}
 }
 
