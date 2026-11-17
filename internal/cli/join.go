@@ -74,6 +74,27 @@ func eligiblePeerEntries(underlay []string, peers map[string]json.RawMessage) ([
 	return entries, routes
 }
 
+func refreshManagedPeers(ctx context.Context, client *serviceapi.Client, networkID, nodeID string, underlay []string, desired config.Config) (config.Config, error) {
+	peers, err := client.PullPeers(ctx, networkID, nodeID)
+	if err != nil {
+		return config.Config{}, err
+	}
+	desired.Peers = nil
+	entries, routes := eligiblePeerEntries(underlay, peers.Peers)
+	for _, entry := range entries {
+		peer := entry.peer
+		endpoint := entry.endpoint
+		if discovery.EndpointConflictsWithRoutes(endpoint, routes) {
+			endpoint = peer.PublicEndpoint
+			if endpoint == "" || discovery.EndpointConflictsWithRoutes(endpoint, routes) {
+				continue
+			}
+		}
+		desired.Peers = append(desired.Peers, config.Peer{PublicKey: peer.PublicKey, AllowedIPs: []string{peer.TunnelAddress + "/32"}, Endpoint: endpoint, PersistentKeepaliveSeconds: 25})
+	}
+	return desired, nil
+}
+
 func newJoinCommand(app *application) *cobra.Command {
 	var networkID, nodeID, operator string
 	var allowInsecureHTTP bool
@@ -165,22 +186,10 @@ func newJoinCommand(app *application) *cobra.Command {
 		}
 		configPath := filepath.Join(layout.ConfigDir, networkID+".yaml")
 		loadConfig := func(ctx context.Context) (config.Config, error) {
-			peers, err := client.PullPeers(ctx, networkID, nodeID)
+			desired := config.Config{Version: 1, Mode: "static", Network: config.Network{ID: network.ID, Name: network.Name, CIDR: network.CIDR}, Interface: config.Interface{PrivateKeyFile: keyPath, Address: []string{address.String() + "/32"}, ListenPort: listenPort}}
+			desired, err := refreshManagedPeers(ctx, client, networkID, nodeID, underlay.Addresses, desired)
 			if err != nil {
 				return config.Config{}, err
-			}
-			desired := config.Config{Version: 1, Mode: "static", Network: config.Network{ID: network.ID, Name: network.Name, CIDR: network.CIDR}, Interface: config.Interface{PrivateKeyFile: keyPath, Address: []string{address.String() + "/32"}, ListenPort: listenPort}}
-			entries, routes := eligiblePeerEntries(underlay.Addresses, peers.Peers)
-			for _, entry := range entries {
-				peer := entry.peer
-				endpoint := entry.endpoint
-				if discovery.EndpointConflictsWithRoutes(endpoint, routes) {
-					endpoint = peer.PublicEndpoint
-					if endpoint == "" || discovery.EndpointConflictsWithRoutes(endpoint, routes) {
-						continue
-					}
-				}
-				desired.Peers = append(desired.Peers, config.Peer{PublicKey: peer.PublicKey, AllowedIPs: []string{peer.TunnelAddress + "/32"}, Endpoint: endpoint, PersistentKeepaliveSeconds: 25})
 			}
 			encoded, err := config.MarshalYAML(desired)
 			if err != nil {

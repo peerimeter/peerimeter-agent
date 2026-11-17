@@ -303,17 +303,27 @@ fails closed instead of reporting another interface's addresses.
 sudo peerimeter-agent run --config /absolute/path/to/peer.yaml
 sudo peerimeter-agent status
 sudo peerimeter-agent status --watch
-sudo peerimeter-agent sync       # validate and reapply the original YAML file
+sudo peerimeter-agent sync       # refresh joined peers and reconcile the tunnel
 sudo peerimeter-agent stop       # graceful tunnel/route cleanup
 ```
 
 On Windows, run the same commands from an elevated terminal.
 
+For a network joined with `join`, `sync` downloads the latest registered peer
+list from the saved Service API URL, updates the joined network YAML, then
+reloads the running tunnel. With one joined network, it is selected
+automatically; with multiple networks, pass `--network-id`. Older joins may
+need `--api-url` and `--node-id` once. Without saved service metadata, `sync`
+keeps its local behavior and reloads the current configuration. It updates
+`service.yaml` when that installed config belongs to the joined network;
+otherwise it updates `<network-id>.yaml`. Use `--config` to select another
+active config path explicitly.
+
 | Command | Output or action |
 | --- | --- |
 | `status` | Readable local agent and adapter state; `--watch` refreshes continuously (`--json` for scripts) |
 | `wg` / `wg show` | Traditional WireGuard-style interface and peer listing |
-| `sync` | Validate and reapply the original configuration |
+| `sync` | Refresh joined peers from the Service API when available, then reconcile the running tunnel; otherwise reload local configuration |
 | `stop` | Stop the tunnel and clean up routes |
 
 `status` reads actual local adapter state through a protected Unix socket or
