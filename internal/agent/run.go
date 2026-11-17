@@ -49,11 +49,10 @@ func RunManaged(ctx context.Context, backend platform.Backend, desired platform.
 func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desired platform.Desired, dir string, reload func(context.Context) (platform.Desired, error), operator, instanceID string, beforeServe, onClose func() error, interval time.Duration, configPath string, replaceConfig func([]byte) (func() error, error)) (result error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	public, err := secret.Public(desired.PrivateKey)
-	if err != nil {
-		return errors.New("cannot derive running agent public key")
+	publicKey := ""
+	if public, err := secret.Public(desired.PrivateKey); err == nil {
+		publicKey = base64.StdEncoding.EncodeToString(public[:])
 	}
-	publicKey := base64.StdEncoding.EncodeToString(public[:])
 	session, err := backend.Start(ctx, desired)
 	if err != nil {
 		return err
