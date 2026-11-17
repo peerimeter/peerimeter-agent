@@ -118,8 +118,9 @@ func newRootCommand(app *application) *cobra.Command {
 		Short: "Cross-platform WireGuard agent with offline and service API modes",
 		Long: `Cross-platform WireGuard agent.
 
-Static WireGuard operation works without a Peerimeter service. The config
-subcommands can optionally pull or push network and node YAML over HTTPS.
+Static WireGuard operation works without a Peerimeter service. Use join to
+register with a service-managed network and sync to refresh this node's
+registration and peer list.
 
 Use "peerimeter-agent info" to view environment variables and resolved directories.`,
 		SilenceUsage:       true,
