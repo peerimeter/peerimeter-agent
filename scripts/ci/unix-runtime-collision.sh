@@ -21,13 +21,14 @@ if ns:command=['ip','netns','exec',ns]+command
 with open(log,'w') as output:p=subprocess.run(command,stdout=output,stderr=subprocess.STDOUT,timeout=8)
 assert p.returncode!=0,'installation B accepted installation A runtime'
 PY
-python3 - "$other.data/.peerimeter-agent.install.json" "$runtime" <<'PY'
-import json,os,sys
-inv=json.load(open(sys.argv[1])); profiles=inv['profiles']
+python3 - "$other.data/.peerimeter-agent.install.yaml" "$runtime" <<'PY'
+import os,re,sys
+inventory=open(sys.argv[1]).read()
+profiles=re.findall(r'(?ms)^[ \t]*- id:.*?(?=^[ \t]*- id:|\Z)',inventory)
 assert len(profiles)==1,'failed startup must retain its planned profile for safe cleanup'
-p=profiles[0]
-assert os.path.realpath(p['runtime_dir'])==os.path.realpath(sys.argv[2])
-assert not p.get('runtime_owned',False),'failed installation claimed another installation runtime'
+runtime=re.search(r'(?m)^\s+runtime_dir:\s*(.*?)\s*$',profiles[0])
+assert runtime and os.path.realpath(runtime.group(1).strip('"\''))==os.path.realpath(sys.argv[2]),'planned runtime path was not retained'
+assert not re.search(r'(?m)^\s+runtime_owned: true\s*$',profiles[0]),'failed installation claimed another installation runtime'
 PY
 "$other_agent" uninstall --json --install-dir "$other" >"$work/removal.json"
 python3 - "$work/removal.json" <<'PY'

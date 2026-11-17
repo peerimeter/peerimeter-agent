@@ -162,7 +162,7 @@ try {
         Write-InstallerProgress 'Registering protected installation inventory.'
         $registerArgs = @('register-installation','--install-dir',$InstallDir,'--doc-dir',$DocDir,'--data-dir',$DataDir,'--lock-dir',$LockDir)
         & (Join-Path $InstallDir 'peerimeter-agent.exe') @registerArgs | Out-Null
-        $inventoryPath = Join-Path $DataDir '.peerimeter-agent.install.json'
+        $inventoryPath = Join-Path $DataDir '.peerimeter-agent.install.yaml'
         $referencePath = Join-Path $InstallDir '.peerimeter-agent.install.ref'
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $inventoryPath -PathType Leaf)) { throw 'Installation inventory registration failed' }
         if ((Test-Path -LiteralPath $referencePath) -and ((Get-Item -LiteralPath $referencePath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Installation reference is invalid' }

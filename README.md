@@ -95,7 +95,9 @@ protected `.peerimeter-agent.install.ref` is written beside the binary only
 when a non-default `--data-dir` is selected.
 
 Both installers report progress as they resolve or download the release, verify
-the package, install files and register the protected inventory.
+the package, install files and register the protected
+`.peerimeter-agent.install.yaml` inventory. Existing JSON inventories are
+converted the next time the installation is opened by the agent.
 
 ### Linux and macOS
 
@@ -359,6 +361,8 @@ names allow ASCII letters/digits/`._-`, up to 15 bytes, excluding `.` and `..`.
 resolved selection persists and survives display-name changes. Implicit renames
 and unrelated existing interfaces are rejected. Overrides are Linux-only; macOS
 allocates an actual utun and Windows uses a stable network-derived alias.
+The selected network and interface are stored in the private state file
+`network.yaml`; an existing `network.json` is converted on the next run.
 
 ## Native service
 

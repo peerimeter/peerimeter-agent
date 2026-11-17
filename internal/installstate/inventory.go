@@ -16,9 +16,14 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
-const Filename = ".peerimeter-agent.install.json"
+const Filename = ".peerimeter-agent.install.yaml"
+
+// TODO(next major): remove the JSON inventory fallback and its migration path.
+const LegacyFilename = ".peerimeter-agent.install.json"
 const LockFilename = ".peerimeter-agent.install.lock"
 const ReferenceFilename = ".peerimeter-agent.install.ref"
 const MarkerFilename = ".peerimeter-agent.profile"
@@ -26,37 +31,37 @@ const RuntimeMarkerFilename = ".peerimeter-agent.runtime"
 const MaxInventorySize = 1 << 20
 
 type File struct {
-	Name   string `json:"name"`
-	Dir    string `json:"dir,omitempty"`
-	SHA256 string `json:"sha256"`
+	Name   string `json:"name" yaml:"name"`
+	Dir    string `json:"dir,omitempty" yaml:"dir,omitempty"`
+	SHA256 string `json:"sha256" yaml:"sha256"`
 }
 type Profile struct {
-	ID                 string `json:"id,omitempty"`
-	ConfigDir          string `json:"config_dir,omitempty"`
-	LegacyConfigDir    string `json:"legacy_config_dir,omitempty"`
-	PendingConfigDir   string `json:"pending_config_dir,omitempty"`
-	PendingRuntimeDir  string `json:"pending_runtime_dir,omitempty"`
-	PendingConfigOwned bool   `json:"-"`
-	StateDir           string `json:"state_dir"`
-	RuntimeDir         string `json:"runtime_dir"`
-	Service            bool   `json:"service,omitempty"`
-	RuntimeOwned       bool   `json:"runtime_owned,omitempty"`
-	ConfigOwned        bool   `json:"config_owned,omitempty"`
-	LegacyConfigOwned  bool   `json:"-"`
-	ClaimConfig        bool   `json:"-"`
-	ClaimRuntime       bool   `json:"-"`
+	ID                 string `json:"id,omitempty" yaml:"id,omitempty"`
+	ConfigDir          string `json:"config_dir,omitempty" yaml:"config_dir,omitempty"`
+	LegacyConfigDir    string `json:"legacy_config_dir,omitempty" yaml:"legacy_config_dir,omitempty"`
+	PendingConfigDir   string `json:"pending_config_dir,omitempty" yaml:"pending_config_dir,omitempty"`
+	PendingRuntimeDir  string `json:"pending_runtime_dir,omitempty" yaml:"pending_runtime_dir,omitempty"`
+	PendingConfigOwned bool   `json:"-" yaml:"-"`
+	StateDir           string `json:"state_dir" yaml:"state_dir"`
+	RuntimeDir         string `json:"runtime_dir" yaml:"runtime_dir"`
+	Service            bool   `json:"service,omitempty" yaml:"service,omitempty"`
+	RuntimeOwned       bool   `json:"runtime_owned,omitempty" yaml:"runtime_owned,omitempty"`
+	ConfigOwned        bool   `json:"config_owned,omitempty" yaml:"config_owned,omitempty"`
+	LegacyConfigOwned  bool   `json:"-" yaml:"-"`
+	ClaimConfig        bool   `json:"-" yaml:"-"`
+	ClaimRuntime       bool   `json:"-" yaml:"-"`
 }
 type Inventory struct {
-	Version                 int       `json:"version"`
-	Removing                bool      `json:"removing,omitempty"`
-	AllowInsecureInstallDir bool      `json:"allow_insecure_install_dir,omitempty"`
-	ID                      string    `json:"id"`
-	InstallDir              string    `json:"install_dir"`
-	DataDir                 string    `json:"data_dir,omitempty"`
-	DocDir                  string    `json:"doc_dir,omitempty"`
-	LockDir                 string    `json:"lock_dir,omitempty"`
-	Files                   []File    `json:"files"`
-	Profiles                []Profile `json:"profiles"`
+	Version                 int       `json:"version" yaml:"version"`
+	Removing                bool      `json:"removing,omitempty" yaml:"removing,omitempty"`
+	AllowInsecureInstallDir bool      `json:"allow_insecure_install_dir,omitempty" yaml:"allow_insecure_install_dir,omitempty"`
+	ID                      string    `json:"id" yaml:"id"`
+	InstallDir              string    `json:"install_dir" yaml:"install_dir"`
+	DataDir                 string    `json:"data_dir,omitempty" yaml:"data_dir,omitempty"`
+	DocDir                  string    `json:"doc_dir,omitempty" yaml:"doc_dir,omitempty"`
+	LockDir                 string    `json:"lock_dir,omitempty" yaml:"lock_dir,omitempty"`
+	Files                   []File    `json:"files" yaml:"files"`
+	Profiles                []Profile `json:"profiles" yaml:"profiles"`
 }
 type installReference struct {
 	DataDir string `json:"data_dir"`
@@ -356,16 +361,33 @@ func loadAtDataDir(dir, requestedDataDir string, allowInsecureOverride bool) (In
 		defaultInventory := filepath.Join(dataDir, Filename)
 		if defaultData, readErr := readPrivate(defaultInventory); readErr == nil {
 			var owner struct {
-				InstallDir string `json:"install_dir"`
+				InstallDir string `yaml:"install_dir"`
 			}
-			if json.Unmarshal(defaultData, &owner) != nil || owner.InstallDir == "" {
+			if yaml.Unmarshal(defaultData, &owner) != nil || owner.InstallDir == "" {
 				return inv, errors.New("installation inventory is invalid")
 			}
 			if owner.InstallDir != canonical {
 				dataDir = canonical
 			}
 		} else if os.IsNotExist(readErr) {
-			if _, legacyErr := os.Lstat(filepath.Join(canonical, Filename)); legacyErr == nil {
+			legacyDefault := filepath.Join(dataDir, LegacyFilename)
+			if legacyData, legacyErr := readPrivate(legacyDefault); legacyErr == nil {
+				var owner struct {
+					InstallDir string `yaml:"install_dir"`
+				}
+				if yaml.Unmarshal(legacyData, &owner) != nil || owner.InstallDir == "" {
+					return inv, errors.New("installation inventory is invalid")
+				}
+				if owner.InstallDir != canonical {
+					dataDir = canonical
+				}
+			} else if !os.IsNotExist(legacyErr) {
+				return inv, legacyErr
+			} else if _, legacyErr := os.Lstat(filepath.Join(canonical, Filename)); legacyErr == nil {
+				dataDir = canonical
+			} else if legacyErr != nil && !os.IsNotExist(legacyErr) {
+				return inv, legacyErr
+			} else if _, legacyErr := os.Lstat(filepath.Join(canonical, LegacyFilename)); legacyErr == nil {
 				dataDir = canonical
 			} else if legacyErr != nil && !os.IsNotExist(legacyErr) {
 				return inv, legacyErr
@@ -377,12 +399,23 @@ func loadAtDataDir(dir, requestedDataDir string, allowInsecureOverride bool) (In
 	if err := CheckDirectoryWithPolicy(dataDir, true); err != nil {
 		return inv, err
 	}
-	data, err := readPrivate(filepath.Join(dataDir, Filename))
+	inventoryPath := filepath.Join(dataDir, Filename)
+	data, err := readPrivate(inventoryPath)
+	migrating := false
+	if os.IsNotExist(err) {
+		// TODO(next major): remove reading and conversion of legacy JSON inventories.
+		legacyPath := filepath.Join(dataDir, LegacyFilename)
+		data, err = readPrivate(legacyPath)
+		migrating = err == nil
+		if migrating {
+			inventoryPath = legacyPath
+		}
+	}
 	if err != nil {
 		return inv, err
 	}
-	dec := json.NewDecoder(strings.NewReader(string(data)))
-	dec.DisallowUnknownFields()
+	dec := yaml.NewDecoder(strings.NewReader(string(data)))
+	dec.KnownFields(true)
 	if err := dec.Decode(&inv); err != nil {
 		return inv, errors.New("installation inventory is invalid")
 	}
@@ -449,6 +482,17 @@ func loadAtDataDir(dir, requestedDataDir string, allowInsecureOverride bool) (In
 			}
 		}
 	}
+	if migrating {
+		if err := save(inv); err != nil {
+			return inv, err
+		}
+		if err := os.Remove(inventoryPath); err != nil && !os.IsNotExist(err) {
+			return inv, err
+		}
+		if err := syncInventoryDirectory(dataDir); err != nil {
+			return inv, err
+		}
+	}
 	return inv, nil
 }
 
@@ -461,9 +505,13 @@ func loadForRegistration(dir, dataDir string, allowInsecureOverride bool) (Inven
 	defaultDataDir, err := defaultInstallDataDir(dir)
 	if err == nil {
 		data, readErr := readPrivate(filepath.Join(defaultDataDir, Filename))
+		if os.IsNotExist(readErr) {
+			// TODO(next major): remove legacy inventory discovery here too.
+			data, readErr = readPrivate(filepath.Join(defaultDataDir, LegacyFilename))
+		}
 		if readErr == nil {
 			var owner Inventory
-			if json.Unmarshal(data, &owner) != nil || owner.InstallDir == "" {
+			if yaml.Unmarshal(data, &owner) != nil || owner.InstallDir == "" {
 				return Inventory{}, errors.New("installation inventory is invalid")
 			}
 			if owner.InstallDir == dir {
@@ -481,7 +529,7 @@ func loadForRegistration(dir, dataDir string, allowInsecureOverride bool) (Inven
 	return loadAtDataDir(dir, dataDir, allowInsecureOverride)
 }
 func save(inv Inventory) error {
-	data, err := json.MarshalIndent(inv, "", "  ")
+	data, err := yaml.Marshal(inv)
 	if err != nil {
 		return err
 	}
@@ -622,7 +670,7 @@ func RegisterWithDirectories(dir, docDir, dataDir, lockDir string, allowInsecure
 	// executable directories must never overwrite one another's inventory.
 	if current, readErr := readPrivate(filepath.Join(dataDir, Filename)); readErr == nil {
 		var owner Inventory
-		if err := json.Unmarshal(current, &owner); err != nil || owner.InstallDir != dir {
+		if err := yaml.Unmarshal(current, &owner); err != nil || owner.InstallDir != dir {
 			return errors.New("installation data directory is already owned by another installation")
 		}
 	} else if !os.IsNotExist(readErr) {
