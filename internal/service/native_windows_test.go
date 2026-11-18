@@ -11,7 +11,7 @@ import (
 
 func TestWindowsServiceArgumentsPreservePaths(t *testing.T) {
 	cfg := Config{ConfigPath: `C:\ProgramData\Peerimeter Agent\service.yaml`, StateDirectory: `C:\ProgramData\Peerimeter Agent\state`}
-	want := []string{"run", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory, "--runtime-dir", serviceRuntime(cfg), "--config-dir", snapshotDirectory(cfg)}
+	want := []string{"daemon", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory, "--runtime-dir", serviceRuntime(cfg), "--config-dir", snapshotDirectory(cfg)}
 	if got := serviceArguments(cfg); !reflect.DeepEqual(got, want) {
 		t.Fatal("SCM arguments must preserve config paths as individual arguments")
 	}

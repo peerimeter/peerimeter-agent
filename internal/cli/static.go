@@ -26,6 +26,10 @@ func staticCommand(ctx context.Context, commandName, path, override string, layo
 }
 
 func staticCommandWithRefresh(ctx context.Context, commandName, path, override string, layout paths.Layout, operator string, out io.Writer, backend platform.Backend, remoteReload func(context.Context) (config.Config, error), refresh time.Duration) error {
+	return staticCommandWithBackground(ctx, commandName, path, override, layout, operator, out, backend, remoteReload, refresh, nil)
+}
+
+func staticCommandWithBackground(ctx context.Context, commandName, path, override string, layout paths.Layout, operator string, out io.Writer, backend platform.Backend, remoteReload func(context.Context) (config.Config, error), refresh time.Duration, background func(context.Context)) error {
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {
 		path = resolved
 	}
@@ -33,7 +37,7 @@ func staticCommandWithRefresh(ctx context.Context, commandName, path, override s
 	if err != nil {
 		return errors.New("cannot make static config path absolute")
 	}
-	if commandName == "run" {
+	if commandName == "run" || commandName == "daemon" {
 		installstate.TrustSudoUserForRun()
 		secret.TrustSudoUserForRun()
 	}
@@ -163,7 +167,7 @@ func staticCommandWithRefresh(ctx context.Context, commandName, path, override s
 		}
 		return func() error { return writeConfigFile(path, previous) }, nil
 	}
-	return agent.RunManagedWithRefresh(ctx, backend, desired, layout.RuntimeDir, reload, operator, local.InstanceID(layout.StateDir), ready, func() error {
+	return agent.RunManagedWithBackground(ctx, backend, desired, layout.RuntimeDir, reload, operator, local.InstanceID(layout.StateDir), ready, func() error {
 		return installstate.ReleaseRuntime(filepath.Dir(exe), layout.StateDir, layout.RuntimeDir)
-	}, refresh, path, replaceConfig)
+	}, refresh, path, replaceConfig, background)
 }

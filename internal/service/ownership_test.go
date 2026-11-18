@@ -10,10 +10,13 @@ func TestServiceRemovalRequiresMatchingInstallationAndLayout(t *testing.T) {
 	exe := filepath.Join(root, "agent")
 	cfg := Config{ConfigDirectory: filepath.Join(root, "cfg"), StateDirectory: filepath.Join(root, "state"), RuntimeDirectory: filepath.Join(root, "runtime")}
 	cfg.ConfigPath = filepath.Join(cfg.ConfigDirectory, "service.yaml")
-	args := []string{exe, "run", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory, "--runtime-dir", cfg.RuntimeDirectory, "--config-dir", cfg.ConfigDirectory, "--operator", "nobody"}
-	if err := verifyServiceArguments(args, exe, cfg); err != nil {
-		t.Fatal(err)
+	for _, command := range []string{"run", "daemon"} {
+		args := []string{exe, command, "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory, "--runtime-dir", cfg.RuntimeDirectory, "--config-dir", cfg.ConfigDirectory, "--operator", "nobody"}
+		if err := verifyServiceArguments(args, exe, cfg); err != nil {
+			t.Fatalf("%s registration rejected: %v", command, err)
+		}
 	}
+	args := []string{exe, "run", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory, "--runtime-dir", cfg.RuntimeDirectory, "--config-dir", cfg.ConfigDirectory, "--operator", "nobody"}
 	for _, index := range []int{0, 3, 5, 7, 9} {
 		changed := append([]string{}, args...)
 		changed[index] = filepath.Join(root, "another-installation")

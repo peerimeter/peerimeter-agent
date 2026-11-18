@@ -173,7 +173,7 @@ Use "peerimeter-agent info" to view environment variables and resolved directori
 	}}
 	helpCommand.Flags().BoolVar(&showHidden, "all", false, "List all commands, including hidden commands")
 	root.SetHelpCommand(helpCommand)
-	root.AddCommand(newVersionCommand(app), newInfoCommand(app), newUpdateCommand(app), newSelfUpdateCommand(app), newUpdateHelperCommand(app), newUpdateRecoveryHelperCommand(app), newGenerateExampleCommand(app), newJoinCommand(app), newRunCommand(app), newValidateConfigCommand(app), newStatusCommand(app), newWGCommand(app), newSyncCommand(app), newStopCommand(app), newServiceCommand(app), newUninstallCommand(app), newRegisterInstallationCommand(app), newStunCommand(app))
+	root.AddCommand(newVersionCommand(app), newInfoCommand(app), newUpdateCommand(app), newSelfUpdateCommand(app), newUpdateHelperCommand(app), newUpdateRecoveryHelperCommand(app), newGenerateExampleCommand(app), newJoinCommand(app), newRunCommand(app), newDaemonCommand(app), newValidateConfigCommand(app), newStatusCommand(app), newWGCommand(app), newSyncCommand(app), newStopCommand(app), newServiceCommand(app), newUninstallCommand(app), newRegisterInstallationCommand(app), newStunCommand(app))
 	return root
 }
 

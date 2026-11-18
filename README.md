@@ -239,12 +239,13 @@ when the reported CIDRs overlap; otherwise it uses that peer's STUN-observed
 public UDP mapping. It saves the managed configuration as
 `<config-dir>/<network-id>.yaml` and the service credential, then exits without
 starting a tunnel. To start it separately, run
-`sudo peerimeter-agent run --config /etc/peerimeter/<network-id>.yaml` on
+`sudo peerimeter-agent daemon --config /etc/peerimeter/<network-id>.yaml` on
 Linux or macOS. Starting the tunnel requires administrator/root privileges.
 An installed service continues using its `service.yaml` snapshot and does not
-load this per-network file; automatic handoff to a running service is planned
-work. The key, config, and shared service credential are stored in protected
-local files. To refresh registration, repeat the same token and any original
+load this per-network file. Install or update the native service to run the
+daemon, which syncs its active joined network every five minutes by default.
+The key, config, and shared service credential are stored in protected local
+files. To refresh registration, repeat the same token and any original
 `--node-id` and `--listen-port` values.
 Without `--node-id`, the node ID defaults to the machine hostname; without
 `--listen-port`, the port defaults to 51820. Changing either on a later Join
@@ -282,7 +283,7 @@ fails closed instead of reporting another interface's addresses.
 ## Foreground and local control
 
 ```sh
-sudo peerimeter-agent run --config /absolute/path/to/peer.yaml
+sudo peerimeter-agent daemon --config /absolute/path/to/peer.yaml
 sudo peerimeter-agent status
 sudo peerimeter-agent status --watch
 sudo peerimeter-agent sync       # refresh joined peers and reconcile the tunnel
@@ -290,6 +291,13 @@ sudo peerimeter-agent stop       # graceful tunnel/route cleanup
 ```
 
 On Windows, run the same commands from an elevated terminal.
+
+Use `run` instead of `daemon` when you want the tunnel without scheduled sync.
+The daemon runs the same foreground tunnel and calls `sync` every five minutes
+by default. Change the period with `--sync-interval` (for example,
+`--sync-interval 2m`). A failed sync is logged and retried at the next interval;
+it does not stop the tunnel. The native service installed by `service install`
+uses `daemon` automatically.
 
 For a network joined with `join`, `sync` refreshes this node's primary physical
 interface and local addresses in its service registration, then downloads the
@@ -313,6 +321,7 @@ does not guarantee reachability.
 | `status` | Readable local agent and adapter state; `--watch` refreshes continuously (`--json` for scripts) |
 | `wg` / `wg show` | Traditional WireGuard-style interface and peer listing |
 | `sync` | Refresh the joined node registration and peer list when available, then reconcile the tunnel; otherwise reload local configuration |
+| `daemon` | Run the tunnel and sync periodically (default: every five minutes; set `--sync-interval` to change it) |
 | `stop` | Stop the tunnel and clean up routes |
 
 `status` reads actual local adapter state through a protected Unix socket or

@@ -47,6 +47,10 @@ func RunManaged(ctx context.Context, backend platform.Backend, desired platform.
 // RunManagedWithRefresh periodically obtains desired state from reload while
 // preserving the same local authenticated control surface as static mode.
 func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desired platform.Desired, dir string, reload func(context.Context) (platform.Desired, error), operator, instanceID string, beforeServe, onClose func() error, interval time.Duration, configPath string, replaceConfig func([]byte) (func() error, error)) (result error) {
+	return RunManagedWithBackground(ctx, backend, desired, dir, reload, operator, instanceID, beforeServe, onClose, interval, configPath, replaceConfig, nil)
+}
+
+func RunManagedWithBackground(ctx context.Context, backend platform.Backend, desired platform.Desired, dir string, reload func(context.Context) (platform.Desired, error), operator, instanceID string, beforeServe, onClose func() error, interval time.Duration, configPath string, replaceConfig func([]byte) (func() error, error), background func(context.Context)) (result error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	publicKey := ""
@@ -152,6 +156,13 @@ func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desire
 	defer func() { result = errors.Join(result, closeControl()) }()
 	var workers sync.WaitGroup
 	defer workers.Wait()
+	if background != nil {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			background(ctx)
+		}()
+	}
 	if interval > 0 {
 		workers.Add(1)
 		go func() {
