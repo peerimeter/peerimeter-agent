@@ -110,9 +110,11 @@ func makePlan(inv installstate.Inventory, purge bool) removalPlan {
 	seen := map[string]bool{}
 	dirs := map[string]bool{inv.InstallDir: true, inv.DocDir: true, inv.DataDir: true, inv.LockDir: true}
 	if root := windowsInstallerResourceRoot(inv); root != "" {
-		// Remove the per-installation container after its State, Documentation
-		// and Locks children, but only for the verified default ProgramData layout.
+		// Remove empty containers from the verified default ProgramData layout.
+		// The helper checks each directory is empty before deleting it.
 		dirs[root] = true
+		dirs[filepath.Dir(root)] = true
+		dirs[filepath.Dir(filepath.Dir(root))] = true
 	}
 	for _, profile := range inv.Profiles {
 		for _, f := range resources(profile) {

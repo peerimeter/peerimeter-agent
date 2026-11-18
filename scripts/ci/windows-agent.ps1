@@ -35,6 +35,10 @@ $reuseInstallX = Join-Path $env:ProgramFiles "Peerimeter Reuse X $id"
 $reuseInstallY = Join-Path $env:ProgramFiles "Peerimeter Reuse Y $id"
 $defaultState = Join-Path $env:ProgramData 'Peerimeter'
 $defaultStateRootPreexisting = Test-Path -LiteralPath $defaultState
+$machineEnvironment = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment',$true)
+$originalMachinePath = [string]$machineEnvironment.GetValue('Path','',[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+$originalMachinePathKind = $machineEnvironment.GetValueKind('Path')
+$machineEnvironment.Dispose()
 
 function Get-InstallResourceRoot([string]$Directory) {
     $sha = [Security.Cryptography.SHA256]::Create()
@@ -403,6 +407,8 @@ try {
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive
     & (Join-Path $PSScriptRoot '..\..\docs\install.ps1') -Archive $archive -SHA256 (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -InstallDir $installation
     if (-not (Test-Path -LiteralPath (Join-Path (Join-Path $installResourceRoot 'State') '.install.yaml'))) { throw 'Verified installer did not register its protected inventory' }
+    $machinePathAfterInstall = [string][Environment]::GetEnvironmentVariable('Path','Machine')
+    if (-not @($machinePathAfterInstall -split ';' | Where-Object { [string]::Equals($_.TrimEnd('\'),$installation.TrimEnd('\'),[StringComparison]::OrdinalIgnoreCase) }).Count) { throw 'Verified installer did not add its installation directory to machine PATH' }
     Copy-Item -LiteralPath $Helper -Destination $helperExe
     Protect-Resource $helperExe $true
     $securePassword = ConvertTo-SecureString ('Pm!' + [Guid]::NewGuid().ToString('N') + [Guid]::NewGuid().ToString('N')) -AsPlainText -Force
@@ -590,6 +596,12 @@ peers:
     } elseif ($removal.state -ne 'removed') { throw 'Unexpected full uninstall status' }
     $serviceInstalled = $false
     Assert-Removed
+    $machinePathAfterRemoval = [string][Environment]::GetEnvironmentVariable('Path','Machine')
+    if (@($machinePathAfterRemoval -split ';' | Where-Object { [string]::Equals($_.TrimEnd('\'),$installation.TrimEnd('\'),[StringComparison]::OrdinalIgnoreCase) }).Count) { throw 'Full uninstall left its installation directory in machine PATH' }
+    $installationsRoot = Join-Path $env:ProgramData 'Peerimeter\Installations'
+    $peerimeterDataRoot = Join-Path $env:ProgramData 'Peerimeter'
+    if ((Test-Path -LiteralPath $installationsRoot) -and -not @(Get-ChildItem -LiteralPath $installationsRoot -Force).Count) { throw 'Full uninstall left an empty ProgramData Installations directory' }
+    if ((Test-Path -LiteralPath $peerimeterDataRoot) -and -not @(Get-ChildItem -LiteralPath $peerimeterDataRoot -Force).Count) { throw 'Full uninstall left an empty ProgramData Peerimeter directory' }
     if (Get-Service -Name 'PeerimeterAgent' -ErrorAction SilentlyContinue) { throw 'Full uninstall left an SCM registration' }
     foreach ($path in @($agentExe,(Join-Path $installation 'wireguard.dll'),(Join-Path $installation '.install.ref'),(Join-Path $installation '.peerimeter-agent.install.ref'),(Join-Path (Join-Path $installResourceRoot 'Documentation') 'peerimeter-agent.NOTICES.txt'),(Join-Path (Join-Path $installResourceRoot 'State') '.install.yaml'),(Join-Path (Join-Path $installResourceRoot 'State') '.peerimeter-agent.install.yaml'),(Join-Path (Join-Path $installResourceRoot 'State') '.peerimeter-agent.install.json'),(Join-Path (Join-Path $installResourceRoot 'Locks') '.install.lock'),(Join-Path (Join-Path $installResourceRoot 'Locks') '.peerimeter-agent.install.lock'),(Join-Path $serviceState 'service.key'),(Join-Path $serviceState 'service.yaml'),(Join-Path $serviceState '.config'),(Join-Path $serviceState '.peerimeter-agent.config'),(Join-Path $serviceState 'ownership'),(Join-Path $serviceState 'agent.lock'),(Join-Path $state 'ownership'),(Join-Path $state 'agent.lock'),(Join-Path $serviceState '.profile'),(Join-Path $state '.profile'),(Join-Path $serviceState '.peerimeter-agent.profile'),(Join-Path $state '.peerimeter-agent.profile'),(Join-Path $defaultState 'service.yaml'),(Join-Path $defaultState 'service.key'),(Join-Path $defaultState '.config'),(Join-Path $defaultState '.peerimeter-agent.config'),(Join-Path $defaultState 'ownership'),(Join-Path $defaultState 'agent.lock'),(Join-Path $defaultState '.profile'),(Join-Path $defaultState '.runtime'),(Join-Path $defaultState '.peerimeter-agent.runtime'))) {
         if (Test-Path -LiteralPath $path) { throw "Tracked resource survived full uninstall: $path" }
@@ -609,6 +621,9 @@ peers:
     }
     throw
 } finally {
+    $machineEnvironment = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment',$true)
+    $machineEnvironment.SetValue('Path',$originalMachinePath,$originalMachinePathKind)
+    $machineEnvironment.Dispose()
     if ($serviceInstalled) {
         & $agentExe service uninstall *> $null
     }
