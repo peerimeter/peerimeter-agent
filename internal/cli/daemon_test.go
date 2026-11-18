@@ -16,11 +16,15 @@ func TestDaemonSyncIntervalDefaultsToFiveMinutes(t *testing.T) {
 	}
 }
 
-func TestDaemonSyncArgsCarryDirectoryOverrides(t *testing.T) {
-	got := daemonSyncArgs(paths.Options{ConfigDir: "/config", StateDir: "/state", RuntimeDir: "/runtime"})
-	want := []string{"sync", "--config-dir", "/config", "--state-dir", "/state", "--runtime-dir", "/runtime"}
+func TestDaemonSyncArgsTargetActiveNetworkAndCarryDirectoryOverrides(t *testing.T) {
+	got := daemonSyncArgs(paths.Options{ConfigDir: "/config", StateDir: "/state", RuntimeDir: "/runtime"}, "network-1")
+	want := []string{"sync", "--network-id", "network-1", "--config-dir", "/config", "--state-dir", "/state", "--runtime-dir", "/runtime"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("daemonSyncArgs() = %#v; want %#v", got, want)
+	}
+	localOnly := daemonSyncArgs(paths.Options{}, "")
+	if !reflect.DeepEqual(localOnly, []string{"sync"}) {
+		t.Fatalf("daemonSyncArgs() without a joined network = %#v; want local sync", localOnly)
 	}
 }
 

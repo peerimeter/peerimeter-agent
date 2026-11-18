@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/logging"
 	"github.com/peerimeter/peerimeter-agent/internal/paths"
 	"github.com/spf13/cobra"
@@ -45,9 +46,29 @@ func newDaemonCommand(app *application) *cobra.Command {
 			if path == "" {
 				path = filepath.Join(layout.ConfigDir, "service.yaml")
 			}
+			activeConfig, err := config.Load(path)
+			if err != nil {
+				return err
+			}
 			background := func(ctx context.Context) {
 				runPeriodicSync(ctx, interval, func(ctx context.Context) error {
-					if code := Execute(ctx, daemonSyncArgs(options), io.Discard, os.Stderr); code != 0 {
+					networks, err := managedNetworkIDs(layout.StateDir)
+					if err != nil {
+						return err
+					}
+					targetNetwork := ""
+					if len(networks) > 0 {
+						for _, id := range networks {
+							if id == activeConfig.Network.ID {
+								targetNetwork = id
+								break
+							}
+						}
+						if targetNetwork == "" {
+							return errors.New("no saved sync credential for the daemon's active network")
+						}
+					}
+					if code := Execute(ctx, daemonSyncArgs(options, targetNetwork), io.Discard, os.Stderr); code != 0 {
 						return errors.New("sync command failed")
 					}
 					return nil
@@ -79,8 +100,11 @@ func runPeriodicSync(ctx context.Context, interval time.Duration, syncOnce func(
 	}
 }
 
-func daemonSyncArgs(options paths.Options) []string {
+func daemonSyncArgs(options paths.Options, networkID string) []string {
 	args := []string{"sync"}
+	if networkID != "" {
+		args = append(args, "--network-id", networkID)
+	}
 	if options.ConfigDir != "" {
 		args = append(args, "--config-dir", options.ConfigDir)
 	}
