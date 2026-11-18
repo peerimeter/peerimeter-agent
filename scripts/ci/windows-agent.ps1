@@ -405,6 +405,12 @@ try {
     [IO.File]::WriteAllText((Join-Path $stage 'peerimeter-agent.NOTICES.txt'),'Native integration archive fixture; release packages carry full dependency notices.')
     $archive = Join-Path $dir 'native package.zip'
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive
+    $semicolonInstall = Join-Path $env:ProgramFiles "Peerimeter;CI-$id"
+    $semicolonRejected = $false
+    try {
+        & (Join-Path $PSScriptRoot '..\..\docs\install.ps1') -Archive $archive -SHA256 (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -InstallDir $semicolonInstall
+    } catch { $semicolonRejected = $_.Exception.Message -like '*must not contain a semicolon*' }
+    if (-not $semicolonRejected -or (Test-Path -LiteralPath $semicolonInstall)) { throw 'Verified installer accepted a semicolon PATH entry or created its target directory' }
     & (Join-Path $PSScriptRoot '..\..\docs\install.ps1') -Archive $archive -SHA256 (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -InstallDir $installation
     if (-not (Test-Path -LiteralPath (Join-Path (Join-Path $installResourceRoot 'State') '.install.yaml'))) { throw 'Verified installer did not register its protected inventory' }
     $machinePathAfterInstall = [string][Environment]::GetEnvironmentVariable('Path','Machine')
