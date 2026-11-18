@@ -69,15 +69,30 @@ function Assert-InstallerAncestors([string]$Path) {
     }
 }
 function Add-MachinePath([string]$Directory) {
-    $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment',$true)
-    if (-not $key) { throw 'Could not open the machine environment registry key' }
+    $mutex = [Threading.Mutex]::new($false,'Global\PeerimeterAgentMachinePath')
+    $acquired = $false
     try {
-        $old = [string]$key.GetValue('Path','',[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-        $parts = @($old -split ';' | Where-Object { $_ })
-        if (-not @($parts | Where-Object { [string]::Equals($_.TrimEnd('\'),$Directory.TrimEnd('\'),[StringComparison]::OrdinalIgnoreCase) }).Count) {
-            $key.SetValue('Path',(@($parts) + $Directory) -join ';',$key.GetValueKind('Path'))
+        try { $acquired = $mutex.WaitOne(30000) } catch [Threading.AbandonedMutexException] { $acquired = $true }
+        if (-not $acquired) { throw 'Timed out waiting to update the machine PATH' }
+        $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment',$true)
+        if (-not $key) { throw 'Could not open the machine environment registry key' }
+        $changed = $false
+        try {
+            $old = [string]$key.GetValue('Path','',[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            $parts = @($old -split ';' | Where-Object { $_ })
+            if (-not @($parts | Where-Object { [string]::Equals($_.TrimEnd('\'),$Directory.TrimEnd('\'),[StringComparison]::OrdinalIgnoreCase) }).Count) {
+                $key.SetValue('Path',(@($parts) + $Directory) -join ';',$key.GetValueKind('Path'))
+                $changed = $true
+            }
+        } finally { $key.Dispose() }
+        if ($changed) {
+            if (-not ('PeerimeterEnvironmentNotifier' -as [type])) {
+                Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class PeerimeterEnvironmentNotifier { [DllImport("user32.dll", CharSet=CharSet.Auto, SetLastError=true)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wParam, string lParam, uint flags, uint timeout, out IntPtr result); }'
+            }
+            $result = [IntPtr]::Zero
+            [PeerimeterEnvironmentNotifier]::SendMessageTimeout([IntPtr]0xffff,0x001A,[IntPtr]::Zero,'Environment',0x0002,5000,[ref]$result) | Out-Null
         }
-    } finally { $key.Dispose() }
+    } finally { if ($acquired) { $mutex.ReleaseMutex() }; $mutex.Dispose() }
 }
 foreach ($path in @($InstallDir,$DocDir,$DataDir,$LockDir)) {
     if ($path -notmatch '^[A-Za-z]:[\\/]') { throw 'All resource directories must be absolute local drive paths' }
