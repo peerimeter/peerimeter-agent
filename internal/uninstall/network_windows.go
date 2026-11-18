@@ -200,6 +200,16 @@ function File-SHA256([string]$Path) {
     try { return [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-','').ToLowerInvariant() }
     finally { $stream.Dispose(); $algorithm.Dispose() }
 }
+function Remove-MachinePath([string]$Directory) {
+    $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment',$true)
+    if (-not $key) { throw 'Could not open the machine environment registry key' }
+    try {
+        $old = [string]$key.GetValue('Path','',[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        $parts = @($old -split ';' | Where-Object { $_ -and -not [string]::Equals($_.TrimEnd('\'),$Directory.TrimEnd('\'),[StringComparison]::OrdinalIgnoreCase) })
+        $next = $parts -join ';'
+        if ($next -ne $old) { $key.SetValue('Path',$next,$key.GetValueKind('Path')) }
+    } finally { $key.Dispose() }
+}
 function Lock-Existing([string]$Path) {
     if (-not [IO.File]::Exists($Path)) { return }
     No-Reparse $Path
@@ -262,6 +272,7 @@ try {
             if (@(Get-ChildItem -LiteralPath $dir -Force).Count -eq 0) { Remove-Item -LiteralPath $dir -Force }
         }
     }
+    Remove-MachinePath $p.install_dir
     $state = 'removed'
 } catch { $message = $_.Exception.Message }
 finally {

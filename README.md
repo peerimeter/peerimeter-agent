@@ -128,6 +128,10 @@ sh docs/install.sh --version latest --install-dir "$HOME/.local/bin" --doc-dir "
 .\docs\install.ps1 -DocDir 'D:\Peerimeter\Docs' -DataDir 'D:\Peerimeter\State' -LockDir 'D:\Peerimeter\Locks'
 ```
 
+The installer adds the installation directory to the machine PATH. Open a new
+PowerShell window to run `peerimeter-agent` by name. Full uninstall removes
+that PATH entry.
+
 ### Package verification
 
 Release downloads use HTTPS and the release SHA-256 manifest. This authenticates

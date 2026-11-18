@@ -68,6 +68,17 @@ function Assert-InstallerAncestors([string]$Path) {
         $parent = $parent.Parent
     }
 }
+function Add-MachinePath([string]$Directory) {
+    $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment',$true)
+    if (-not $key) { throw 'Could not open the machine environment registry key' }
+    try {
+        $old = [string]$key.GetValue('Path','',[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        $parts = @($old -split ';' | Where-Object { $_ })
+        if (-not @($parts | Where-Object { [string]::Equals($_.TrimEnd('\'),$Directory.TrimEnd('\'),[StringComparison]::OrdinalIgnoreCase) }).Count) {
+            $key.SetValue('Path',(@($parts) + $Directory) -join ';',$key.GetValueKind('Path'))
+        }
+    } finally { $key.Dispose() }
+}
 foreach ($path in @($InstallDir,$DocDir,$DataDir,$LockDir)) {
     if ($path -notmatch '^[A-Za-z]:[\\/]') { throw 'All resource directories must be absolute local drive paths' }
     Assert-InstallerAncestors $path
@@ -190,6 +201,7 @@ try {
         foreach ($path in $staged) { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force } }
     }
     foreach ($pair in $moved) { Remove-Item -LiteralPath $pair[0] -Force }
+    Add-MachinePath $InstallDir
     Write-Output 'Installation directories:'
     Write-Output "  Install: $InstallDir"
     Write-Output "  Documentation: $DocDir"
