@@ -13,6 +13,11 @@ $ref = $null
 $installed = $false
 $tcpRule = 'Peerimeter-probe-TCP'
 $udpRule = 'Peerimeter-probe-UDP'
+function Get-FreeUdpPort {
+    $socket = [Net.Sockets.UdpClient]::new(0)
+    try { return $socket.Client.LocalEndPoint.Port }
+    finally { $socket.Dispose() }
+}
 function Verify-Traffic {
     $before = @(Select-String -Path "$dir\reference.log" -Pattern '^PASS reference' -ErrorAction SilentlyContinue).Count
     & $helper host $dir
@@ -31,17 +36,19 @@ function Verify-Traffic {
 try {
     & icacls.exe $dir /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Could not protect temporary key directory' }
+    $referencePort = Get-FreeUdpPort
+    $env:PM_REFERENCE_PORT = "$referencePort"
     & $helper keygen $dir
     if ($LASTEXITCODE -ne 0) { throw 'Key generation failed' }
     $outerIP = (Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } | Select-Object -First 1).IPv4Address.IPAddress
     if (-not $outerIP) { throw 'Missing host IPv4 address for local native endpoint test' }
     Write-Output ('Outer endpoint address: ' + $outerIP)
-    $cfg = [IO.File]::ReadAllText("$dir\pmprobe.conf").Replace('Endpoint = 127.0.0.1:51821', "Endpoint = ${outerIP}:51821")
+    $cfg = [IO.File]::ReadAllText("$dir\pmprobe.conf").Replace("Endpoint = 127.0.0.1:$referencePort", "Endpoint = ${outerIP}:$referencePort")
     [IO.File]::WriteAllText("$dir\pmprobe.conf", $cfg)
     $env:PM_NATIVE_ENDPOINT = "${outerIP}:51820"
     $ref = Start-Process $helper -ArgumentList @('reference',$dir) -RedirectStandardOutput "$dir\reference.log" -RedirectStandardError "$dir\reference-error.log" -PassThru
     Start-Sleep -Seconds 2
-    New-NetFirewallRule -DisplayName $udpRule -Direction Inbound -Action Allow -Protocol UDP -LocalPort 51820,51821 -RemoteAddress @('127.0.0.1',$outerIP) | Out-Null
+    New-NetFirewallRule -DisplayName $udpRule -Direction Inbound -Action Allow -Protocol UDP -LocalPort 51820,$referencePort -RemoteAddress @('127.0.0.1',$outerIP) | Out-Null
     $p = Start-Process $wireguard -ArgumentList @('/installtunnelservice',"$dir\pmprobe.conf") -Wait -PassThru
     if ($p.ExitCode -ne 0) { throw "Tunnel service install failed: $($p.ExitCode)" }
     $installed = $true

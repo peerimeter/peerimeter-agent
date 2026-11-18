@@ -43,6 +43,11 @@ function Get-InstallResourceRoot([string]$Directory) {
     return Join-Path $env:ProgramData (Join-Path 'Peerimeter\Installations' $key)
 }
 $defaultStateCreated = $false
+function Get-FreeUdpPort {
+    $socket = [Net.Sockets.UdpClient]::new(0)
+    try { return $socket.Client.LocalEndPoint.Port }
+    finally { $socket.Dispose() }
+}
 
 function Protect-Resource([string]$Path,[bool]$Public=$false) {
     $isDirectory = Test-Path -LiteralPath $Path -PathType Container
@@ -425,6 +430,7 @@ try {
     if (-not $outerIP) { throw 'No physical IPv4 endpoint for native Windows test' }
     $quotedKey = "'" + (Join-Path $dir 'native.key').Replace("'", "''") + "'"
     $publicKey = [IO.File]::ReadAllText((Join-Path $dir 'reference.pub')).Trim()
+    $referencePort = Get-FreeUdpPort
     $validYaml = @"
 version: 1
 mode: static
@@ -440,13 +446,14 @@ peers:
   - public_key: $publicKey
     allowed_ips:
       - 10.203.0.2/32
-    endpoint: ${outerIP}:51821
+    endpoint: ${outerIP}:$referencePort
     persistent_keepalive_seconds: 1
 "@
     [IO.File]::WriteAllText($configPath,$validYaml)
     $env:PM_NATIVE_ENDPOINT = "${outerIP}:51820"
+    $env:PM_REFERENCE_PORT = "$referencePort"
     $reference = Start-Process -FilePath $helperExe -ArgumentList @('reference',('"{0}"' -f $dir)) -RedirectStandardOutput (Join-Path $dir 'reference.log') -RedirectStandardError (Join-Path $dir 'reference-error.log') -PassThru
-    New-NetFirewallRule -DisplayName $udpRule -Direction Inbound -Action Allow -Protocol UDP -LocalPort 51820,51821 -RemoteAddress @('127.0.0.1',$outerIP) | Out-Null
+    New-NetFirewallRule -DisplayName $udpRule -Direction Inbound -Action Allow -Protocol UDP -LocalPort 51820,$referencePort -RemoteAddress @('127.0.0.1',$outerIP) | Out-Null
     New-NetFirewallRule -DisplayName $tcpRule -Direction Inbound -Action Allow -Protocol TCP -LocalPort 18081 -LocalAddress '10.203.0.1' -RemoteAddress '10.203.0.2' | Out-Null
     Start-Foreground | Out-Null
     $before = Verify-Traffic $state | Select-Object -Last 1

@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +27,18 @@ func must(err error) {
 	}
 }
 func read(name string) []byte { b, e := os.ReadFile(name); must(e); return b }
+func referencePort() string {
+	port := os.Getenv("PM_REFERENCE_PORT")
+	if port == "" {
+		return "51821"
+	}
+	n, err := strconv.Atoi(port)
+	must(err)
+	if n < 1 || n > 65535 {
+		panic("PM_REFERENCE_PORT must be between 1 and 65535")
+	}
+	return port
+}
 func keygen(dir string) {
 	must(os.MkdirAll(dir, 0700))
 	for _, name := range []string{"native", "reference"} {
@@ -34,7 +47,7 @@ func keygen(dir string) {
 		must(os.WriteFile(filepath.Join(dir, name+".key"), []byte(base64.StdEncoding.EncodeToString(k.Bytes())+"\n"), 0600))
 		must(os.WriteFile(filepath.Join(dir, name+".pub"), []byte(base64.StdEncoding.EncodeToString(k.PublicKey().Bytes())+"\n"), 0600))
 	}
-	cfg := fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress = 10.203.0.1/32\nListenPort = 51820\n\n[Peer]\nPublicKey = %s\nAllowedIPs = 10.203.0.2/32\nEndpoint = 127.0.0.1:51821\n", strings.TrimSpace(string(read(filepath.Join(dir, "native.key")))), strings.TrimSpace(string(read(filepath.Join(dir, "reference.pub")))))
+	cfg := fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress = 10.203.0.1/32\nListenPort = 51820\n\n[Peer]\nPublicKey = %s\nAllowedIPs = 10.203.0.2/32\nEndpoint = 127.0.0.1:%s\n", strings.TrimSpace(string(read(filepath.Join(dir, "native.key")))), strings.TrimSpace(string(read(filepath.Join(dir, "reference.pub")))), referencePort())
 	must(os.WriteFile(filepath.Join(dir, "pmprobe.conf"), []byte(cfg), 0600))
 	fmt.Println("Generated ephemeral configs; secret values omitted")
 }
@@ -100,7 +113,7 @@ func main() {
 	if endpoint == "" {
 		endpoint = "127.0.0.1:51820"
 	}
-	must(dev.IpcSet(fmt.Sprintf("private_key=%s\nlisten_port=51821\npublic_key=%s\nallowed_ip=10.203.0.1/32\nendpoint=%s\n", toHex("reference.key"), toHex("native.pub"), endpoint)))
+	must(dev.IpcSet(fmt.Sprintf("private_key=%s\nlisten_port=%s\npublic_key=%s\nallowed_ip=10.203.0.1/32\nendpoint=%s\n", toHex("reference.key"), referencePort(), toHex("native.pub"), endpoint)))
 	must(dev.Up())
 	l, e := tnet.ListenTCPAddrPort(netip.MustParseAddrPort("10.203.0.2:18080"))
 	must(e)
