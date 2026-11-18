@@ -81,6 +81,10 @@ func scheduleRemoval(plan removalPlan) (string, error) {
 		systemRoot = `C:\Windows`
 	}
 	cmd := exec.Command(filepath.Join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "-Plan", planPath, "-Receipt", plan.ResultFile)
+	// The caller may have been started from inside InstallDir. Windows keeps
+	// the current directory open, which prevents the deferred helper from
+	// removing that directory after the caller exits.
+	cmd.Dir = helperParent
 	cmd.SysProcAttr = helperProcessAttributes()
 	logPath := work + ".helper.log"
 	if err := installstate.WritePrivate(logPath, nil); err != nil {
