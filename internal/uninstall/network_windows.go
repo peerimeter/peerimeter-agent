@@ -201,14 +201,28 @@ function File-SHA256([string]$Path) {
     finally { $stream.Dispose(); $algorithm.Dispose() }
 }
 function Remove-MachinePath([string]$Directory) {
-    $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment',$true)
-    if (-not $key) { throw 'Could not open the machine environment registry key' }
+    $mutex = [Threading.Mutex]::new($false,'Global\PeerimeterAgentMachinePath')
+    $acquired = $false
     try {
-        $old = [string]$key.GetValue('Path','',[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-        $parts = @($old -split ';' | Where-Object { $_ -and -not [string]::Equals($_.TrimEnd('\'),$Directory.TrimEnd('\'),[StringComparison]::OrdinalIgnoreCase) })
-        $next = $parts -join ';'
-        if ($next -ne $old) { $key.SetValue('Path',$next,$key.GetValueKind('Path')) }
-    } finally { $key.Dispose() }
+        try { $acquired = $mutex.WaitOne(30000) } catch [Threading.AbandonedMutexException] { $acquired = $true }
+        if (-not $acquired) { throw 'Timed out waiting to update the machine PATH' }
+        $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment',$true)
+        if (-not $key) { throw 'Could not open the machine environment registry key' }
+        $changed = $false
+        try {
+            $old = [string]$key.GetValue('Path','',[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            $parts = @($old -split ';' | Where-Object { $_ -and -not [string]::Equals($_.TrimEnd('\'),$Directory.TrimEnd('\'),[StringComparison]::OrdinalIgnoreCase) })
+            $next = $parts -join ';'
+            if ($next -ne $old) { $key.SetValue('Path',$next,$key.GetValueKind('Path')); $changed = $true }
+        } finally { $key.Dispose() }
+        if ($changed) {
+            if (-not ('PeerimeterEnvironmentNotifier' -as [type])) {
+                Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class PeerimeterEnvironmentNotifier { [DllImport("user32.dll", CharSet=CharSet.Auto, SetLastError=true)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wParam, string lParam, uint flags, uint timeout, out IntPtr result); }'
+            }
+            $result = [IntPtr]::Zero
+            [PeerimeterEnvironmentNotifier]::SendMessageTimeout([IntPtr]0xffff,0x001A,[IntPtr]::Zero,'Environment',0x0002,5000,[ref]$result) | Out-Null
+        }
+    } finally { if ($acquired) { $mutex.ReleaseMutex() }; $mutex.Dispose() }
 }
 function Lock-Existing([string]$Path) {
     if (-not [IO.File]::Exists($Path)) { return }
@@ -247,6 +261,8 @@ try {
             if ($f.sha256 -and (File-SHA256 $f.path) -ne $f.sha256) { throw 'Inventoried program changed before deferred removal' }
         }
     }
+    # Preserve the inventory and references if machine PATH cannot be updated.
+    Remove-MachinePath $p.install_dir
     foreach ($f in $p.files) {
         if ($f.marker -or [IO.Path]::GetFileName($f.path) -eq 'agent.lock') { continue }
         Remove-Leaf $f.path
@@ -272,7 +288,6 @@ try {
             if (@(Get-ChildItem -LiteralPath $dir -Force).Count -eq 0) { Remove-Item -LiteralPath $dir -Force }
         }
     }
-    Remove-MachinePath $p.install_dir
     $state = 'removed'
 } catch { $message = $_.Exception.Message }
 finally {
