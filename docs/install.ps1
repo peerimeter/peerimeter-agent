@@ -15,6 +15,7 @@ function Write-InstallerProgress([string]$Message) {
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $admin) { throw 'Run the Windows installer from an elevated administrator terminal' }
 if ($InstallDir -notmatch '^[A-Za-z]:[\\/]') { throw 'InstallDir must be an absolute local drive path' }
+if ($InstallDir.Contains(';')) { throw 'InstallDir must not contain a semicolon' }
 $InstallDir = [IO.Path]::GetFullPath($InstallDir)
 if ([string]::IsNullOrWhiteSpace($DocDir) -or [string]::IsNullOrWhiteSpace($DataDir) -or [string]::IsNullOrWhiteSpace($LockDir)) {
     $sha = [Security.Cryptography.SHA256]::Create()
