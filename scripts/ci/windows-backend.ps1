@@ -14,9 +14,13 @@ $installed = $false
 $tcpRule = 'Peerimeter-probe-TCP'
 $udpRule = 'Peerimeter-probe-UDP'
 function Get-FreeUdpPort {
-    $socket = [Net.Sockets.UdpClient]::new(0)
-    try { return $socket.Client.LocalEndPoint.Port }
-    finally { $socket.Dispose() }
+    for ($attempt = 0; $attempt -lt 10; $attempt++) {
+        $socket = [Net.Sockets.UdpClient]::new(0)
+        try { $port = $socket.Client.LocalEndPoint.Port }
+        finally { $socket.Dispose() }
+        if ($port -ne 51820) { return $port }
+    }
+    throw 'Could not select a UDP probe port distinct from the native peer port'
 }
 function Verify-Traffic {
     $before = @(Select-String -Path "$dir\reference.log" -Pattern '^PASS reference' -ErrorAction SilentlyContinue).Count
@@ -43,11 +47,32 @@ try {
     $outerIP = (Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } | Select-Object -First 1).IPv4Address.IPAddress
     if (-not $outerIP) { throw 'Missing host IPv4 address for local native endpoint test' }
     Write-Output ('Outer endpoint address: ' + $outerIP)
-    $cfg = [IO.File]::ReadAllText("$dir\pmprobe.conf").Replace("Endpoint = 127.0.0.1:$referencePort", "Endpoint = ${outerIP}:$referencePort")
-    [IO.File]::WriteAllText("$dir\pmprobe.conf", $cfg)
+    $baseConfig = [IO.File]::ReadAllText("$dir\pmprobe.conf")
     $env:PM_NATIVE_ENDPOINT = "${outerIP}:51820"
-    $ref = Start-Process $helper -ArgumentList @('reference',$dir) -RedirectStandardOutput "$dir\reference.log" -RedirectStandardError "$dir\reference-error.log" -PassThru
-    Start-Sleep -Seconds 2
+    $referenceReady = $false
+    for ($portAttempt = 0; $portAttempt -lt 5; $portAttempt++) {
+        $referencePort = Get-FreeUdpPort
+        $env:PM_REFERENCE_PORT = "$referencePort"
+        $cfg = [regex]::Replace($baseConfig,'(?m)^Endpoint = .*$',"Endpoint = ${outerIP}:$referencePort")
+        [IO.File]::WriteAllText("$dir\pmprobe.conf", $cfg)
+        $ref = Start-Process $helper -ArgumentList @('reference',$dir) -RedirectStandardOutput "$dir\reference.log" -RedirectStandardError "$dir\reference-error.log" -PassThru
+        $readyDeadline = [DateTime]::UtcNow.AddSeconds(10)
+        while ([DateTime]::UtcNow -lt $readyDeadline) {
+            if (Select-String -Path "$dir\reference.log" -SimpleMatch 'Reference peer ready' -Quiet -ErrorAction SilentlyContinue) { $referenceReady = $true; break }
+            if ($ref.HasExited) { break }
+            Start-Sleep -Milliseconds 100
+        }
+        if ($referenceReady) { break }
+        if (-not $ref.HasExited) {
+            Stop-Process -Id $ref.Id -Force -ErrorAction SilentlyContinue
+            throw 'Reference peer did not become ready within 10 seconds'
+        }
+        $referenceFailure = (@(Get-Content -LiteralPath "$dir\reference-error.log" -ErrorAction SilentlyContinue) + @(Get-Content -LiteralPath "$dir\reference.log" -ErrorAction SilentlyContinue)) -join "`n"
+        if ($referenceFailure -notmatch '(?i)(bind:|address already in use|access.*permissions)') { throw "Reference peer failed to start: $referenceFailure" }
+        Write-Output "Reference UDP port $referencePort was unavailable; retrying with another port"
+        $ref = $null
+    }
+    if (-not $referenceReady) { throw 'Reference peer could not bind an available UDP port after 5 attempts' }
     New-NetFirewallRule -DisplayName $udpRule -Direction Inbound -Action Allow -Protocol UDP -LocalPort 51820,$referencePort -RemoteAddress @('127.0.0.1',$outerIP) | Out-Null
     $p = Start-Process $wireguard -ArgumentList @('/installtunnelservice',"$dir\pmprobe.conf") -Wait -PassThru
     if ($p.ExitCode -ne 0) { throw "Tunnel service install failed: $($p.ExitCode)" }

@@ -44,9 +44,13 @@ function Get-InstallResourceRoot([string]$Directory) {
 }
 $defaultStateCreated = $false
 function Get-FreeUdpPort {
-    $socket = [Net.Sockets.UdpClient]::new(0)
-    try { return $socket.Client.LocalEndPoint.Port }
-    finally { $socket.Dispose() }
+    for ($attempt = 0; $attempt -lt 10; $attempt++) {
+        $socket = [Net.Sockets.UdpClient]::new(0)
+        try { $port = $socket.Client.LocalEndPoint.Port }
+        finally { $socket.Dispose() }
+        if ($port -ne 51820) { return $port }
+    }
+    throw 'Could not select a UDP probe port distinct from the native peer port'
 }
 
 function Protect-Resource([string]$Path,[bool]$Public=$false) {
@@ -430,8 +434,12 @@ try {
     if (-not $outerIP) { throw 'No physical IPv4 endpoint for native Windows test' }
     $quotedKey = "'" + (Join-Path $dir 'native.key').Replace("'", "''") + "'"
     $publicKey = [IO.File]::ReadAllText((Join-Path $dir 'reference.pub')).Trim()
-    $referencePort = Get-FreeUdpPort
-    $validYaml = @"
+    $env:PM_NATIVE_ENDPOINT = "${outerIP}:51820"
+    $referenceReady = $false
+    for ($portAttempt = 0; $portAttempt -lt 5; $portAttempt++) {
+        $referencePort = Get-FreeUdpPort
+        $env:PM_REFERENCE_PORT = "$referencePort"
+        $validYaml = @"
 version: 1
 mode: static
 network:
@@ -449,10 +457,27 @@ peers:
     endpoint: ${outerIP}:$referencePort
     persistent_keepalive_seconds: 1
 "@
-    [IO.File]::WriteAllText($configPath,$validYaml)
-    $env:PM_NATIVE_ENDPOINT = "${outerIP}:51820"
-    $env:PM_REFERENCE_PORT = "$referencePort"
-    $reference = Start-Process -FilePath $helperExe -ArgumentList @('reference',('"{0}"' -f $dir)) -RedirectStandardOutput (Join-Path $dir 'reference.log') -RedirectStandardError (Join-Path $dir 'reference-error.log') -PassThru
+        [IO.File]::WriteAllText($configPath,$validYaml)
+        $referenceLog = Join-Path $dir 'reference.log'
+        $referenceErrorLog = Join-Path $dir 'reference-error.log'
+        $reference = Start-Process -FilePath $helperExe -ArgumentList @('reference',('"{0}"' -f $dir)) -RedirectStandardOutput $referenceLog -RedirectStandardError $referenceErrorLog -PassThru
+        $readyDeadline = [DateTime]::UtcNow.AddSeconds(10)
+        while ([DateTime]::UtcNow -lt $readyDeadline) {
+            if (Select-String -Path $referenceLog -SimpleMatch 'Reference peer ready' -Quiet -ErrorAction SilentlyContinue) { $referenceReady = $true; break }
+            if ($reference.HasExited) { break }
+            Start-Sleep -Milliseconds 100
+        }
+        if ($referenceReady) { break }
+        if (-not $reference.HasExited) {
+            Stop-Process -Id $reference.Id -Force -ErrorAction SilentlyContinue
+            throw 'Reference peer did not become ready within 10 seconds'
+        }
+        $referenceFailure = (@(Get-Content -LiteralPath $referenceErrorLog -ErrorAction SilentlyContinue) + @(Get-Content -LiteralPath $referenceLog -ErrorAction SilentlyContinue)) -join "`n"
+        if ($referenceFailure -notmatch '(?i)(bind:|address already in use|access.*permissions)') { throw "Reference peer failed to start: $referenceFailure" }
+        Write-Output "Reference UDP port $referencePort was unavailable; retrying with another port"
+        $reference = $null
+    }
+    if (-not $referenceReady) { throw 'Reference peer could not bind an available UDP port after 5 attempts' }
     New-NetFirewallRule -DisplayName $udpRule -Direction Inbound -Action Allow -Protocol UDP -LocalPort 51820,$referencePort -RemoteAddress @('127.0.0.1',$outerIP) | Out-Null
     New-NetFirewallRule -DisplayName $tcpRule -Direction Inbound -Action Allow -Protocol TCP -LocalPort 18081 -LocalAddress '10.203.0.1' -RemoteAddress '10.203.0.2' | Out-Null
     Start-Foreground | Out-Null
