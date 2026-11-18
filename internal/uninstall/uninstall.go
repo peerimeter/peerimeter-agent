@@ -109,6 +109,11 @@ func makePlan(inv installstate.Inventory, purge bool) removalPlan {
 	}
 	seen := map[string]bool{}
 	dirs := map[string]bool{inv.InstallDir: true, inv.DocDir: true, inv.DataDir: true, inv.LockDir: true}
+	if root := windowsInstallerResourceRoot(inv); root != "" {
+		// Remove the per-installation container after its State, Documentation
+		// and Locks children, but only for the verified default ProgramData layout.
+		dirs[root] = true
+	}
 	for _, profile := range inv.Profiles {
 		for _, f := range resources(profile) {
 			if !seen[f.Path] {
@@ -171,6 +176,38 @@ func makePlan(inv installstate.Inventory, purge bool) removalPlan {
 	sort.Strings(p.PurgeDirs)
 	sort.Slice(p.Directories, func(i, j int) bool { return len(p.Directories[i]) > len(p.Directories[j]) })
 	return p
+}
+
+func windowsInstallerResourceRoot(inv installstate.Inventory) string {
+	if runtime.GOOS != "windows" {
+		return ""
+	}
+	programData := os.Getenv("ProgramData")
+	if programData == "" {
+		programData = `C:\ProgramData`
+	}
+	base, err := installstate.Canonical(filepath.Join(programData, "Peerimeter", "Installations"))
+	if err != nil {
+		return ""
+	}
+	root := filepath.Dir(inv.DataDir)
+	expectedRoot, err := installstate.Canonical(root)
+	if err != nil || !strings.EqualFold(filepath.Dir(expectedRoot), base) {
+		return ""
+	}
+	state, err := installstate.Canonical(filepath.Join(root, "State"))
+	if err != nil || !strings.EqualFold(inv.DataDir, state) {
+		return ""
+	}
+	doc, err := installstate.Canonical(filepath.Join(root, "Documentation"))
+	if err != nil || !strings.EqualFold(inv.DocDir, doc) {
+		return ""
+	}
+	locks, err := installstate.Canonical(filepath.Join(root, "Locks"))
+	if err != nil || !strings.EqualFold(inv.LockDir, locks) {
+		return ""
+	}
+	return expectedRoot
 }
 
 type confirmedProfile struct {
