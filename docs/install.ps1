@@ -79,9 +79,10 @@ function Add-MachinePath([string]$Directory) {
         $changed = $false
         try {
             $old = [string]$key.GetValue('Path','',[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-            $parts = @($old -split ';' | Where-Object { $_ })
+            $parts = @($old -split ';')
             if (-not @($parts | Where-Object { [string]::Equals($_.TrimEnd('\'),$Directory.TrimEnd('\'),[StringComparison]::OrdinalIgnoreCase) }).Count) {
-                $key.SetValue('Path',(@($parts) + $Directory) -join ';',$key.GetValueKind('Path'))
+                $next = if ([string]::IsNullOrEmpty($old)) { $Directory } else { $old + ';' + $Directory }
+                $key.SetValue('Path',$next,$key.GetValueKind('Path'))
                 $changed = $true
             }
         } finally { $key.Dispose() }
