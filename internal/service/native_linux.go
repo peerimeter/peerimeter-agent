@@ -35,7 +35,7 @@ func linuxServiceUnit(executable string, cfg Config) ([]byte, error) {
 			return nil, errors.New("systemd service paths must be absolute and contain no newlines or NUL")
 		}
 	}
-	args := []string{linuxSystemdQuote(executable), "run", "--config", linuxSystemdQuote(cfg.ConfigPath), "--state-dir", linuxSystemdQuote(cfg.StateDirectory), "--runtime-dir", linuxSystemdQuote(serviceRuntime(cfg)), "--config-dir", linuxSystemdQuote(snapshotDirectory(cfg))}
+	args := []string{linuxSystemdQuote(executable), "daemon", "--config", linuxSystemdQuote(cfg.ConfigPath), "--state-dir", linuxSystemdQuote(cfg.StateDirectory), "--runtime-dir", linuxSystemdQuote(serviceRuntime(cfg)), "--config-dir", linuxSystemdQuote(snapshotDirectory(cfg))}
 	if cfg.Operator != "" {
 		if len(cfg.Operator) > 256 || strings.TrimSpace(cfg.Operator) != cfg.Operator || strings.ContainsAny(cfg.Operator, "\x00\r\n") {
 			return nil, errors.New("invalid systemd local operator identity")
@@ -199,13 +199,23 @@ func RemoveOwned(ctx context.Context, expectedExe string, cfg Config) error {
 	if expectedConfig == "" {
 		expectedConfig = filepath.Join(snapshotDirectory(cfg), "service.yaml")
 	}
-	prefix := "ExecStart=" + linuxSystemdQuote(expectedExe) + " run --config " + linuxSystemdQuote(expectedConfig) + " --state-dir " + linuxSystemdQuote(cfg.StateDirectory)
+	prefixes := []string{
+		"ExecStart=" + linuxSystemdQuote(expectedExe) + " daemon --config " + linuxSystemdQuote(expectedConfig) + " --state-dir " + linuxSystemdQuote(cfg.StateDirectory),
+		"ExecStart=" + linuxSystemdQuote(expectedExe) + " run --config " + linuxSystemdQuote(expectedConfig) + " --state-dir " + linuxSystemdQuote(cfg.StateDirectory),
+	}
 	found := false
 	for _, line := range strings.Split(string(data), "\n") {
 		if !strings.HasPrefix(line, "ExecStart=") {
 			continue
 		}
-		if found || !strings.HasPrefix(line, prefix) {
+		prefix := ""
+		for _, candidate := range prefixes {
+			if strings.HasPrefix(line, candidate) {
+				prefix = candidate
+				break
+			}
+		}
+		if found || prefix == "" {
 			return errors.New("systemd service belongs to another installation")
 		}
 		found = true

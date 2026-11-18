@@ -97,7 +97,7 @@ func serviceAllowedUntrustedAccess(mask uint32, path string, directory, private 
 }
 
 func serviceArguments(cfg Config) []string {
-	args := []string{"run", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory, "--runtime-dir", serviceRuntime(cfg), "--config-dir", snapshotDirectory(cfg)}
+	args := []string{"daemon", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory, "--runtime-dir", serviceRuntime(cfg), "--config-dir", snapshotDirectory(cfg)}
 	if cfg.Operator != "" {
 		args = append(args, "--operator", cfg.Operator)
 	}

@@ -22,7 +22,7 @@ func equalServicePath(left, right string) bool {
 	return a == b
 }
 func verifyServiceArguments(args []string, executable string, cfg Config) error {
-	if len(args) < 2 || !equalServicePath(args[0], executable) || args[1] != "run" {
+	if len(args) < 2 || !equalServicePath(args[0], executable) || (args[1] != "run" && args[1] != "daemon") {
 		return errors.New("registered service executable belongs to another installation")
 	}
 	flags := map[string]string{}

@@ -24,7 +24,7 @@ func Dispatch(context.Context, func(context.Context) error) (bool, error) { retu
 func nativeSecureFiles(paths ...string) error                             { return nil }
 
 func darwinPlist(executable string, cfg Config) ([]byte, error) {
-	args := []string{executable, "run", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory, "--runtime-dir", serviceRuntime(cfg), "--config-dir", snapshotDirectory(cfg)}
+	args := []string{executable, "daemon", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory, "--runtime-dir", serviceRuntime(cfg), "--config-dir", snapshotDirectory(cfg)}
 	if cfg.Operator != "" {
 		args = append(args, "--operator", cfg.Operator)
 	}

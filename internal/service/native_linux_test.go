@@ -15,7 +15,7 @@ func TestLinuxServiceUnitPreservesLiteralPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	unit := string(data)
-	for _, part := range []string{`ExecStart="/opt/Peerimeter Agent/agent\"$$x%%y\\z" run --config "/var/lib/peerimeter/config with spaces.json" --state-dir "/var/lib/peerimeter/$$state%%id"`, "Restart=on-failure", "WantedBy=multi-user.target", "User=root", "KillSignal=SIGTERM", "UMask=0077"} {
+	for _, part := range []string{`ExecStart="/opt/Peerimeter Agent/agent\"$$x%%y\\z" daemon --config "/var/lib/peerimeter/config with spaces.json" --state-dir "/var/lib/peerimeter/$$state%%id"`, "Restart=on-failure", "WantedBy=multi-user.target", "User=root", "KillSignal=SIGTERM", "UMask=0077"} {
 		if !strings.Contains(unit, part) {
 			t.Fatalf("missing safe systemd setting %q", part)
 		}
