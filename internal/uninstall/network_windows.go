@@ -211,7 +211,7 @@ function Remove-MachinePath([string]$Directory) {
         $changed = $false
         try {
             $old = [string]$key.GetValue('Path','',[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-            $parts = @($old -split ';' | Where-Object { $_ -and -not [string]::Equals($_.TrimEnd('\'),$Directory.TrimEnd('\'),[StringComparison]::OrdinalIgnoreCase) })
+            $parts = @($old -split ';' | Where-Object { -not [string]::Equals($_.TrimEnd('\'),$Directory.TrimEnd('\'),[StringComparison]::OrdinalIgnoreCase) })
             $next = $parts -join ';'
             if ($next -ne $old) { $key.SetValue('Path',$next,$key.GetValueKind('Path')); $changed = $true }
         } finally { $key.Dispose() }
