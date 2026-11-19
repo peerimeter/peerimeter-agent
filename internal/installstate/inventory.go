@@ -126,6 +126,13 @@ func ProgramNames() []string {
 	return names
 }
 
+func commandAliasName() string {
+	if runtime.GOOS == "windows" {
+		return "pma.exe"
+	}
+	return "pma"
+}
+
 func ResourcePath(inv Inventory, f File) string {
 	dir := f.Dir
 	if dir == "" {
@@ -495,7 +502,8 @@ func loadAtDataDir(dir, requestedDataDir string, allowInsecureOverride bool) (In
 		}
 		seen[f.Name] = true
 	}
-	if len(inv.Files) != len(names) {
+	legacyInventory := len(seen) == len(names)-1 && !seen[commandAliasName()]
+	if len(seen) != len(names) && !legacyInventory {
 		return inv, errors.New("installation inventory is missing a program resource")
 	}
 	if len(inv.Profiles) > 256 {

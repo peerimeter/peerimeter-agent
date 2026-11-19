@@ -109,6 +109,43 @@ func fixtureInstall(t *testing.T) string {
 	}
 	return dir
 }
+
+func TestLoadAcceptsInventoryWithoutPmaForUpgradeCompatibility(t *testing.T) {
+	dir := fixtureInstall(t)
+	inv, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliasPath := filepath.Join(dir, commandAliasName())
+	if err := os.Remove(aliasPath); err != nil {
+		t.Fatal(err)
+	}
+	legacyFiles := inv.Files[:0]
+	for _, file := range inv.Files {
+		if file.Name != commandAliasName() {
+			legacyFiles = append(legacyFiles, file)
+		}
+	}
+	inv.Files = legacyFiles
+	if err := save(inv); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); err != nil {
+		t.Fatalf("legacy inventory without pma was rejected: %v", err)
+	}
+	for index, file := range inv.Files {
+		if file.Name == ProgramNames()[0] {
+			inv.Files = append(inv.Files[:index], inv.Files[index+1:]...)
+			break
+		}
+	}
+	if err := save(inv); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); err == nil {
+		t.Fatal("inventory missing the primary agent executable was accepted")
+	}
+}
 func fixtureProfile(t *testing.T) Profile {
 	t.Helper()
 	root := t.TempDir()

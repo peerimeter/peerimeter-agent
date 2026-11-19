@@ -11,6 +11,7 @@ $offline = Join-Path $base 'offline custom path'
 $latest = Join-Path $base 'latest custom path'
 $pinned = Join-Path $base 'pinned custom path'
 $badTarget = Join-Path $base 'must not install'
+$collisionTarget = Join-Path $base 'existing unrelated pma'
 $defaultTarget = Join-Path $env:ProgramFiles 'Peerimeter'
 $defaultInstalled = $false
 $programDataTarget = Join-Path $env:ProgramData ('Peerimeter Installer CI ' + [guid]::NewGuid().ToString('N') + ' custom path')
@@ -180,6 +181,17 @@ try {
     Expect-Failure { & $Installer -Archive $Archive -SHA256 ('0'*64) -InstallDir $badTarget }
     if (Test-Path -LiteralPath $badTarget) { throw 'Bad checksum changed installation destination' }
     Write-Output 'PASS checksum rejection precedes installation mutation'
+
+    New-Item -ItemType Directory -Path $collisionTarget | Out-Null
+    $unrelatedAlias = Join-Path $collisionTarget 'pma.exe'
+    [IO.File]::WriteAllText($unrelatedAlias,'unrelated executable data')
+    $unrelatedHash = (Get-FileHash -LiteralPath $unrelatedAlias -Algorithm SHA256).Hash
+    Track-ResourceRoot $collisionTarget
+    Expect-Failure { & $Installer -Archive $Archive -SHA256 $checksum -InstallDir $collisionTarget }
+    if ((Get-FileHash -LiteralPath $unrelatedAlias -Algorithm SHA256).Hash -ne $unrelatedHash -or (Test-Path -LiteralPath (Join-Path $collisionTarget 'peerimeter-agent.exe'))) {
+        throw 'Unrelated pma.exe was changed during installer collision rejection'
+    }
+    Write-Output 'PASS unrelated pma.exe is preserved and rejected before installer mutation'
 
     # Exercise release URL selection against a local, already verified ZIP.
     # These mocks prevent dependence on a release that has not been published.

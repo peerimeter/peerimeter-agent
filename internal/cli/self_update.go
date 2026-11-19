@@ -266,10 +266,18 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	if tag != latestTag {
 		return fmt.Errorf("latest release changed from %s to %s while preparing the update; run self-update again", latestTag, tag)
 	}
+	aliasName := commandAliasNameFor(goos)
+	aliasOwned := false
 	for _, owned := range inv.Files {
+		if owned.Name == aliasName {
+			aliasOwned = true
+		}
 		if _, ok := files[owned.Name]; !ok {
 			return fmt.Errorf("release package is missing inventoried program file %q", owned.Name)
 		}
+	}
+	if !aliasOwned {
+		delete(files, aliasName)
 	}
 	if goos == "windows" {
 		// WireGuardNT is an independently pinned, Authenticode-verified runtime
@@ -602,6 +610,13 @@ func binaryNameFor(goos string) string {
 		return "peerimeter-agent.exe"
 	}
 	return "peerimeter-agent"
+}
+
+func commandAliasNameFor(goos string) string {
+	if goos == "windows" {
+		return "pma.exe"
+	}
+	return "pma"
 }
 
 func verifyInstalledFiles(inv installstate.Inventory) error {

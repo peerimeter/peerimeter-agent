@@ -3,7 +3,6 @@
 package selfupdate
 
 import (
-	"io"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -25,40 +24,7 @@ func setFileOwner(file *os.File, info os.FileInfo) error {
 	return file.Chown(int(stat.Uid), int(stat.Gid))
 }
 
-func replaceFile(stage, path, backup string) error {
-	source, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer source.Close()
-	info, err := source.Stat()
-	if err != nil {
-		return err
-	}
-	destination, err := os.OpenFile(backup, os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
-	if err != nil {
-		return err
-	}
-	if err := setFileOwner(destination, info); err != nil {
-		destination.Close()
-		return err
-	}
-	if err := destination.Chmod(info.Mode().Perm()); err != nil {
-		destination.Close()
-		return err
-	}
-	if _, err := io.Copy(destination, source); err != nil {
-		destination.Close()
-		return err
-	}
-	if err := destination.Sync(); err != nil {
-		destination.Close()
-		return err
-	}
-	if err := destination.Close(); err != nil {
-		return err
-	}
-	// Persist the backup directory entry before replacing the only installed copy.
+func replaceFile(stage, path string) error {
 	if err := syncDirectory(filepath.Dir(path)); err != nil {
 		return err
 	}
