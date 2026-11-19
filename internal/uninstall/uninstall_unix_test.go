@@ -334,7 +334,11 @@ func TestReferenceRemovalFailureRestoresInventoryForUninstallRetry(t *testing.T)
 	if err := installstate.RegisterWithDirectories(dir, dir, dataDir, lockDir, false); err != nil {
 		t.Fatal(err)
 	}
-	reference := filepath.Join(dir, installstate.ReferenceFilename)
+	canonicalDir, err := installstate.Canonical(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference := filepath.Join(canonicalDir, installstate.ReferenceFilename)
 	failure := errors.New("simulated reference removal failure")
 	removeReferenceFailure := func(path string) (bool, error) {
 		if path == reference {
@@ -344,7 +348,7 @@ func TestReferenceRemovalFailureRestoresInventoryForUninstallRetry(t *testing.T)
 	}
 	opts := Options{InstallDir: dir, Yes: true}
 	probe := func(context.Context, string) (bool, error) { return false, nil }
-	err := executeWithRegistrationProbeAndFinalizer(context.Background(), opts, &bytes.Buffer{}, probe, removeReferenceFailure)
+	err = executeWithRegistrationProbeAndFinalizer(context.Background(), opts, &bytes.Buffer{}, probe, removeReferenceFailure)
 	if !errors.Is(err, failure) {
 		t.Fatalf("first uninstall error = %v, want injected reference removal failure", err)
 	}

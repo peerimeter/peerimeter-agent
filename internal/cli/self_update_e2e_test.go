@@ -447,7 +447,7 @@ func waitForWindowsUpdateCleanup(t *testing.T, ctx context.Context, lockDir stri
 		if err == nil {
 			pending := false
 			for _, entry := range entries {
-				if strings.HasPrefix(entry.Name(), ".peerimeter-update-") || strings.HasPrefix(entry.Name(), ".peerimeter-recovery-") {
+				if (strings.HasPrefix(entry.Name(), ".peerimeter-update-") && !strings.HasSuffix(entry.Name(), updateResultSuffix)) || strings.HasPrefix(entry.Name(), ".peerimeter-recovery-") {
 					pending = true
 					break
 				}
