@@ -122,7 +122,7 @@ func selfUpdate(ctx context.Context, out, promptOut io.Writer, in io.Reader, jso
 	return selfUpdateAt(ctx, out, jsonOutput, installDir, Version, runtime.GOOS, runtime.GOARCH, selfUpdateDeps{
 		latest: latestStableReleaseTag,
 		fetch:  selfupdate.Fetch, verify: verifyUpdatedBinary, manage: service.Manage, wait: waitForService,
-		yes: yes, progress: newSelfUpdateProgress(promptOut, colorMode),
+		yes: yes, progress: newSelfUpdateProgress(promptOut, colorMode), resultColor: shouldColor(out, colorMode),
 		confirm: func(current, latest string) (bool, error) {
 			return confirmSelfUpdate(in, promptOut, current, latest, colorMode)
 		},
@@ -148,14 +148,15 @@ type updateServiceManager func(string, service.Config) error
 type updateServiceWaiter func(context.Context, string) error
 
 type selfUpdateDeps struct {
-	latest   updateReleaseChecker
-	fetch    updateFetcher
-	verify   updateBinaryVerifier
-	manage   updateServiceManager
-	wait     updateServiceWaiter
-	yes      bool
-	confirm  func(string, string) (bool, error)
-	progress *selfUpdateProgress
+	latest      updateReleaseChecker
+	fetch       updateFetcher
+	verify      updateBinaryVerifier
+	manage      updateServiceManager
+	wait        updateServiceWaiter
+	yes         bool
+	resultColor bool
+	confirm     func(string, string) (bool, error)
+	progress    *selfUpdateProgress
 }
 
 // selfUpdateAt keeps release retrieval and binary execution injectable so the
@@ -163,6 +164,7 @@ type selfUpdateDeps struct {
 // service side effects.
 func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDir, currentVersion, goos, goarch string, deps selfUpdateDeps) error {
 	defer deps.progress.stop()
+	color := deps.resultColor
 	inv, err := runSelfUpdateStep(deps.progress, "Validating installation inventory", func() (installstate.Inventory, error) {
 		return installstate.Load(installDir)
 	})
@@ -190,7 +192,7 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 		if goos == "windows" {
 			state = "recovery_scheduled"
 		}
-		return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: state, PreviousVersion: Version})
+		return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: state, PreviousVersion: Version}, color)
 	}
 	inv, err = runSelfUpdateStep(deps.progress, "Reloading installation inventory", func() (installstate.Inventory, error) {
 		return installstate.Load(installDir)
@@ -222,12 +224,17 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 		deps.progress.stop(selfUpdateProgressUpdateAvailable)
 	}
 	if !jsonOutput {
-		if _, err := fmt.Fprintf(out, "Current version: %s\nLatest version: %s\n", currentVersion, latestTag); err != nil {
+		versions := fmt.Sprintf(
+			"Current version: %s\nLatest version: %s\n",
+			selfUpdateYellow(currentVersion, color),
+			selfUpdateGreen(latestTag, color),
+		)
+		if _, err := fmt.Fprint(out, versions); err != nil {
 			return err
 		}
 	}
 	if upToDate {
-		return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "up_to_date", PreviousVersion: currentVersion, UpdatedVersion: latestTag})
+		return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "up_to_date", PreviousVersion: currentVersion, UpdatedVersion: latestTag}, color)
 	}
 	if !deps.yes {
 		if deps.confirm == nil {
@@ -238,7 +245,7 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 			return err
 		}
 		if !confirmed {
-			return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "cancelled", PreviousVersion: currentVersion, UpdatedVersion: latestTag})
+			return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "cancelled", PreviousVersion: currentVersion, UpdatedVersion: latestTag}, color)
 		}
 	}
 	updateSnapshot := inv
@@ -382,7 +389,7 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 		filesUpdated = append(filesUpdated, f.Name)
 	}
 	deps.progress.stop(selfUpdateProgressUpdateSucceeded)
-	return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "updated", PreviousVersion: currentVersion, UpdatedVersion: tag, Files: filesUpdated})
+	return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "updated", PreviousVersion: currentVersion, UpdatedVersion: tag, Files: filesUpdated}, color)
 }
 
 func selfUpdateProfileLockError(err error) error {
@@ -689,12 +696,13 @@ func ensureNoActiveUpdateProfiles(inv installstate.Inventory) error {
 	return nil
 }
 
-func writeSelfUpdateResult(out io.Writer, jsonOutput bool, result selfUpdateResult) error {
+func writeSelfUpdateResult(out io.Writer, jsonOutput bool, result selfUpdateResult, color bool) error {
 	if jsonOutput {
 		return json.NewEncoder(out).Encode(result)
 	}
 	if result.State == "up_to_date" {
-		_, err := fmt.Fprintf(out, "Peerimeter Agent is already up to date (%s).\n", result.PreviousVersion)
+		message := fmt.Sprintf("✓ Peerimeter Agent is already up to date (%s).\n", result.PreviousVersion)
+		_, err := fmt.Fprint(out, selfUpdateGreen(message, color))
 		return err
 	}
 	if result.State == "cancelled" {
@@ -713,6 +721,7 @@ func writeSelfUpdateResult(out io.Writer, jsonOutput bool, result selfUpdateResu
 		_, err := fmt.Fprintln(out, "Windows recovery helper started. It will restore the previous installation after this command exits.")
 		return err
 	}
-	_, err := fmt.Fprintf(out, "Updated Peerimeter Agent %s → %s.\n", result.PreviousVersion, result.UpdatedVersion)
+	message := fmt.Sprintf("✓ Updated Peerimeter Agent %s → %s.\n", result.PreviousVersion, result.UpdatedVersion)
+	_, err := fmt.Fprint(out, selfUpdateGreen(message, color))
 	return err
 }

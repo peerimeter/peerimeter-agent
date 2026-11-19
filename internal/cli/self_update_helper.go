@@ -105,7 +105,7 @@ func scheduleWindowsUpdate(inv installstate.Inventory, files map[string][]byte, 
 		return restartServiceAfterFailure(profile, fmt.Errorf("Windows update helper could not initialize; inspect %s", resultPath))
 	}
 	_ = cmd.Process.Release()
-	return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "scheduled", PreviousVersion: Version, UpdatedVersion: tag, ResultFile: resultPath})
+	return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "scheduled", PreviousVersion: Version, UpdatedVersion: tag, ResultFile: resultPath}, false)
 }
 
 func scheduleWindowsRecovery(inv installstate.Inventory) error {
