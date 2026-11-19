@@ -141,7 +141,7 @@ policy in that case.
 The installer adds the installation directory to the machine PATH. Open a new
 PowerShell window to run `peerimeter-agent` or its short alias `pma` by name.
 On Linux and macOS, the installer creates `pma` as a symlink beside the agent
-binary. Full uninstall with the current release removes the alias and, on Windows, the PATH entry. Uninstallers from releases before alias support do not remove .
+binary. Full uninstall with the current release removes the alias and, on Windows, the PATH entry. Uninstallers from releases before alias support do not remove the alias.
 
 ### Package verification
 
