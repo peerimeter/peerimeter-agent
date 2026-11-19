@@ -232,6 +232,66 @@ func TestUninstallRejectsProfileChangesDuringConfirmation(t *testing.T) {
 	}
 }
 
+func TestPurgeRejectsContentsAddedAfterConfirmation(t *testing.T) {
+	dir, profile := prepareUninstall(t)
+	added := filepath.Join(profile.StateDir, "appeared-after-preview.txt")
+	reader := &callbackReader{callback: func() {
+		if err := os.WriteFile(added, []byte("keep"), 0600); err != nil {
+			t.Errorf("add unapproved purge file: %v", err)
+		}
+	}}
+	err := Execute(context.Background(), Options{InstallDir: dir, Purge: true, ConfirmIn: reader, ConfirmOut: &bytes.Buffer{}}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "purge contents changed after confirmation") {
+		t.Fatalf("uninstall accepted changed purge contents: %v", err)
+	}
+	if _, err := os.Stat(added); err != nil {
+		t.Fatalf("unapproved file was removed: %v", err)
+	}
+}
+
+func TestFinalizationFailureKeepsReferenceForRetry(t *testing.T) {
+	root := t.TempDir()
+	installDir := filepath.Join(root, "install")
+	dataDir := filepath.Join(root, "data")
+	lockDir := filepath.Join(root, "locks")
+	for _, dir := range []string{installDir, dataDir, lockDir} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan := removalPlan{
+		Lock: filepath.Join(lockDir, "install.lock"), DataLock: filepath.Join(dataDir, "install.lock"),
+		Inventory: filepath.Join(dataDir, installstate.Filename),
+	}
+	reference := filepath.Join(installDir, installstate.ReferenceFilename)
+	for _, path := range []string{plan.Lock, plan.DataLock, plan.Inventory, reference} {
+		if err := os.WriteFile(path, []byte("fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	failure := errors.New("simulated inventory removal failure")
+	removeInventoryFailure := func(path string) (bool, error) {
+		if path == plan.Inventory {
+			return false, failure
+		}
+		return removeTracked(path)
+	}
+	if _, err := removeFinalizationResources(plan, installDir, removeInventoryFailure); !errors.Is(err, failure) {
+		t.Fatalf("finalization returned %v, want injected failure", err)
+	}
+	for _, path := range []string{plan.Inventory, reference} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("failed finalization removed retry metadata %s: %v", path, err)
+		}
+	}
+	if _, err := removeFinalizationResources(plan, installDir, removeTracked); err != nil {
+		t.Fatalf("retry finalization: %v", err)
+	}
+	if _, err := os.Lstat(reference); !os.IsNotExist(err) {
+		t.Fatalf("retry retained reference: %v", err)
+	}
+}
+
 func TestPurgeDryRunListsAndRemovalDeletesNestedTrackedData(t *testing.T) {
 	dir, profile := prepareUninstall(t)
 	stateFile := filepath.Join(profile.StateDir, "managed", "network", "cache.json")

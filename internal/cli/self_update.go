@@ -45,12 +45,71 @@ type selfUpdateResult struct {
 	PreviousVersion string   `json:"previous_version,omitempty"`
 	UpdatedVersion  string   `json:"updated_version,omitempty"`
 	Files           []string `json:"files,omitempty"`
+	ResultFile      string   `json:"result_file,omitempty"`
+	Message         string   `json:"message,omitempty"`
 }
 
 type appliedUpdate struct {
 	hashes   map[string]string
 	rollback func() error
 	commit   func() error
+}
+
+type serviceStartupFailure struct {
+	err             error
+	rollbackPending bool
+}
+
+func (failure *serviceStartupFailure) Error() string { return failure.err.Error() }
+func (failure *serviceStartupFailure) Unwrap() error { return failure.err }
+
+func startAndWaitForUpdatedService(start, wait, stop func() error, startMessage, readyMessage string) error {
+	if err := start(); err != nil {
+		cause := fmt.Errorf("%s: %w", startMessage, err)
+		if stopErr := stop(); stopErr != nil {
+			return &serviceStartupFailure{err: errors.Join(cause, fmt.Errorf("could not stop partially started service; rollback is pending a later update recovery: %w", stopErr)), rollbackPending: true}
+		}
+		return cause
+	}
+	if err := wait(); err != nil {
+		cause := fmt.Errorf("%s: %w", readyMessage, err)
+		if stopErr := stop(); stopErr != nil {
+			return &serviceStartupFailure{err: errors.Join(cause, fmt.Errorf("could not stop updated service; rollback is pending a later update recovery: %w", stopErr)), rollbackPending: true}
+		}
+		return cause
+	}
+	return nil
+}
+
+func rollbackMustWaitForRecovery(err error) bool {
+	var failure *serviceStartupFailure
+	return errors.As(err, &failure) && failure.rollbackPending
+}
+
+func restoreUpdateFiles(progress *selfUpdateProgress, dir string, rollback func() error) error {
+	lock, err := runSelfUpdateStep(progress, "Locking installation to roll back", func() (io.Closer, error) {
+		return installstate.Lock(dir)
+	})
+	if err != nil {
+		return fmt.Errorf("automatic rollback was incomplete: %w", err)
+	}
+	inv, err := runSelfUpdateStep(progress, "Checking installation before rollback", func() (installstate.Inventory, error) {
+		return installstate.Load(dir)
+	})
+	if err == nil {
+		err = ensureNoActiveUpdateProfiles(inv)
+	}
+	if err != nil {
+		_ = lock.Close()
+		return fmt.Errorf("automatic rollback is pending because an agent profile may still be running: %w", err)
+	}
+	err = runSelfUpdateAction(progress, "Restoring previous program files and inventory", func() error {
+		return errors.Join(rollback(), lock.Close())
+	})
+	if err != nil {
+		return fmt.Errorf("automatic rollback was incomplete: %w", err)
+	}
+	return nil
 }
 
 func selfUpdate(ctx context.Context, out, promptOut io.Writer, in io.Reader, jsonOutput, yes bool, colorMode string) error {
@@ -296,21 +355,27 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	}
 	rollback, commit := applied.rollback, applied.commit
 	if managedService != nil {
-		if err := runSelfUpdateAction(deps.progress, "Starting the updated agent service", func() error {
-			return deps.manage("start", serviceConfig(managedService))
-		}); err != nil {
-			if stopErr := deps.manage("stop", serviceConfig(managedService)); stopErr != nil {
-				return errors.Join(fmt.Errorf("restart updated service: %w", err), fmt.Errorf("could not stop partially started service; rollback is pending a later update recovery: %w", stopErr))
+		profile := *managedService
+		err := startAndWaitForUpdatedService(
+			func() error {
+				return runSelfUpdateAction(deps.progress, "Starting the updated agent service", func() error {
+					return deps.manage("start", serviceConfig(&profile))
+				})
+			},
+			func() error {
+				return runSelfUpdateAction(deps.progress, "Waiting for the updated service to become ready", func() error {
+					return deps.wait(ctx, profile.RuntimeDir)
+				})
+			},
+			func() error { return deps.manage("stop", serviceConfig(&profile)) },
+			"restart updated service",
+			"updated service did not become ready",
+		)
+		if err != nil {
+			if rollbackMustWaitForRecovery(err) {
+				return err
 			}
-			return rollbackInstalledUpdate(deps.progress, installDir, rollback, *managedService, fmt.Errorf("restart updated service: %w", err), deps.manage, deps.wait)
-		}
-		if err := runSelfUpdateAction(deps.progress, "Waiting for the updated service to become ready", func() error {
-			return deps.wait(ctx, managedService.RuntimeDir)
-		}); err != nil {
-			if stopErr := deps.manage("stop", serviceConfig(managedService)); stopErr != nil {
-				return errors.Join(fmt.Errorf("updated service did not become ready: %w", err), fmt.Errorf("could not stop updated service; rollback is pending a later update recovery: %w", stopErr))
-			}
-			return rollbackInstalledUpdate(deps.progress, installDir, rollback, *managedService, fmt.Errorf("updated service did not become ready: %w", err), deps.manage, deps.wait)
+			return rollbackInstalledUpdate(deps.progress, installDir, rollback, profile, err, deps.manage, deps.wait)
 		}
 	} else if err := runSelfUpdateAction(deps.progress, "Verifying the updated agent binary", func() error {
 		return deps.verify(ctx, filepath.Join(installDir, binaryNameFor(goos)), tag)
@@ -607,32 +672,14 @@ func verifyUpdatedBinary(ctx context.Context, path, expectedVersion string) erro
 }
 
 func rollbackInstalledUpdate(progress *selfUpdateProgress, dir string, rollback func() error, p installstate.Profile, cause error, manage updateServiceManager, wait updateServiceWaiter) error {
-	lock, err := runSelfUpdateStep(progress, "Locking installation to roll back", func() (io.Closer, error) {
-		return installstate.Lock(dir)
-	})
-	if err != nil {
-		return errors.Join(cause, fmt.Errorf("automatic rollback was incomplete: %w", err))
-	}
-	inv, err := runSelfUpdateStep(progress, "Checking installation before rollback", func() (installstate.Inventory, error) {
-		return installstate.Load(dir)
-	})
-	if err == nil {
-		err = ensureNoActiveUpdateProfiles(inv)
-	}
-	if err != nil {
-		_ = lock.Close()
-		return errors.Join(cause, fmt.Errorf("automatic rollback is pending because an agent profile may still be running: %w", err))
-	}
-	rollbackErr := runSelfUpdateAction(progress, "Restoring previous program files and inventory", func() error {
-		return errors.Join(rollback(), lock.Close())
-	})
+	rollbackErr := restoreUpdateFiles(progress, dir, rollback)
 	if p.Service {
 		rollbackErr = errors.Join(rollbackErr, runSelfUpdateAction(progress, "Restarting the previous service version", func() error {
 			return errors.Join(manage("start", service.Config{ConfigDirectory: p.ConfigDir, StateDirectory: p.StateDir, RuntimeDirectory: p.RuntimeDir}), wait(context.Background(), p.RuntimeDir))
 		}))
 	}
 	if rollbackErr != nil {
-		return errors.Join(cause, fmt.Errorf("automatic rollback was incomplete: %w", rollbackErr))
+		return errors.Join(cause, rollbackErr)
 	}
 	return fmt.Errorf("%w; previous program files were restored", cause)
 }

@@ -308,6 +308,32 @@ func validatePurgeRoots(inv installstate.Inventory, plan removalPlan) error {
 	return nil
 }
 
+func verifyProfileOwnership(inv *installstate.Inventory) error {
+	for i, profile := range inv.Profiles {
+		runtimeOwned, err := installstate.VerifyRuntime(*inv, profile)
+		if err != nil {
+			return err
+		}
+		configOwned, err := installstate.VerifyConfig(*inv, profile)
+		if err != nil {
+			return err
+		}
+		legacyConfigOwned, err := installstate.VerifyConfigDirectory(*inv, profile, profile.LegacyConfigDir)
+		if err != nil {
+			return err
+		}
+		pendingConfigOwned, err := installstate.VerifyConfigDirectory(*inv, profile, profile.PendingConfigDir)
+		if err != nil {
+			return err
+		}
+		inv.Profiles[i].RuntimeOwned = runtimeOwned
+		inv.Profiles[i].ConfigOwned = configOwned
+		inv.Profiles[i].LegacyConfigOwned = legacyConfigOwned
+		inv.Profiles[i].PendingConfigOwned = pendingConfigOwned
+	}
+	return nil
+}
+
 func plannedMarkersForRoot(root string, files []removalFile) map[string]bool {
 	markers := make(map[string]bool)
 	for _, file := range files {
@@ -567,27 +593,8 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	if err := validateOverrides(opts, inv); err != nil {
 		return err
 	}
-	for i, p := range inv.Profiles {
-		owned, e := installstate.VerifyRuntime(inv, p)
-		if e != nil {
-			return e
-		}
-		inv.Profiles[i].RuntimeOwned = owned
-		configOwned, configErr := installstate.VerifyConfig(inv, p)
-		if configErr != nil {
-			return configErr
-		}
-		inv.Profiles[i].ConfigOwned = configOwned
-		legacyOwned, legacyErr := installstate.VerifyConfigDirectory(inv, p, p.LegacyConfigDir)
-		if legacyErr != nil {
-			return legacyErr
-		}
-		inv.Profiles[i].LegacyConfigOwned = legacyOwned
-		pendingOwned, pendingErr := installstate.VerifyConfigDirectory(inv, p, p.PendingConfigDir)
-		if pendingErr != nil {
-			return pendingErr
-		}
-		inv.Profiles[i].PendingConfigOwned = pendingOwned
+	if err := verifyProfileOwnership(&inv); err != nil {
+		return err
 	}
 	plan := makePlan(inv, opts.Purge)
 	if err := preflight(inv, plan); err != nil {
@@ -633,6 +640,7 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		}
 		return json.NewEncoder(out).Encode(r)
 	}
+	confirmedPlanPurgeContents := make(map[string][]string)
 	if !opts.Yes {
 		if opts.ConfirmIn == nil || opts.ConfirmOut == nil {
 			return errors.New("uninstall requires confirmation; use --yes to confirm non-interactively")
@@ -675,6 +683,7 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 						seen[path] = true
 					}
 				}
+				confirmedPlanPurgeContents[root] = paths
 			}
 		}
 		writeLine := func(line string) error {
@@ -701,6 +710,15 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		answer = strings.TrimSpace(answer)
 		if (readErr != nil && !errors.Is(readErr, io.EOF)) || (answer != "y" && answer != "Y" && answer != "yes" && answer != "YES") {
 			return errors.New("uninstall cancelled")
+		}
+	}
+	if opts.Purge && opts.Yes {
+		for _, root := range plan.PurgeDirs {
+			paths, err := listTree(root)
+			if err != nil {
+				return fmt.Errorf("cannot list purge contents of %s: %w", root, err)
+			}
+			confirmedPlanPurgeContents[root] = paths
 		}
 	}
 	updateLock, err := selfupdate.LockUpdate(inv)
@@ -731,33 +749,25 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		return errors.New("an interrupted self-update must be recovered with `peerimeter-agent self-update` before uninstall")
 	}
 	inv = reread
-	for i, p := range inv.Profiles {
-		owned, e := installstate.VerifyRuntime(inv, p)
-		if e != nil {
-			return e
-		}
-		inv.Profiles[i].RuntimeOwned = owned
-		configOwned, configErr := installstate.VerifyConfig(inv, p)
-		if configErr != nil {
-			return configErr
-		}
-		inv.Profiles[i].ConfigOwned = configOwned
-		legacyOwned, legacyErr := installstate.VerifyConfigDirectory(inv, p, p.LegacyConfigDir)
-		if legacyErr != nil {
-			return legacyErr
-		}
-		inv.Profiles[i].LegacyConfigOwned = legacyOwned
-		pendingOwned, pendingErr := installstate.VerifyConfigDirectory(inv, p, p.PendingConfigDir)
-		if pendingErr != nil {
-			return pendingErr
-		}
-		inv.Profiles[i].PendingConfigOwned = pendingOwned
+	if err := verifyProfileOwnership(&inv); err != nil {
+		return err
 	}
 	updatedPlan := makePlan(inv, opts.Purge)
 	if !sameConfirmedPlan(confirmedPlan, updatedPlan) {
 		return errors.New("installation profiles or removal resources changed before removal")
 	}
 	plan = updatedPlan
+	if opts.Purge {
+		for _, root := range plan.PurgeDirs {
+			current, err := listTree(root)
+			if err != nil {
+				return fmt.Errorf("cannot recheck purge contents of %s: %w", root, err)
+			}
+			if !samePathSet(confirmedPlanPurgeContents[root], current) {
+				return errors.New("purge contents changed after confirmation; review the updated contents and retry uninstall")
+			}
+		}
+	}
 	if err := preflight(inv, plan); err != nil {
 		return err
 	}
@@ -806,27 +816,8 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 			return err
 		}
 	}
-	for i, p := range inv.Profiles {
-		owned, e := installstate.VerifyRuntime(inv, p)
-		if e != nil {
-			return e
-		}
-		inv.Profiles[i].RuntimeOwned = owned
-		configOwned, configErr := installstate.VerifyConfig(inv, p)
-		if configErr != nil {
-			return configErr
-		}
-		inv.Profiles[i].ConfigOwned = configOwned
-		legacyOwned, legacyErr := installstate.VerifyConfigDirectory(inv, p, p.LegacyConfigDir)
-		if legacyErr != nil {
-			return legacyErr
-		}
-		inv.Profiles[i].LegacyConfigOwned = legacyOwned
-		pendingOwned, pendingErr := installstate.VerifyConfigDirectory(inv, p, p.PendingConfigDir)
-		if pendingErr != nil {
-			return pendingErr
-		}
-		inv.Profiles[i].PendingConfigOwned = pendingOwned
+	if err := verifyProfileOwnership(&inv); err != nil {
+		return err
 	}
 	plan = makePlan(inv, opts.Purge)
 	if runtime.GOOS != "windows" {
@@ -891,7 +882,7 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	}
 	if opts.Purge {
 		for _, dir := range plan.PurgeDirs {
-			purged, err := removeDirectoryContents(dir, plannedMarkersForRoot(dir, plan.Files))
+			purged, err := removeDirectoryContents(dir, plannedMarkersForRoot(dir, plan.Files), confirmedPlanPurgeContents[dir])
 			if err != nil {
 				return fmt.Errorf("partial uninstall; cannot purge %s: %w", dir, err)
 			}
@@ -900,6 +891,9 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	}
 	for _, f := range plan.Files {
 		if !f.Marker {
+			continue
+		}
+		if isInstallationReference(f.Path, inv.InstallDir) {
 			continue
 		}
 		removed, err := removeLeaf(f)
@@ -913,54 +907,15 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	if err := lock.Close(); err != nil {
 		return err
 	}
-	if removed, err := removeTracked(plan.Lock); err != nil {
-		return err
-	} else if removed {
-		removedFiles = append(removedFiles, plan.Lock)
-	}
-	if removed, err := removeTracked(plan.LegacyLock); err != nil {
-		return err
-	} else if removed {
-		removedFiles = append(removedFiles, plan.LegacyLock)
-	}
-	if plan.DataLock != "" {
-		if removed, err := removeTracked(plan.DataLock); err != nil {
-			return err
-		} else if removed {
-			removedFiles = append(removedFiles, plan.DataLock)
-		}
-		if removed, err := removeTracked(plan.LegacyDataLock); err != nil {
-			return err
-		} else if removed {
-			removedFiles = append(removedFiles, plan.LegacyDataLock)
-		}
-	}
-	if removed, err := removeTracked(plan.Inventory); err != nil {
-		return err
-	} else if removed {
-		removedFiles = append(removedFiles, plan.Inventory)
-	}
-	for _, inventory := range plan.LegacyInventories {
-		if removed, err := removeTracked(inventory); err != nil {
-			return err
-		} else if removed {
-			removedFiles = append(removedFiles, inventory)
-		}
-	}
 	if err := updateLock.Close(); err != nil {
 		return err
 	}
 	updateLockHeld = false
-	if removed, err := removeTracked(plan.UpdateLock); err != nil {
+	finalizedFiles, err := removeFinalizationResources(plan, inv.InstallDir, removeTracked)
+	if err != nil {
 		return err
-	} else if removed {
-		removedFiles = append(removedFiles, plan.UpdateLock)
 	}
-	if removed, err := removeTracked(plan.LegacyUpdateLock); err != nil {
-		return err
-	} else if removed {
-		removedFiles = append(removedFiles, plan.LegacyUpdateLock)
-	}
+	removedFiles = append(removedFiles, finalizedFiles...)
 	for _, d := range plan.Directories {
 		if err := removeEmptyDirectory(d); err != nil {
 			return err
@@ -969,6 +924,33 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	sort.Strings(removedFiles)
 	return json.NewEncoder(out).Encode(report{State: "removed", Paths: removedFiles})
 }
+
+func isInstallationReference(path, installDir string) bool {
+	return path == filepath.Join(installDir, installstate.ReferenceFilename) || path == filepath.Join(installDir, installstate.LegacyReferenceFilename)
+}
+
+type trackedFileRemover func(string) (bool, error)
+
+func removeFinalizationResources(plan removalPlan, installDir string, remove trackedFileRemover) ([]string, error) {
+	paths := []string{plan.Lock, plan.LegacyLock, plan.DataLock, plan.LegacyDataLock, plan.UpdateLock, plan.LegacyUpdateLock, plan.Inventory}
+	paths = append(paths, plan.LegacyInventories...)
+	paths = append(paths, filepath.Join(installDir, installstate.ReferenceFilename), filepath.Join(installDir, installstate.LegacyReferenceFilename))
+	var removed []string
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		wasRemoved, err := remove(path)
+		if err != nil {
+			return removed, fmt.Errorf("remove uninstall metadata %s: %w", path, err)
+		}
+		if wasRemoved {
+			removed = append(removed, path)
+		}
+	}
+	return removed, nil
+}
+
 func removeTracked(path string) (bool, error) {
 	err := os.Remove(path)
 	if os.IsNotExist(err) {
