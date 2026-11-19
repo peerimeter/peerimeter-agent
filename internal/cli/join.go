@@ -40,11 +40,11 @@ type peerEntry struct {
 }
 
 type managedNetworkMetadata struct {
-	Version           int    `json:"version"`
-	APIURL            string `json:"api_url"`
-	NetworkID         string `json:"network_id"`
-	NodeID            string `json:"node_id"`
-	AllowInsecureHTTP bool   `json:"allow_insecure_http,omitempty"`
+	Version           int    `json:"version" yaml:"version"`
+	APIURL            string `json:"api_url" yaml:"api_url"`
+	NetworkID         string `json:"network_id" yaml:"network_id"`
+	NodeID            string `json:"node_id" yaml:"node_id"`
+	AllowInsecureHTTP bool   `json:"allow_insecure_http,omitempty" yaml:"allow_insecure_http,omitempty"`
 }
 
 func defaultNodeID(hostname string) (string, error) {
