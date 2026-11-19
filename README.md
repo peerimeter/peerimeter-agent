@@ -145,8 +145,10 @@ permission checks are disabled; symbolic links and reparse points remain
 rejected. Key files and managed inventory files retain their private-file checks.
 `peerimeter-agent self-update` explicitly updates a registered installation to
 the latest stable release. It displays the current and latest versions, then
-asks for confirmation before upgrading. Pass `--yes` to skip the prompt. If no
-new version is available, it reports that without prompting. The command selects
+asks for confirmation before upgrading. In a terminal, a Yes/No selector is
+shown with Yes selected by default; use `y`/`n`, arrows, or Enter. Non-terminal
+input accepts `y` or `yes`. Pass `--yes` to skip the prompt. If no new version
+is available, it reports that without prompting. The command selects
 the package for the current OS and CPU, then checks it against the release
 `SHA256SUMS` file downloaded over HTTPS. This is an integrity check using the
 GitHub release trust channel; it does not claim a detached release signature.
@@ -459,8 +461,9 @@ tracker](https://github.com/peerimeter/.github/blob/main/docs/planning/progress.
 for exact tested commits and remaining limits.
 
 Without `--yes`, uninstall lists the files and directories to be removed and
-asks for confirmation. `--yes` skips the prompt for scripted use. Original
-source config files outside the recorded directories remain untouched.
+asks for confirmation with the same terminal selector; non-terminal input
+accepts `y` or `yes`. `--yes` skips the prompt for scripted use. Original source
+config files outside the recorded directories remain untouched.
 
 ## CLI output
 

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -14,7 +13,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/peerimeter/peerimeter-agent/internal/diagnostic"
@@ -126,7 +124,7 @@ func selfUpdate(ctx context.Context, out, promptOut io.Writer, in io.Reader, jso
 		fetch:  selfupdate.Fetch, verify: verifyUpdatedBinary, manage: service.Manage, wait: waitForService,
 		yes: yes, progress: newSelfUpdateProgress(promptOut, colorMode),
 		confirm: func(current, latest string) (bool, error) {
-			return confirmSelfUpdate(in, promptOut, current, latest)
+			return confirmSelfUpdate(in, promptOut, current, latest, colorMode)
 		},
 	})
 }
@@ -139,16 +137,8 @@ func latestStableReleaseTag(ctx context.Context) (string, error) {
 	return release.TagName, nil
 }
 
-func confirmSelfUpdate(in io.Reader, promptOut io.Writer, current, latest string) (bool, error) {
-	if _, err := fmt.Fprintf(promptOut, "Update Peerimeter Agent from %s to %s? [y/N]: ", current, latest); err != nil {
-		return false, err
-	}
-	answer, err := bufio.NewReader(in).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return false, fmt.Errorf("read update confirmation: %w", err)
-	}
-	answer = strings.TrimSpace(answer)
-	return strings.EqualFold(answer, "y") || strings.EqualFold(answer, "yes"), nil
+func confirmSelfUpdate(in io.Reader, promptOut io.Writer, current, latest string, colorMode ...string) (bool, error) {
+	return confirmInteractive(in, promptOut, fmt.Sprintf("Update Peerimeter Agent from %s to %s?", current, latest), colorMode...)
 }
 
 type updateFetcher func(context.Context, *http.Client, string, string) (string, map[string][]byte, error)

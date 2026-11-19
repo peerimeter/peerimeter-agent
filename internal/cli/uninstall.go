@@ -10,6 +10,9 @@ func newUninstallCommand(app *application) *cobra.Command {
 	cmd := &cobra.Command{Use: "uninstall", Short: "Remove this tracked agent installation and its managed data", Long: "Remove the selected installation and its tracked managed data. The files to be removed are listed and confirmation is required unless --yes is supplied. Operator-supplied original config files are preserved. --purge also removes every file and nested directory inside tracked state, config and runtime directories.", Args: noArguments, RunE: app.handleResponse(func(cmd *cobra.Command) error {
 		options.ConfirmIn = app.in
 		options.ConfirmOut = app.promptOut
+		options.Confirm = func(prompt string) (bool, error) {
+			return confirmInteractive(app.in, app.promptOut, prompt, app.color)
+		}
 		return uninstall.Execute(cmd.Context(), options, app.out)
 	})}
 	cmd.Flags().BoolVar(&options.Yes, "yes", false, "Confirm removal without prompting")

@@ -29,6 +29,7 @@ type Options struct {
 	DryRun, Purge, Yes                          bool
 	ConfirmIn                                   io.Reader
 	ConfirmOut                                  io.Writer
+	Confirm                                     func(string) (bool, error)
 }
 type removalFile struct {
 	Path   string `json:"path"`
@@ -708,12 +709,22 @@ func executeWithRegistrationProbeAndFinalizer(ctx context.Context, opts Options,
 				return fmt.Errorf("cannot display uninstall preview: %w", err)
 			}
 		}
-		if _, err := fmt.Fprint(opts.ConfirmOut, "Continue? [y/N] "); err != nil {
-			return fmt.Errorf("cannot display uninstall confirmation prompt: %w", err)
+		confirmed := false
+		if opts.Confirm != nil {
+			var err error
+			confirmed, err = opts.Confirm("Continue with uninstall?")
+			if err != nil {
+				return fmt.Errorf("cannot confirm uninstall: %w", err)
+			}
+		} else {
+			if _, err := fmt.Fprint(opts.ConfirmOut, "Continue? [y/N] "); err != nil {
+				return fmt.Errorf("cannot display uninstall confirmation prompt: %w", err)
+			}
+			answer, readErr := bufio.NewReader(opts.ConfirmIn).ReadString('\n')
+			answer = strings.TrimSpace(answer)
+			confirmed = (readErr == nil || errors.Is(readErr, io.EOF)) && (answer == "y" || answer == "Y" || answer == "yes" || answer == "YES")
 		}
-		answer, readErr := bufio.NewReader(opts.ConfirmIn).ReadString('\n')
-		answer = strings.TrimSpace(answer)
-		if (readErr != nil && !errors.Is(readErr, io.EOF)) || (answer != "y" && answer != "Y" && answer != "yes" && answer != "YES") {
+		if !confirmed {
 			return errors.New("uninstall cancelled")
 		}
 	}
