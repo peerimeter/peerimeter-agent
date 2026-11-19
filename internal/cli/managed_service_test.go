@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/peerimeter/peerimeter-agent/internal/paths"
@@ -22,7 +23,7 @@ func TestManagedServiceMigrationIsSavedOnlyWhenRequested(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	metadataPath := filepath.Join(managedDir, "mesh.json")
+	metadataPath := filepath.Join(managedDir, "mesh.yaml")
 	_, saveMigration, err := managedServiceClient(serviceConfigOptions{
 		networkID: "mesh", nodeID: "node-1", apiURL: "http://localhost:8080",
 	}, paths.Layout{StateDir: stateDir})
@@ -41,6 +42,37 @@ func TestManagedServiceMigrationIsSavedOnlyWhenRequested(t *testing.T) {
 	}
 	if metadata.APIURL != "http://localhost:8080" || metadata.NodeID != "node-1" {
 		t.Fatalf("saved migration metadata = %+v", metadata)
+	}
+}
+
+func TestManagedNetworkMetadataMigratesLegacyJSONToYAML(t *testing.T) {
+	stateDir := t.TempDir()
+	managedDir := filepath.Join(stateDir, "managed")
+	if err := os.MkdirAll(managedDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := filepath.Join(managedDir, "home-test.json")
+	legacy := `{"version":1,"api_url":"https://api.example","network_id":"home-test","node_id":"node-1"}` + "\n"
+	if err := writeConfigFile(legacyPath, []byte(legacy)); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := readManagedNetworkMetadata(stateDir, "home-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.NetworkID != "home-test" || metadata.NodeID != "node-1" {
+		t.Fatalf("migrated metadata = %+v", metadata)
+	}
+	if _, err := os.Stat(legacyPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy JSON metadata remains: %v", err)
+	}
+	yamlPath := filepath.Join(managedDir, "home-test.yaml")
+	data, err := os.ReadFile(yamlPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(data), "version: 1\n") || strings.Contains(string(data), "{") {
+		t.Fatalf("metadata was not saved as YAML: %s", data)
 	}
 }
 

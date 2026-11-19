@@ -14,6 +14,7 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/paths"
 	"github.com/peerimeter/peerimeter-agent/internal/secret"
 	"github.com/peerimeter/peerimeter-agent/internal/serviceapi"
+	"gopkg.in/yaml.v3"
 )
 
 type serviceConfigOptions struct {
@@ -57,12 +58,30 @@ func validManagedNetworkID(value string) bool {
 
 func readManagedNetworkMetadata(stateDir, networkID string) (managedNetworkMetadata, error) {
 	var metadata managedNetworkMetadata
-	data, err := secret.ReadProtectedText(filepath.Join(stateDir, "managed", networkID+".json"), 16<<10)
+	metadataPath := filepath.Join(stateDir, "managed", networkID+".yaml")
+	legacyPath := filepath.Join(stateDir, "managed", networkID+".json")
+	legacyFormat := false
+	if _, err := os.Lstat(metadataPath); errors.Is(err, os.ErrNotExist) {
+		metadataPath = legacyPath
+		legacyFormat = true
+	}
+	data, err := secret.ReadProtectedText(metadataPath, 16<<10)
 	if err != nil {
 		return metadata, errors.New("managed service metadata is unavailable; rejoin this network or supply --api-url")
 	}
-	if err := json.Unmarshal([]byte(data), &metadata); err != nil || metadata.Version != 1 || metadata.NetworkID != networkID {
+	var decodeErr error
+	if legacyFormat {
+		decodeErr = json.Unmarshal([]byte(data), &metadata)
+	} else {
+		decodeErr = yaml.Unmarshal([]byte(data), &metadata)
+	}
+	if decodeErr != nil || metadata.Version != 1 || metadata.NetworkID != networkID {
 		return managedNetworkMetadata{}, errors.New("managed service metadata is invalid; rejoin this network")
+	}
+	if legacyFormat {
+		if err := saveManagedNetworkMetadata(stateDir, metadata); err != nil {
+			return managedNetworkMetadata{}, err
+		}
 	}
 	return metadata, nil
 }
@@ -112,13 +131,28 @@ func saveManagedNetworkMetadata(stateDir string, metadata managedNetworkMetadata
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return errors.New("cannot create protected managed state directory")
 	}
-	data, err := json.Marshal(metadata)
-	if err != nil {
-		return errors.New("cannot encode managed network metadata")
+	legacyPath := filepath.Join(dir, metadata.NetworkID+".json")
+	legacyExists := false
+	if _, err := os.Lstat(legacyPath); err == nil {
+		if _, err := secret.ReadProtectedText(legacyPath, 16<<10); err != nil {
+			return errors.New("legacy managed service metadata has unsafe permissions")
+		}
+		legacyExists = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return errors.New("cannot inspect legacy managed service metadata")
 	}
-	path := filepath.Join(dir, metadata.NetworkID+".json")
-	if err := writeConfigFile(path, append(data, '\n')); err != nil {
+	data, err := yaml.Marshal(metadata)
+	if err != nil {
+		return errors.New("cannot encode managed service metadata")
+	}
+	path := filepath.Join(dir, metadata.NetworkID+".yaml")
+	if err := writeConfigFile(path, data); err != nil {
 		return errors.New("cannot securely save managed network metadata")
+	}
+	if legacyExists {
+		if err := os.Remove(legacyPath); err != nil {
+			return errors.New("cannot remove migrated managed service metadata")
+		}
 	}
 	return nil
 }
