@@ -490,7 +490,7 @@ func loadAtDataDir(dir, requestedDataDir string, allowInsecureOverride bool) (In
 		names[n] = true
 	}
 	if runtime.GOOS == "windows" {
-		// Accept the previous copy-based alias during upgrade registration.
+		// TODO(next major): remove pma.exe inventory compatibility after migration.
 		names["pma.exe"] = true
 	}
 	seen := map[string]bool{}

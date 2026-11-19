@@ -270,6 +270,7 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	aliasOwned := false
 	legacyAliasName := ""
 	if goos == "windows" {
+		// TODO(next major): remove pma.exe release compatibility with inventory support.
 		legacyAliasName = "pma.exe"
 	}
 	for _, owned := range inv.Files {
