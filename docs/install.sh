@@ -62,10 +62,12 @@ progress "Preparing installation for $os/$arch."
 work=$(mktemp -d)
 staged=
 staged_notice=
+staged_alias=
 changed=0
 completed=0
 old_binary=0
 old_notice=0
+old_alias=0
 rollback_failed=0
 rollback_file() {
  target=$1
@@ -83,10 +85,13 @@ cleanup() {
  if [ "$changed" -eq 1 ] && [ "$completed" -eq 0 ]; then
   rollback_file "$install_dir/peerimeter-agent" "$work/original-agent" "$old_binary" || { echo 'Installer rollback could not restore the previous executable.' >&2; status=1; rollback_failed=1; }
   rollback_file "$doc_dir/peerimeter-agent.NOTICES.txt" "$work/original-notices" "$old_notice" || { echo 'Installer rollback could not restore the previous notice file.' >&2; status=1; rollback_failed=1; }
+  rm -f "$install_dir/pma"
+  if [ "$old_alias" -eq 1 ]; then ln -s peerimeter-agent "$install_dir/pma" || { echo 'Installer rollback could not restore the previous pma alias.' >&2; status=1; rollback_failed=1; }; fi
  fi
  if [ "$rollback_failed" -eq 0 ]; then rm -rf "$work"; else printf 'Previous package backups retained for recovery: %s\n' "$work" >&2; fi
  if [ -n "$staged" ]; then rm -f "$staged"; fi
  if [ -n "$staged_notice" ]; then rm -f "$staged_notice"; fi
+ if [ -n "$staged_alias" ]; then rm -f "$staged_alias"; fi
  trap - EXIT
  exit "$status"
 }
@@ -139,6 +144,14 @@ umask 022
 mkdir -p "$install_dir" "$doc_dir" "$data_dir" "$lock_dir" || { echo 'Cannot create destination; choose a writable directory or run with sudo.' >&2; exit 1; }
 [ ! -d "$install_dir/peerimeter-agent" ] || { echo 'Binary destination is a directory.' >&2; exit 1; }
 [ ! -d "$doc_dir/peerimeter-agent.NOTICES.txt" ] || { echo 'Notice destination is a directory.' >&2; exit 1; }
+[ ! -e "$install_dir/pma" ] && [ ! -L "$install_dir/pma" ] || {
+ if [ -L "$install_dir/pma" ]; then
+  [ "$(readlink "$install_dir/pma")" = peerimeter-agent ] || { echo 'pma destination already exists and is not the Peerimeter alias.' >&2; exit 1; }
+ else
+  [ -f "$install_dir/pma" ] && [ "$(sha256 "$install_dir/pma")" = "$(sha256 "$install_dir/peerimeter-agent")" ] || { echo 'pma destination already exists and is not the Peerimeter alias.' >&2; exit 1; }
+ fi
+ old_alias=1
+}
 # Preserve existing ordinary package members before any replacement. Never
 # dereference a pre-existing link into another application's files.
 for destination in "$install_dir/peerimeter-agent" "$doc_dir/peerimeter-agent.NOTICES.txt"; do
@@ -158,6 +171,11 @@ mv -f "$staged_notice" "$doc_dir/peerimeter-agent.NOTICES.txt"
 staged_notice=
 mv -f "$staged" "$install_dir/peerimeter-agent"
 staged=
+staged_alias=$(mktemp "$install_dir/.pma.XXXXXX")
+rm -f "$staged_alias"
+ln -s peerimeter-agent "$staged_alias"
+mv -f "$staged_alias" "$install_dir/pma"
+staged_alias=
 installed_version=$("$install_dir/peerimeter-agent" version --json | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
 [ -n "$installed_version" ] || { echo 'Cannot determine installed agent version.' >&2; exit 1; }
 progress 'Registering protected installation inventory.'

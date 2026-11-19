@@ -161,7 +161,7 @@ try {
     Set-InstallerACL $DocDir
     Set-InstallerACL $DataDir $true
     Set-InstallerACL $LockDir $true
-    $packageFiles = @(@{Name='peerimeter-agent.exe';Dir=$InstallDir},@{Name='wireguard.dll';Dir=$InstallDir},@{Name='peerimeter-agent.NOTICES.txt';Dir=$DocDir})
+    $packageFiles = @(@{Name='peerimeter-agent.exe';Dir=$InstallDir;Source='peerimeter-agent.exe'},@{Name='pma.exe';Dir=$InstallDir;Source='peerimeter-agent.exe'},@{Name='wireguard.dll';Dir=$InstallDir;Source='wireguard.dll'},@{Name='peerimeter-agent.NOTICES.txt';Dir=$DocDir;Source='peerimeter-agent.NOTICES.txt'})
     $moved = @(); $installed = @(); $staged = @()
     try {
         # Stage and protect the complete package before replacing any old file.
@@ -169,7 +169,7 @@ try {
         foreach ($member in $packageFiles) {
             $next = (Join-Path $member.Dir $member.Name) + '.new-' + [guid]::NewGuid()
             $staged += $next
-            Copy-Item -LiteralPath (Join-Path $unpacked $member.Name) -Destination $next
+            Copy-Item -LiteralPath (Join-Path $unpacked $member.Source) -Destination $next
             Set-InstallerACL $next
         }
         for ($i=0; $i -lt $packageFiles.Count; $i++) {

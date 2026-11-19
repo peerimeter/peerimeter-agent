@@ -117,9 +117,10 @@ func readCompatPrivate(dir, currentName, legacyName string) ([]byte, bool, error
 	return data, err == nil, err
 }
 func ProgramNames() []string {
-	names := []string{"peerimeter-agent", "peerimeter-agent.NOTICES.txt"}
+	names := []string{"peerimeter-agent", "pma", "peerimeter-agent.NOTICES.txt"}
 	if runtime.GOOS == "windows" {
 		names[0] += ".exe"
+		names[1] += ".exe"
 		names = append(names, "wireguard.dll")
 	}
 	return names
@@ -215,6 +216,12 @@ func CheckFile(path string) error {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 && runtime.GOOS != "windows" && filepath.Base(path) == "pma" {
+		target, err := os.Readlink(path)
+		if err == nil && target == "peerimeter-agent" {
+			return CheckFile(filepath.Join(filepath.Dir(path), target))
+		}
 	}
 	if !info.Mode().IsRegular() || isReparse(info) {
 		return errors.New("owned installation resource must be a regular file without links")

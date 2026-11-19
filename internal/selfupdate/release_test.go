@@ -39,7 +39,7 @@ func TestFetchVerifiesReleasePackageAndSeparateNotices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tag != "v1.2.3" || string(files["peerimeter-agent"]) != "binary" || string(files["peerimeter-agent.NOTICES.txt"]) != "notices" {
+	if tag != "v1.2.3" || string(files["peerimeter-agent"]) != "binary" || string(files["pma"]) != "binary" || string(files["peerimeter-agent.NOTICES.txt"]) != "notices" {
 		t.Fatalf("unexpected fetched package: %q %#v", tag, files)
 	}
 }

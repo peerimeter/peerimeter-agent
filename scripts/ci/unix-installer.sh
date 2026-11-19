@@ -36,8 +36,11 @@ cp "$destination/operator.config" "$work/original.config"
 cp "$destination/operator.key" "$work/original.key"
 sh "$installer" --binary "$work/peerimeter-agent" --sha256 "$hash" --notices "$work/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notices_hash" --install-dir "$destination" "${install_dirs[@]}"
 cmp "$work/peerimeter-agent" "$destination/peerimeter-agent"
+[[ -L "$destination/pma" && $(readlink "$destination/pma") == peerimeter-agent ]]
 cmp "$work/peerimeter-agent.NOTICES.txt" "$doc_destination/peerimeter-agent.NOTICES.txt"
 "$destination/peerimeter-agent" version --json >"$work/version.json"
+"$destination/pma" version --json >"$work/pma-version.json"
+cmp "$work/version.json" "$work/pma-version.json"
 python3 - "$work/version.json" "$native_os" <<'PYVERSION'
 import json,sys
 v=json.load(open(sys.argv[1]));assert v['os']==sys.argv[2] and v['go_version']=='go1.27.4'
@@ -83,11 +86,21 @@ expect_failure() {
   cmp "$work/original.agent" "$destination/peerimeter-agent"
   cmp "$work/original.notices" "$doc_destination/peerimeter-agent.NOTICES.txt"
   cmp "$work/original.inventory" "$data_destination/.install.yaml"
+  [[ -L "$destination/pma" && $(readlink "$destination/pma") == peerimeter-agent ]]
 }
 expect_failure 'Binary checksum verification failed' sh "$installer" --binary "$work/peerimeter-agent" --sha256 "$(printf '%064d' 0)" --notices "$work/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notices_hash" --install-dir "$destination" "${install_dirs[@]}"
 expect_failure 'SHA-256 digest' sh "$installer" --binary "$work/peerimeter-agent" --sha256 "$hash
 $hash" --notices "$work/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notices_hash" --install-dir "$destination" "${install_dirs[@]}"
 echo 'PASS: offline checksum verification, spaced destination and existing binary preservation'
+
+# Self-update replaces the inventoried symlink with the verified executable.
+# A later installer run must accept that equivalent alias and restore its symlink form.
+cp "$destination/peerimeter-agent" "$destination/pma"
+sh "$installer" --binary "$work/peerimeter-agent" --sha256 "$hash" --notices "$work/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notices_hash" --install-dir "$destination" "${install_dirs[@]}"
+[[ -L "$destination/pma" && $(readlink "$destination/pma") == peerimeter-agent ]]
+"$destination/pma" version --json >"$work/reinstalled-pma-version.json"
+cmp "$work/version.json" "$work/reinstalled-pma-version.json"
+echo 'PASS: pma executes and reinstall restores its Unix symlink after an update-shaped replacement'
 
 # Existing destination links are rejected before package members are replaced.
 printf 'outside installer test directory\n' >"$work/victim"
@@ -195,7 +208,7 @@ python3 - "$work/removal.json" <<'PY'
 import json,sys
 assert json.load(open(sys.argv[1]))['state']=='removed'
 PY
-for member in peerimeter-agent .install.ref; do test ! -e "$destination/$member"; done
+for member in peerimeter-agent pma .install.ref; do [[ ! -e "$destination/$member" && ! -L "$destination/$member" ]]; done
 for path in "$doc_destination/peerimeter-agent.NOTICES.txt" "$data_destination/.install.yaml" "$lock_destination/.install.lock"; do test ! -e "$path"; done
 cmp "$work/original.config" "$destination/operator.config"
 cmp "$work/original.key" "$destination/operator.key"

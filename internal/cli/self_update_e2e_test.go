@@ -146,6 +146,11 @@ func TestSelfUpdateBinaryEndToEnd(t *testing.T) {
 				waitForWindowsUpdateCleanup(t, ctx, install.lockDir)
 			}
 			waitForE2EVersion(t, ctx, filepath.Join(install.installDir, executableName()), caPath, test.wantVersion)
+			aliasName := "pma"
+			if runtime.GOOS == "windows" {
+				aliasName += ".exe"
+			}
+			waitForE2EVersion(t, ctx, filepath.Join(install.installDir, aliasName), caPath, test.wantVersion)
 			if !test.corrupt {
 				for path, want := range map[string]string{
 					filepath.Join(install.configDir, "service.key"): "profile key must remain",
@@ -181,6 +186,7 @@ func TestSelfUpdateBinaryEndToEnd(t *testing.T) {
 			}
 			if _, _, _, err := selfupdate.Apply(inv, map[string][]byte{
 				"peerimeter-agent.exe":         newBytes,
+				"pma.exe":                      newBytes,
 				"peerimeter-agent.NOTICES.txt": notices,
 				"wireguard.dll":                releaseFiles["wireguard.dll"],
 			}); err != nil {
@@ -300,9 +306,14 @@ func prepareE2EInstallation(t *testing.T, oldBinary string, notices []byte, rele
 		t.Fatal(err)
 	}
 	if runtime.GOOS == "windows" {
+		if err := os.WriteFile(filepath.Join(install.installDir, "pma.exe"), program, 0700); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(filepath.Join(install.installDir, "wireguard.dll"), release["wireguard.dll"], 0600); err != nil {
 			t.Fatal(err)
 		}
+	} else if err := os.Symlink("peerimeter-agent", filepath.Join(install.installDir, "pma")); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(install.configDir, "service.key"), []byte("profile key must remain"), 0600); err != nil {
 		t.Fatal(err)
