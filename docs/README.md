@@ -124,6 +124,7 @@ sh docs/install.sh --version latest --install-dir "$HOME/.local/bin" --doc-dir "
 # Run from an elevated PowerShell terminal.
 # Download and run the hosted installer.
 Invoke-WebRequest -Uri https://agent.peerimeter.app/install.ps1 -OutFile install.ps1
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\install.ps1
 
 # From a repository checkout only:
@@ -132,6 +133,10 @@ Invoke-WebRequest -Uri https://agent.peerimeter.app/install.ps1 -OutFile install
 .\docs\install.ps1 -Version latest -InstallDir 'D:\Tools\Peerimeter Agent'
 .\docs\install.ps1 -DocDir 'D:\Peerimeter\Docs' -DataDir 'D:\Peerimeter\State' -LockDir 'D:\Peerimeter\Locks'
 ```
+
+The process-scoped execution policy applies only to this PowerShell session.
+Organization Group Policy may still block scripts; follow your organization's
+policy in that case.
 
 The installer adds the installation directory to the machine PATH. Open a new
 PowerShell window to run `peerimeter-agent` by name. Full uninstall removes
