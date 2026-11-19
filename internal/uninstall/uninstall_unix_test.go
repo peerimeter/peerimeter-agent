@@ -249,6 +249,35 @@ func TestPurgeRejectsContentsAddedAfterConfirmation(t *testing.T) {
 	}
 }
 
+func TestPurgeDoesNotRecursivelyDeleteUnapprovedChild(t *testing.T) {
+	rootPath := t.TempDir()
+	purgeDir := filepath.Join(rootPath, "cache")
+	if err := os.Mkdir(purgeDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	approvedFile := filepath.Join(purgeDir, "approved.txt")
+	unapprovedFile := filepath.Join(purgeDir, "appeared-later.txt")
+	for _, path := range []string{approvedFile, unapprovedFile} {
+		if err := os.WriteFile(path, []byte("fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	removed := []string{}
+	approved := map[string]bool{purgeDir: true, approvedFile: true}
+	err = removeApprovedTree(root, "cache", rootPath, approved, true, &removed)
+	if err == nil || !strings.Contains(err.Error(), "purge contents changed after confirmation") {
+		t.Fatalf("purge accepted an unapproved child: %v", err)
+	}
+	if _, err := os.Stat(unapprovedFile); err != nil {
+		t.Fatalf("unapproved child was removed: %v", err)
+	}
+}
+
 func TestFinalizationFailureKeepsReferenceForRetry(t *testing.T) {
 	root := t.TempDir()
 	installDir := filepath.Join(root, "install")
@@ -289,6 +318,44 @@ func TestFinalizationFailureKeepsReferenceForRetry(t *testing.T) {
 	}
 	if _, err := os.Lstat(reference); !os.IsNotExist(err) {
 		t.Fatalf("retry retained reference: %v", err)
+	}
+}
+
+func TestReferenceRemovalFailureRestoresInventoryForUninstallRetry(t *testing.T) {
+	dir, _ := prepareUninstall(t)
+	base := filepath.Dir(dir)
+	dataDir := filepath.Join(base, "external-data")
+	lockDir := filepath.Join(base, "external-locks")
+	for _, path := range []string{dataDir, lockDir} {
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := installstate.RegisterWithDirectories(dir, dir, dataDir, lockDir, false); err != nil {
+		t.Fatal(err)
+	}
+	reference := filepath.Join(dir, installstate.ReferenceFilename)
+	failure := errors.New("simulated reference removal failure")
+	removeReferenceFailure := func(path string) (bool, error) {
+		if path == reference {
+			return false, failure
+		}
+		return removeTracked(path)
+	}
+	opts := Options{InstallDir: dir, Yes: true}
+	probe := func(context.Context, string) (bool, error) { return false, nil }
+	err := executeWithRegistrationProbeAndFinalizer(context.Background(), opts, &bytes.Buffer{}, probe, removeReferenceFailure)
+	if !errors.Is(err, failure) {
+		t.Fatalf("first uninstall error = %v, want injected reference removal failure", err)
+	}
+	if _, err := installstate.Load(dir); err != nil {
+		t.Fatalf("restored inventory is not discoverable for retry: %v", err)
+	}
+	if err := executeWithRegistrationProbe(context.Background(), opts, &bytes.Buffer{}, probe); err != nil {
+		t.Fatalf("retry uninstall: %v", err)
+	}
+	if _, err := os.Lstat(reference); !os.IsNotExist(err) {
+		t.Fatalf("retry retained installation reference: %v", err)
 	}
 }
 

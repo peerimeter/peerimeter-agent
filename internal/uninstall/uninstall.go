@@ -51,6 +51,7 @@ type removalPlan struct {
 	Files             []removalFile          `json:"files"`
 	Directories       []string               `json:"directories"`
 	PurgeDirs         []string               `json:"purge_directories,omitempty"`
+	PurgeContents     map[string][]string    `json:"purge_contents,omitempty"`
 	Profiles          []installstate.Profile `json:"profiles"`
 	ResultFile        string                 `json:"result_file"`
 }
@@ -59,6 +60,7 @@ type report struct {
 	Paths      []string `json:"paths,omitempty"`
 	Services   []string `json:"services,omitempty"`
 	Remaining  []string `json:"remaining,omitempty"`
+	Refused    []string `json:"refused,omitempty"`
 	ResultFile string   `json:"result_file,omitempty"`
 	Message    string   `json:"message,omitempty"`
 }
@@ -555,9 +557,12 @@ func acquireStopped(ctx context.Context, inv installstate.Inventory, p installst
 type registrationProbe func(context.Context, string) (bool, error)
 
 func Execute(ctx context.Context, opts Options, out io.Writer) error {
-	return executeWithRegistrationProbe(ctx, opts, out, service.HasOwnedRegistration)
+	return executeWithRegistrationProbeAndFinalizer(ctx, opts, out, service.HasOwnedRegistration, removeTracked)
 }
 func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writer, probe registrationProbe) error {
+	return executeWithRegistrationProbeAndFinalizer(ctx, opts, out, probe, removeTracked)
+}
+func executeWithRegistrationProbeAndFinalizer(ctx context.Context, opts Options, out io.Writer, probe registrationProbe, remove trackedFileRemover) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -859,6 +864,7 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 	}
 	plan = makePlan(inv, opts.Purge)
 	if runtime.GOOS == "windows" {
+		plan.PurgeContents = confirmedPlanPurgeContents
 		result, err := scheduleRemoval(plan)
 		if err != nil {
 			return err
@@ -911,7 +917,7 @@ func executeWithRegistrationProbe(ctx context.Context, opts Options, out io.Writ
 		return err
 	}
 	updateLockHeld = false
-	finalizedFiles, err := removeFinalizationResources(plan, inv.InstallDir, removeTracked)
+	finalizedFiles, err := removeFinalizationResources(plan, inv.InstallDir, remove)
 	if err != nil {
 		return err
 	}
@@ -932,20 +938,34 @@ func isInstallationReference(path, installDir string) bool {
 type trackedFileRemover func(string) (bool, error)
 
 func removeFinalizationResources(plan removalPlan, installDir string, remove trackedFileRemover) ([]string, error) {
+	inventoryData, err := os.ReadFile(plan.Inventory)
+	if err != nil {
+		return nil, fmt.Errorf("read uninstall inventory before finalization: %w", err)
+	}
 	paths := []string{plan.Lock, plan.LegacyLock, plan.DataLock, plan.LegacyDataLock, plan.UpdateLock, plan.LegacyUpdateLock, plan.Inventory}
 	paths = append(paths, plan.LegacyInventories...)
 	paths = append(paths, filepath.Join(installDir, installstate.ReferenceFilename), filepath.Join(installDir, installstate.LegacyReferenceFilename))
 	var removed []string
+	inventoryRemoved := false
 	for _, path := range paths {
 		if path == "" {
 			continue
 		}
 		wasRemoved, err := remove(path)
 		if err != nil {
+			if inventoryRemoved && isInstallationReference(path, installDir) {
+				restoreErr := installstate.WritePrivate(plan.Inventory, inventoryData)
+				if restoreErr != nil {
+					return removed, errors.Join(fmt.Errorf("remove uninstall metadata %s: %w", path, err), fmt.Errorf("restore inventory for uninstall retry: %w", restoreErr))
+				}
+			}
 			return removed, fmt.Errorf("remove uninstall metadata %s: %w", path, err)
 		}
 		if wasRemoved {
 			removed = append(removed, path)
+			if path == plan.Inventory {
+				inventoryRemoved = true
+			}
 		}
 	}
 	return removed, nil
