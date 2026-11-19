@@ -885,7 +885,11 @@ func executeWithRegistrationProbeAndFinalizer(ctx context.Context, opts Options,
 	removedFiles := make([]string, 0, len(plan.Files)+3)
 	// Retain profile markers and inventory until all other removals succeed, so
 	// partial failure remains verifiable and a later invocation can safely retry.
-	for _, f := range plan.Files {
+	programFiles := append([]removalFile(nil), plan.Files...)
+	sort.SliceStable(programFiles, func(i, j int) bool {
+		return isCommandAlias(programFiles[i].Path) && !isCommandAlias(programFiles[j].Path)
+	})
+	for _, f := range programFiles {
 		if f.Marker {
 			continue
 		}
@@ -940,6 +944,11 @@ func executeWithRegistrationProbeAndFinalizer(ctx context.Context, opts Options,
 	}
 	sort.Strings(removedFiles)
 	return json.NewEncoder(out).Encode(report{State: "removed", Paths: removedFiles})
+}
+
+func isCommandAlias(path string) bool {
+	name := filepath.Base(path)
+	return name == "pma" || name == "pma.exe"
 }
 
 func isInstallationReference(path, installDir string) bool {
