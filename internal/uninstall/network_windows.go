@@ -161,9 +161,11 @@ $p = Get-Content -LiteralPath $Plan -Raw | ConvertFrom-Json
 $work = Split-Path -Parent $Plan
 $handles = [Collections.Generic.List[IO.FileStream]]::new()
 $removed = [Collections.Generic.List[string]]::new()
+$refused = [Collections.Generic.List[string]]::new()
 $state = 'failed'; $message = ''; $remaining = @()
 $watch = [Diagnostics.Stopwatch]::StartNew()
 function Exists([string]$Path) { return [IO.File]::Exists($Path) -or [IO.Directory]::Exists($Path) }
+function Add-RefusedPath([string]$Path) { if (-not $refused.Contains($Path)) { $refused.Add($Path) } }
 function No-Reparse([string]$Path) {
     $item = Get-Item -LiteralPath $Path -Force
     if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'An owned resource became a reparse point' }
@@ -178,20 +180,39 @@ function Remove-Leaf([string]$Path) {
         }
     }
 }
-function Purge-Directory([string]$Path,[bool]$Top) {
+function Is-ApprovedPurgePath([string]$Root,[string]$Candidate) {
+    $property = @($p.purge_contents.PSObject.Properties | Where-Object { [String]::Equals($_.Name,$Root,[StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1)
+    if ($property.Count -eq 0) { return $false }
+    foreach ($approved in @($property[0].Value)) {
+        if ([String]::Equals([string]$approved,$Candidate,[StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+function Purge-Directory([string]$Path,[bool]$Top,[string]$Root) {
     if (-not (Exists $Path)) { return }
     No-Reparse $Path
     foreach ($item in Get-ChildItem -LiteralPath $Path -Force) {
         $scheduledMarker = @($p.files | Where-Object { $_.marker -and $_.path -ieq $item.FullName }).Count -gt 0
         if ($Top -and $scheduledMarker) { continue }
+        if (-not (Is-ApprovedPurgePath $Root $item.FullName)) { Add-RefusedPath $item.FullName; continue }
         No-Reparse $item.FullName
         if ($item.PSIsContainer) {
-            Purge-Directory $item.FullName $false
-            Remove-Item -LiteralPath $item.FullName -Force
+            Purge-Directory $item.FullName $false $Root
+            if (@(Get-ChildItem -LiteralPath $item.FullName -Force).Count -eq 0) {
+                Remove-Item -LiteralPath $item.FullName -Force
+                $removed.Add($item.FullName)
+            }
         } else {
             Remove-Item -LiteralPath $item.FullName -Force
+            $removed.Add($item.FullName)
         }
-        $removed.Add($item.FullName)
+    }
+}
+function Find-UnapprovedPurgePaths([string]$Path,[string]$Root) {
+    if (-not (Exists $Path)) { return }
+    foreach ($item in Get-ChildItem -LiteralPath $Path -Force) {
+        if (-not (Is-ApprovedPurgePath $Root $item.FullName)) { Add-RefusedPath $item.FullName; continue }
+        if ($item.PSIsContainer) { Find-UnapprovedPurgePaths $item.FullName $Root }
     }
 }
 function File-SHA256([string]$Path) {
@@ -271,7 +292,11 @@ try {
     # FILE_SHARE_DELETE makes deletion pending, so new openers cannot replace a
     # live manager's lock between guard release and unlink.
     foreach ($f in $p.files) { if ([IO.Path]::GetFileName($f.path) -eq 'agent.lock') { Remove-Leaf $f.path } }
-    foreach ($dir in $p.purge_directories) { Purge-Directory $dir $true }
+    foreach ($dir in $p.purge_directories) {
+        Purge-Directory $dir $true $dir
+        Find-UnapprovedPurgePaths $dir $dir
+    }
+    if ($refused.Count -ne 0) { throw 'Purge contents changed after confirmation; refused paths remain.' }
     foreach ($f in $p.files) { if ($f.marker) { Remove-Leaf $f.path } }
     Remove-Leaf $p.lock
     Remove-Leaf $p.legacy_lock
@@ -299,7 +324,7 @@ finally {
     }
     if ($remaining.Count -ne 0) { $state = 'failed' }
     $removed.Sort()
-    $result = @{state=$state;paths=@($removed.ToArray());remaining=@($remaining);message=$message} | ConvertTo-Json -Depth 6
+    $result = @{state=$state;paths=@($removed.ToArray());remaining=@($remaining);refused=@($refused.ToArray());message=$message} | ConvertTo-Json -Depth 6
     [IO.File]::WriteAllText($p.result_file,$result,[Text.UTF8Encoding]::new($false))
 }
 `

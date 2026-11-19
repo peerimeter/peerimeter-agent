@@ -22,7 +22,7 @@ import (
 )
 
 const updateManifestName = ".update.json"
-const updateResultName = "update-result.json"
+const updateResultSuffix = ".result.json"
 
 type windowsUpdateResult struct {
 	State          string `json:"state"`
@@ -69,7 +69,7 @@ func scheduleWindowsUpdate(inv installstate.Inventory, files map[string][]byte, 
 		cleanup()
 		return restartServiceAfterFailure(profile, err)
 	}
-	resultPath := filepath.Join(dir, updateResultName)
+	resultPath := dir + updateResultSuffix
 	pending, _ := json.Marshal(windowsUpdateResult{State: "pending"})
 	if err := installstate.WritePrivate(resultPath, append(pending, '\n')); err != nil {
 		cleanup()
@@ -288,7 +288,7 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) (resultErr error
 	if err != nil {
 		return err
 	}
-	resultPath := filepath.Join(transactionDir, updateResultName)
+	resultPath := transactionDir + updateResultSuffix
 	updatedVersion := ""
 	defer func() {
 		state := "updated"
