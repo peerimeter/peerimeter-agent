@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
 )
@@ -96,10 +95,6 @@ func Apply(inv installstate.Inventory, packageFiles map[string][]byte) (map[stri
 			return nil, nil, nil, fmt.Errorf("release package contains unowned file %q", name)
 		}
 	}
-	ownedFiles := append([]installstate.File(nil), inv.Files...)
-	sort.SliceStable(ownedFiles, func(i, j int) bool {
-		return isCommandAlias(ownedFiles[i].Name) && !isCommandAlias(ownedFiles[j].Name)
-	})
 	journalPath := filepath.Join(inv.LockDir, JournalFilename)
 	for _, name := range []string{JournalFilename, LegacyJournalFilename} {
 		if _, err := os.Lstat(filepath.Join(inv.LockDir, name)); err == nil {
@@ -116,7 +111,7 @@ func Apply(inv installstate.Inventory, packageFiles map[string][]byte) (map[stri
 			_ = os.Remove(f.Backup)
 		}
 	}
-	for _, owned := range ownedFiles {
+	for _, owned := range inv.Files {
 		path := installstate.ResourcePath(inv, owned)
 		if err := installstate.CheckDirectory(filepath.Dir(path)); err != nil {
 			cleanupStages()
@@ -180,16 +175,9 @@ func Apply(inv installstate.Inventory, packageFiles map[string][]byte) (map[stri
 			cleanupStages()
 			return nil, nil, nil, err
 		}
-		backup, err := os.CreateTemp(filepath.Dir(path), ".peerimeter-update-backup-*")
+		backupPath, err := createBackup(path, info, oldHash)
 		if err != nil {
 			os.Remove(stagePath)
-			cleanupStages()
-			return nil, nil, nil, err
-		}
-		backupPath := backup.Name()
-		if err := backup.Close(); err != nil {
-			os.Remove(stagePath)
-			os.Remove(backupPath)
 			cleanupStages()
 			return nil, nil, nil, err
 		}
@@ -209,7 +197,7 @@ func Apply(inv installstate.Inventory, packageFiles map[string][]byte) (map[stri
 		return recoverJournal(current, journalPath, &j)
 	}
 	for _, f := range j.Files {
-		if err := replaceFile(f.Stage, f.Path, f.Backup); err != nil {
+		if err := replaceFile(f.Stage, f.Path); err != nil {
 			return nil, nil, nil, errors.Join(fmt.Errorf("replace installed %s: %w", f.Name, err), rollback())
 		}
 	}
@@ -242,8 +230,52 @@ func Apply(inv installstate.Inventory, packageFiles map[string][]byte) (map[stri
 	return hashes, rollback, commit, nil
 }
 
-func isCommandAlias(name string) bool {
-	return name == "pma" || name == "pma.exe"
+func createBackup(path string, info os.FileInfo, expectedHash string) (string, error) {
+	backup, err := os.CreateTemp(filepath.Dir(path), ".peerimeter-update-backup-*")
+	if err != nil {
+		return "", err
+	}
+	backupPath := backup.Name()
+	fail := func(cause error) (string, error) {
+		_ = backup.Close()
+		_ = os.Remove(backupPath)
+		return "", cause
+	}
+	if err := backup.Chmod(info.Mode().Perm()); err != nil {
+		return fail(err)
+	}
+	if err := setFileOwner(backup, info); err != nil {
+		return fail(err)
+	}
+	source, err := os.Open(path)
+	if err != nil {
+		return fail(err)
+	}
+	_, copyErr := io.Copy(backup, source)
+	closeErr := source.Close()
+	if err := errors.Join(copyErr, closeErr); err != nil {
+		return fail(err)
+	}
+	if err := backup.Sync(); err != nil {
+		return fail(err)
+	}
+	if err := backup.Close(); err != nil {
+		_ = os.Remove(backupPath)
+		return "", err
+	}
+	if err := installstate.CheckFile(backupPath); err != nil {
+		_ = os.Remove(backupPath)
+		return "", err
+	}
+	digest, err := installstate.Hash(backupPath)
+	if err != nil || digest != expectedHash {
+		_ = os.Remove(backupPath)
+		if err != nil {
+			return "", err
+		}
+		return "", errors.New("installed program changed while preparing its update backup")
+	}
+	return backupPath, nil
 }
 
 // RecoverLocked completes cleanup after a committed update or restores the

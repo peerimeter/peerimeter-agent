@@ -17,6 +17,17 @@ if (-not $admin) { throw 'Run the Windows installer from an elevated administrat
 if ($InstallDir -notmatch '^[A-Za-z]:[\\/]') { throw 'InstallDir must be an absolute local drive path' }
 if ($InstallDir.Contains(';')) { throw 'InstallDir must not contain a semicolon' }
 $InstallDir = [IO.Path]::GetFullPath($InstallDir)
+$aliasPath = Join-Path $InstallDir 'pma.exe'
+$agentPath = Join-Path $InstallDir 'peerimeter-agent.exe'
+if (Test-Path -LiteralPath $aliasPath) {
+    $aliasItem = Get-Item -LiteralPath $aliasPath -Force
+    if ($aliasItem.PSIsContainer -or ($aliasItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Test-Path -LiteralPath $agentPath -PathType Leaf)) {
+        throw 'pma.exe destination already exists and is not a managed Peerimeter alias'
+    }
+    if ((Get-FileHash -LiteralPath $aliasPath -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $agentPath -Algorithm SHA256).Hash) {
+        throw 'pma.exe destination already exists and does not match the installed agent'
+    }
+}
 if ([string]::IsNullOrWhiteSpace($DocDir) -or [string]::IsNullOrWhiteSpace($DataDir) -or [string]::IsNullOrWhiteSpace($LockDir)) {
     $sha = [Security.Cryptography.SHA256]::Create()
     try { $installKey = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($InstallDir.ToLowerInvariant()))).Replace('-','').ToLowerInvariant() }
