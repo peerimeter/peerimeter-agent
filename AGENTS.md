@@ -12,6 +12,7 @@ This is the independent `peerimeter-agent` Go repository. The sibling `../.githu
 - `examples/`: static configuration examples; `docs/`: published installer site and install scripts.
 - `.github/workflows/`: native CI, integration, packaging, release, and connectivity availability checks; `scripts/ci/`: their supporting scripts.
 - `README.md`: operating instructions; `../.github/docs/planning/progress.md`: implementation evidence and limitations.
+- Keep the `README.md` CLI reference and command descriptions in sync with the visible Cobra commands. Whenever a CLI command, name, or user-facing behavior changes, update that reference and the detailed guide in `docs/README.md`.
 
 ## Development
 
