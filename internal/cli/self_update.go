@@ -701,8 +701,8 @@ func writeSelfUpdateResult(out io.Writer, jsonOutput bool, result selfUpdateResu
 		return json.NewEncoder(out).Encode(result)
 	}
 	if result.State == "up_to_date" {
-		message := fmt.Sprintf("✓ Peerimeter Agent is already up to date (%s).\n", result.PreviousVersion)
-		_, err := fmt.Fprint(out, selfUpdateGreen(message, color))
+		message := fmt.Sprintf("✓ Peerimeter Agent is already up to date (%s).", result.PreviousVersion)
+		_, err := fmt.Fprintln(out, selfUpdateGreen(message, color))
 		return err
 	}
 	if result.State == "cancelled" {
@@ -721,7 +721,7 @@ func writeSelfUpdateResult(out io.Writer, jsonOutput bool, result selfUpdateResu
 		_, err := fmt.Fprintln(out, "Windows recovery helper started. It will restore the previous installation after this command exits.")
 		return err
 	}
-	message := fmt.Sprintf("✓ Updated Peerimeter Agent %s → %s.\n", result.PreviousVersion, result.UpdatedVersion)
-	_, err := fmt.Fprint(out, selfUpdateGreen(message, color))
+	message := fmt.Sprintf("✓ Updated Peerimeter Agent %s → %s.", result.PreviousVersion, result.UpdatedVersion)
+	_, err := fmt.Fprintln(out, selfUpdateGreen(message, color))
 	return err
 }
