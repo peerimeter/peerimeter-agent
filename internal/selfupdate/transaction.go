@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
 )
@@ -95,6 +96,10 @@ func Apply(inv installstate.Inventory, packageFiles map[string][]byte) (map[stri
 			return nil, nil, nil, fmt.Errorf("release package contains unowned file %q", name)
 		}
 	}
+	ownedFiles := append([]installstate.File(nil), inv.Files...)
+	sort.SliceStable(ownedFiles, func(i, j int) bool {
+		return isCommandAlias(ownedFiles[i].Name) && !isCommandAlias(ownedFiles[j].Name)
+	})
 	journalPath := filepath.Join(inv.LockDir, JournalFilename)
 	for _, name := range []string{JournalFilename, LegacyJournalFilename} {
 		if _, err := os.Lstat(filepath.Join(inv.LockDir, name)); err == nil {
@@ -111,7 +116,7 @@ func Apply(inv installstate.Inventory, packageFiles map[string][]byte) (map[stri
 			_ = os.Remove(f.Backup)
 		}
 	}
-	for _, owned := range inv.Files {
+	for _, owned := range ownedFiles {
 		path := installstate.ResourcePath(inv, owned)
 		if err := installstate.CheckDirectory(filepath.Dir(path)); err != nil {
 			cleanupStages()
@@ -235,6 +240,10 @@ func Apply(inv installstate.Inventory, packageFiles map[string][]byte) (map[stri
 		return syncDirectory(inv.LockDir)
 	}
 	return hashes, rollback, commit, nil
+}
+
+func isCommandAlias(name string) bool {
+	return name == "pma" || name == "pma.exe"
 }
 
 // RecoverLocked completes cleanup after a committed update or restores the

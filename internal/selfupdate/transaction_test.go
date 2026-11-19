@@ -79,6 +79,50 @@ func TestApplyUpdatesOnlyInventoryFilesAndCanRollback(t *testing.T) {
 	}
 }
 
+func TestApplyAndRollbackPreservesInventoryWithPmaSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows installs pma.exe as a binary copy")
+	}
+	dir := t.TempDir()
+	for _, name := range installstate.ProgramNames() {
+		path := filepath.Join(dir, name)
+		if name == "pma" {
+			if err := os.Symlink("peerimeter-agent", path); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if err := os.WriteFile(path, []byte("old "+name), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := installstate.Register(dir); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := installstate.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := make(map[string][]byte, len(inv.Files))
+	for _, file := range inv.Files {
+		files[file.Name] = []byte("new " + file.Name)
+	}
+	_, rollback, _, err := Apply(inv, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rollback(); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range inv.Files {
+		path := installstate.ResourcePath(inv, file)
+		digest, err := installstate.Hash(path)
+		if err != nil || digest != file.SHA256 {
+			t.Fatalf("rollback left stale inventory hash for %s: %s %v", file.Name, digest, err)
+		}
+	}
+}
+
 func TestApplyRefusesModifiedInstalledFile(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range installstate.ProgramNames() {
