@@ -122,6 +122,11 @@ sh docs/install.sh --version latest --install-dir "$HOME/.local/bin" --doc-dir "
 
 ```powershell
 # Run from an elevated PowerShell terminal.
+# Download and run the hosted installer.
+Invoke-WebRequest -Uri https://agent.peerimeter.app/install.ps1 -OutFile install.ps1
+.\install.ps1
+
+# From a repository checkout only:
 .\docs\install.ps1
 .\docs\install.ps1 -Version v0.1.0 -InstallDir 'C:\Program Files\Peerimeter'
 .\docs\install.ps1 -Version latest -InstallDir 'D:\Tools\Peerimeter Agent'
@@ -439,13 +444,22 @@ configuration and keys. Top-level `uninstall` explicitly deletes all resources
 tracked as owned by that installation, including installed identity and keys:
 
 ```sh
+# Per-user installation: run as the user who installed it. Choose one:
+peerimeter-agent uninstall
+peerimeter-agent uninstall --yes
+peerimeter-agent uninstall --purge
+
+# Root installation: choose one:
 sudo peerimeter-agent uninstall
 sudo peerimeter-agent uninstall --yes
-# Also remove all contents of the tracked state/config/runtime directories:
 sudo peerimeter-agent uninstall --purge
-# Select an installation in a custom program directory:
+
+# Select a root installation in a custom program directory:
 sudo peerimeter-agent uninstall --install-dir '/opt/Peerimeter Agent'
 ```
+
+Use `--purge` instead of the standard uninstall when you also want to remove
+all contents of the tracked state, config and runtime directories.
 
 Installers write a protected installation inventory. Full removal refuses
 arbitrary untracked paths, preserves unrelated files and original source
