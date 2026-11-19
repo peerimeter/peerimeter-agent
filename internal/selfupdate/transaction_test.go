@@ -111,8 +111,17 @@ func TestApplyAndRollbackPreservesInventoryWithPmaSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	aliasPath := filepath.Join(dir, "pma")
+	aliasInfo, err := os.Lstat(aliasPath)
+	if err != nil || aliasInfo.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("Apply replaced pma symlink: info=%v err=%v", aliasInfo, err)
+	}
 	if err := rollback(); err != nil {
 		t.Fatal(err)
+	}
+	aliasInfo, err = os.Lstat(aliasPath)
+	if err != nil || aliasInfo.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("rollback replaced pma symlink: info=%v err=%v", aliasInfo, err)
 	}
 	for _, file := range inv.Files {
 		path := installstate.ResourcePath(inv, file)
