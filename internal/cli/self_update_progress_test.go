@@ -25,7 +25,7 @@ func TestSelfUpdateProgressReportsStartedAndFinishedSteps(t *testing.T) {
 	}
 }
 
-func TestSelfUpdateProgressStopKeepsCompletedBarVisible(t *testing.T) {
+func TestSelfUpdateProgressStopKeepsFinalStatusVisible(t *testing.T) {
 	var output bytes.Buffer
 	progress := newSelfUpdateProgress(&output)
 	progress.tty = true
@@ -33,11 +33,11 @@ func TestSelfUpdateProgressStopKeepsCompletedBarVisible(t *testing.T) {
 	finish(nil)
 	progress.stop(selfUpdateProgressUpToDate)
 
-	if bar := completedSelfUpdateProgressBar(selfUpdateProgressUpToDate, false); !strings.Contains(output.String(), bar) {
-		t.Fatalf("stopped TUI output does not retain the completed bar: %q", output.String())
+	if status := "✓ Checking the latest stable release"; !strings.Contains(output.String(), status) {
+		t.Fatalf("stopped TUI output does not retain the final status: %q", output.String())
 	}
-	if !strings.HasSuffix(output.String(), completedSelfUpdateProgressBar(selfUpdateProgressUpToDate, false)+"\n\n") {
-		t.Fatalf("completed bar is not followed by a blank line: %q", output.String())
+	if !strings.HasSuffix(output.String(), "✓ Checking the latest stable release\n\n") {
+		t.Fatalf("final status is not followed by a blank line: %q", output.String())
 	}
 }
 

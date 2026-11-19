@@ -16,14 +16,16 @@ import (
 )
 
 type selfUpdateProgress struct {
-	out       io.Writer
-	tty       bool
-	mu        sync.Mutex
-	program   *tea.Program
-	stopped   chan struct{}
-	finished  bool
-	finishErr error
-	color     bool
+	out         io.Writer
+	tty         bool
+	mu          sync.Mutex
+	program     *tea.Program
+	stopped     chan struct{}
+	finished    bool
+	finishErr   error
+	color       bool
+	message     string
+	spinnerOnly bool
 }
 
 type selfUpdateProgressOutcome uint8
@@ -81,6 +83,8 @@ func (p *selfUpdateProgress) start(message string) func(error) {
 	p.mu.Lock()
 	p.finished = false
 	p.finishErr = nil
+	p.message = message
+	p.spinnerOnly = message == "Checking the latest stable release"
 	p.mu.Unlock()
 	program := p.getProgram()
 	program.Send(selfUpdateProgressStart{message: message})
@@ -140,13 +144,16 @@ func (p *selfUpdateProgress) stop(outcome ...selfUpdateProgressOutcome) {
 	p.mu.Lock()
 	program, stopped := p.program, p.stopped
 	finished, finishErr := p.finished, p.finishErr
+	message, spinnerOnly := p.message, p.spinnerOnly
 	p.mu.Unlock()
 	if program == nil {
 		return
 	}
 	program.Send(selfUpdateProgressClose{})
 	<-stopped
-	if finished && finishErr == nil && result != selfUpdateProgressNeutral && result != selfUpdateProgressUpdateAvailable {
+	if finished && finishErr == nil && spinnerOnly {
+		_, _ = fmt.Fprintf(p.out, "✓ %s\n\n", message)
+	} else if finished && finishErr == nil && result != selfUpdateProgressNeutral && result != selfUpdateProgressUpdateAvailable {
 		_, _ = fmt.Fprintln(p.out, completedSelfUpdateProgressBar(result, p.color))
 		_, _ = fmt.Fprintln(p.out)
 	} else {
@@ -158,6 +165,8 @@ func (p *selfUpdateProgress) stop(outcome ...selfUpdateProgressOutcome) {
 		p.stopped = nil
 		p.finished = false
 		p.finishErr = nil
+		p.message = ""
+		p.spinnerOnly = false
 	}
 	p.mu.Unlock()
 }
