@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 )
 
-func removeDirectoryContents(path string, markers map[string]bool) ([]string, error) {
+func removeDirectoryContents(path string, markers map[string]bool, approvedContents ...[]string) ([]string, error) {
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -46,6 +46,22 @@ func removeDirectoryContents(path string, markers map[string]bool) ([]string, er
 	if closeErr != nil {
 		return nil, closeErr
 	}
+	if len(approvedContents) > 0 {
+		current := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			relative, err := listRootTree(root, entry.Name())
+			if err != nil {
+				return nil, err
+			}
+			current = append(current, filepath.Join(path, entry.Name()))
+			for _, child := range relative {
+				current = append(current, filepath.Join(path, child))
+			}
+		}
+		if !isPathSubset(current, approvedContents[0]) {
+			return nil, errors.New("purge contents changed after confirmation")
+		}
+	}
 
 	var removed []string
 	for _, entry := range entries {
@@ -68,6 +84,19 @@ func removeDirectoryContents(path string, markers map[string]bool) ([]string, er
 		}
 	}
 	return removed, nil
+}
+
+func isPathSubset(paths, approved []string) bool {
+	approvedSet := make(map[string]bool, len(approved))
+	for _, path := range approved {
+		approvedSet[path] = true
+	}
+	for _, path := range paths {
+		if !approvedSet[path] {
+			return false
+		}
+	}
+	return true
 }
 
 // listRootTree walks only directories opened beneath root. Root prevents a
