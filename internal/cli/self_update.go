@@ -47,6 +47,12 @@ type selfUpdateResult struct {
 	Files           []string `json:"files,omitempty"`
 }
 
+type appliedUpdate struct {
+	hashes   map[string]string
+	rollback func() error
+	commit   func() error
+}
+
 func selfUpdate(ctx context.Context, out, promptOut io.Writer, in io.Reader, jsonOutput, yes bool, colorMode string) error {
 	exe, err := os.Executable()
 	if err != nil {
@@ -281,68 +287,14 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 			return scheduleWindowsUpdate(inv, files, tag, managedService, out, jsonOutput)
 		})
 	}
-	lock, err := runSelfUpdateStep(deps.progress, "Locking installation for replacement", func() (io.Closer, error) {
-		return installstate.Lock(installDir)
-	})
+	inv, applied, err := replaceInstalledFiles(deps.progress, installDir, updateSnapshot, files)
 	if err != nil {
-		return restartAfterFailure(managedService, err)
-	}
-	inv, err = runSelfUpdateStep(deps.progress, "Rechecking installation inventory", func() (installstate.Inventory, error) {
-		return installstate.Load(installDir)
-	})
-	if err != nil {
-		_ = lock.Close()
-		return restartAfterFailure(managedService, err)
-	}
-	if inv.Removing {
-		_ = lock.Close()
-		return restartAfterFailure(managedService, errors.New("this installation is being removed"))
-	}
-	if !sameUpdateSnapshot(updateSnapshot, inv) {
-		_ = lock.Close()
-		return restartAfterFailure(managedService, errors.New("installation profiles or files changed while the release was being fetched; retry self-update"))
-	}
-	for _, profile := range inv.Profiles {
-		for _, dir := range []string{profile.StateDir, profile.RuntimeDir} {
-			guard, guardErr := local.TryAcquireExisting(dir)
-			if guardErr != nil {
-				_ = lock.Close()
-				return restartAfterFailure(managedService, selfUpdateProfileLockError(guardErr))
-			}
-			if guard != nil {
-				_ = guard.Close()
-			}
+		if applied.rollback != nil {
+			return rollbackInstalledUpdate(deps.progress, installDir, applied.rollback, profileValue(managedService), err, deps.manage, deps.wait)
 		}
-	}
-	if err := verifyInstalledFiles(inv); err != nil {
-		_ = lock.Close()
 		return restartAfterFailure(managedService, err)
 	}
-	type appliedUpdate struct {
-		hashes   map[string]string
-		rollback func() error
-		commit   func() error
-	}
-	applied, err := runSelfUpdateStep(deps.progress, "Replacing inventoried program files", func() (appliedUpdate, error) {
-		hashes, rollback, commit, err := selfupdate.Apply(inv, files)
-		return appliedUpdate{hashes: hashes, rollback: rollback, commit: commit}, err
-	})
-	if err != nil {
-		_ = lock.Close()
-		return restartAfterFailure(managedService, err)
-	}
-	newHashes, rollback, commit := applied.hashes, applied.rollback, applied.commit
-	if err := runSelfUpdateAction(deps.progress, "Recording updated program file checksums", func() error {
-		return installstate.UpdateProgramHashesLocked(inv, newHashes)
-	}); err != nil {
-		restoreErr := rollback()
-		_ = lock.Close()
-		cause := errors.Join(fmt.Errorf("record updated program hashes: %w", err), restoreErr)
-		return restartAfterFailure(managedService, cause)
-	}
-	if err := lock.Close(); err != nil {
-		return rollbackInstalledUpdate(deps.progress, installDir, rollback, profileValue(managedService), err, deps.manage, deps.wait)
-	}
+	rollback, commit := applied.rollback, applied.commit
 	if managedService != nil {
 		if err := runSelfUpdateAction(deps.progress, "Starting the updated agent service", func() error {
 			return deps.manage("start", serviceConfig(managedService))
@@ -387,6 +339,68 @@ func selfUpdateProfileLockError(err error) error {
 
 func sameUpdateSnapshot(a, b installstate.Inventory) bool {
 	return snapshotUpdateInventory(a).matches(b)
+}
+
+func replaceInstalledFiles(progress *selfUpdateProgress, installDir string, snapshot installstate.Inventory, files map[string][]byte) (installstate.Inventory, appliedUpdate, error) {
+	lock, err := runSelfUpdateStep(progress, "Locking installation for replacement", func() (io.Closer, error) {
+		return installstate.Lock(installDir)
+	})
+	if err != nil {
+		return installstate.Inventory{}, appliedUpdate{}, err
+	}
+
+	inventory, err := runSelfUpdateStep(progress, "Rechecking installation inventory", func() (installstate.Inventory, error) {
+		return installstate.Load(installDir)
+	})
+	if err != nil {
+		_ = lock.Close()
+		return installstate.Inventory{}, appliedUpdate{}, err
+	}
+	if inventory.Removing {
+		_ = lock.Close()
+		return installstate.Inventory{}, appliedUpdate{}, errors.New("this installation is being removed")
+	}
+	if !sameUpdateSnapshot(snapshot, inventory) {
+		_ = lock.Close()
+		return installstate.Inventory{}, appliedUpdate{}, errors.New("installation profiles or files changed while the release was being fetched; retry self-update")
+	}
+	for _, profile := range inventory.Profiles {
+		for _, dir := range []string{profile.StateDir, profile.RuntimeDir} {
+			guard, guardErr := local.TryAcquireExisting(dir)
+			if guardErr != nil {
+				_ = lock.Close()
+				return installstate.Inventory{}, appliedUpdate{}, selfUpdateProfileLockError(guardErr)
+			}
+			if guard != nil {
+				_ = guard.Close()
+			}
+		}
+	}
+	if err := verifyInstalledFiles(inventory); err != nil {
+		_ = lock.Close()
+		return installstate.Inventory{}, appliedUpdate{}, err
+	}
+
+	applied, err := runSelfUpdateStep(progress, "Replacing inventoried program files", func() (appliedUpdate, error) {
+		hashes, rollback, commit, err := selfupdate.Apply(inventory, files)
+		return appliedUpdate{hashes: hashes, rollback: rollback, commit: commit}, err
+	})
+	if err != nil {
+		_ = lock.Close()
+		return installstate.Inventory{}, appliedUpdate{}, err
+	}
+	if err := runSelfUpdateAction(progress, "Recording updated program file checksums", func() error {
+		return installstate.UpdateProgramHashesLocked(inventory, applied.hashes)
+	}); err != nil {
+		restoreErr := applied.rollback()
+		_ = lock.Close()
+		cause := errors.Join(fmt.Errorf("record updated program hashes: %w", err), restoreErr)
+		return installstate.Inventory{}, appliedUpdate{}, cause
+	}
+	if err := lock.Close(); err != nil {
+		return inventory, applied, err
+	}
+	return inventory, applied, nil
 }
 
 func waitForProfileStopped(parent context.Context, profile installstate.Profile) error {

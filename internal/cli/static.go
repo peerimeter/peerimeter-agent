@@ -167,7 +167,10 @@ func staticCommandWithBackground(ctx context.Context, commandName, path, overrid
 		}
 		return func() error { return writeConfigFile(path, previous) }, nil
 	}
-	return agent.RunManagedWithBackground(ctx, backend, desired, layout.RuntimeDir, reload, operator, local.InstanceID(layout.StateDir), ready, func() error {
-		return installstate.ReleaseRuntime(filepath.Dir(exe), layout.StateDir, layout.RuntimeDir)
-	}, refresh, path, replaceConfig, background)
+	return agent.RunManagedWithBackground(ctx, agent.ManagedOptions{
+		Backend: backend, Desired: desired, Directory: layout.RuntimeDir, Reload: reload,
+		Operator: operator, InstanceID: local.InstanceID(layout.StateDir), BeforeServe: ready, OnClose: func() error {
+			return installstate.ReleaseRuntime(filepath.Dir(exe), layout.StateDir, layout.RuntimeDir)
+		}, RefreshInterval: refresh, ConfigPath: path, ReplaceConfig: replaceConfig, Background: background,
+	})
 }

@@ -66,12 +66,12 @@ func TestManagedRefreshStopsBeforeSessionCleanup(t *testing.T) {
 	defer os.RemoveAll(dir)
 	result := make(chan error, 1)
 	go func() {
-		result <- RunManagedWithRefresh(ctx, f, platform.Desired{Config: config.Config{Network: config.Network{ID: "net-a"}}}, dir, func(refreshCtx context.Context) (platform.Desired, error) {
+		result <- RunManagedWithRefresh(ctx, ManagedOptions{Backend: f, Desired: platform.Desired{Config: config.Config{Network: config.Network{ID: "net-a"}}}, Directory: dir, Reload: func(refreshCtx context.Context) (platform.Desired, error) {
 			startedOnce.Do(func() { close(refreshStarted) })
 			<-refreshCtx.Done()
 			doneOnce.Do(func() { close(refreshDone) })
 			return platform.Desired{}, refreshCtx.Err()
-		}, "", "instance", nil, nil, time.Millisecond, "", nil)
+		}, InstanceID: "instance", RefreshInterval: time.Millisecond})
 	}()
 	<-f.started
 	select {
