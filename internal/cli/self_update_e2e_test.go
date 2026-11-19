@@ -148,9 +148,11 @@ func TestSelfUpdateBinaryEndToEnd(t *testing.T) {
 			waitForE2EVersion(t, ctx, filepath.Join(install.installDir, executableName()), caPath, test.wantVersion)
 			aliasName := "pma"
 			if runtime.GOOS == "windows" {
-				aliasName += ".exe"
+				aliasName += ".cmd"
+				waitForWindowsCommandVersion(t, ctx, filepath.Join(install.installDir, aliasName), caPath, test.wantVersion)
+			} else {
+				waitForE2EVersion(t, ctx, filepath.Join(install.installDir, aliasName), caPath, test.wantVersion)
 			}
-			waitForE2EVersion(t, ctx, filepath.Join(install.installDir, aliasName), caPath, test.wantVersion)
 			if !test.corrupt {
 				for path, want := range map[string]string{
 					filepath.Join(install.configDir, "service.key"): "profile key must remain",
@@ -186,7 +188,7 @@ func TestSelfUpdateBinaryEndToEnd(t *testing.T) {
 			}
 			if _, _, _, err := selfupdate.Apply(inv, map[string][]byte{
 				"peerimeter-agent.exe":         newBytes,
-				"pma.exe":                      newBytes,
+				"pma.cmd":                      []byte(windowsPmaCommand),
 				"peerimeter-agent.NOTICES.txt": notices,
 				"wireguard.dll":                releaseFiles["wireguard.dll"],
 			}); err != nil {
@@ -306,7 +308,7 @@ func prepareE2EInstallation(t *testing.T, oldBinary string, notices []byte, rele
 		t.Fatal(err)
 	}
 	if runtime.GOOS == "windows" {
-		if err := os.WriteFile(filepath.Join(install.installDir, "pma.exe"), program, 0700); err != nil {
+		if err := os.WriteFile(filepath.Join(install.installDir, "pma.cmd"), []byte(windowsPmaCommand), 0700); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(install.installDir, "wireguard.dll"), release["wireguard.dll"], 0600); err != nil {
@@ -418,6 +420,8 @@ func executableName() string {
 	return "peerimeter-agent"
 }
 
+const windowsPmaCommand = "@echo off\r\n\"%~dp0peerimeter-agent.exe\" %*\r\nexit /b %ERRORLEVEL%\r\n"
+
 func e2eReleaseArch(arch string) string {
 	switch arch {
 	case "amd64":
@@ -446,6 +450,29 @@ func waitForE2EVersion(t *testing.T, ctx context.Context, executable, caPath, ex
 		select {
 		case <-ctx.Done():
 			t.Fatalf("installed version did not become %s before timeout; last output=%s err=%v", expected, output, err)
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+func waitForWindowsCommandVersion(t *testing.T, ctx context.Context, command, caPath, expected string) {
+	t.Helper()
+	for {
+		commandLine := fmt.Sprintf("\"%s\" version --json", command)
+		cmd := exec.CommandContext(ctx, "cmd.exe", "/d", "/c", commandLine)
+		cmd.Env = append(os.Environ(), "SSL_CERT_FILE="+caPath, "NO_COLOR=1")
+		output, err := cmd.Output()
+		if err == nil {
+			var result struct {
+				Version string `json:"version"`
+			}
+			if json.Unmarshal(output, &result) == nil && result.Version == expected {
+				return
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("installed Windows command did not become %s before timeout; last output=%s err=%v", expected, output, err)
 		case <-time.After(250 * time.Millisecond):
 		}
 	}

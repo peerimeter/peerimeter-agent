@@ -948,7 +948,7 @@ func executeWithRegistrationProbeAndFinalizer(ctx context.Context, opts Options,
 
 func isCommandAlias(path string) bool {
 	name := filepath.Base(path)
-	return name == "pma" || name == "pma.exe"
+	return name == "pma" || name == "pma.exe" || name == "pma.cmd"
 }
 
 func isInstallationReference(path, installDir string) bool {

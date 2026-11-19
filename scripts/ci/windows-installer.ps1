@@ -12,6 +12,7 @@ $latest = Join-Path $base 'latest custom path'
 $pinned = Join-Path $base 'pinned custom path'
 $badTarget = Join-Path $base 'must not install'
 $collisionTarget = Join-Path $base 'existing unrelated pma'
+$legacyCollisionTarget = Join-Path $base 'existing unrelated legacy pma'
 $defaultTarget = Join-Path $env:ProgramFiles 'Peerimeter'
 $defaultInstalled = $false
 $programDataTarget = Join-Path $env:ProgramData ('Peerimeter Installer CI ' + [guid]::NewGuid().ToString('N') + ' custom path')
@@ -68,7 +69,7 @@ function Track-ResourceRoot([string]$Directory) {
 }
 function Assert-Package([string]$Directory) {
     $resourceRoot = Get-ResourceRoot $Directory
-    foreach ($item in @(@{Name='peerimeter-agent.exe';Dir=$Directory},@{Name='pma.exe';Dir=$Directory},@{Name='wireguard.dll';Dir=$Directory},@{Name='peerimeter-agent.NOTICES.txt';Dir=(Join-Path $resourceRoot 'Documentation')})) {
+    foreach ($item in @(@{Name='peerimeter-agent.exe';Dir=$Directory},@{Name='pma.cmd';Dir=$Directory},@{Name='wireguard.dll';Dir=$Directory},@{Name='peerimeter-agent.NOTICES.txt';Dir=(Join-Path $resourceRoot 'Documentation')})) {
         $name = $item.Name
         $path = Join-Path $item.Dir $name
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Installed package member missing: $name" }
@@ -89,9 +90,9 @@ function Assert-Package([string]$Directory) {
     $binary = Join-Path $Directory 'peerimeter-agent.exe'
     $version = & $binary version --json | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0 -or $version.os -ne 'windows' -or $version.go_version -ne 'go1.27.4') { throw 'Installed native agent executable failed version smoke test' }
-    $aliasVersion = & (Join-Path $Directory 'pma.exe') version --json | ConvertFrom-Json
-    if ($LASTEXITCODE -ne 0 -or $aliasVersion.version -ne $version.version) { throw 'Installed pma.exe alias failed version smoke test' }
-    if ((Get-FileHash -LiteralPath (Join-Path $Directory 'pma.exe')).Hash -ne (Get-FileHash -LiteralPath $binary).Hash) { throw 'Installed pma.exe does not match the agent executable' }
+    $aliasVersion = & (Join-Path $Directory 'pma.cmd') version --json | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or $aliasVersion.version -ne $version.version) { throw 'Installed pma.cmd alias failed version smoke test' }
+    if (Test-Path -LiteralPath (Join-Path $Directory 'pma.exe')) { throw 'Legacy pma.exe copy remains after installation' }
     if (@(Get-ChildItem -LiteralPath $Directory -Force | Where-Object { $_.Name -match '\.(new|old)-' }).Count -or @(Get-ChildItem -LiteralPath (Join-Path $resourceRoot 'Documentation') -Force | Where-Object { $_.Name -match '\.(new|old)-' }).Count) { throw 'Installer leaked staged or backup files' }
 }
 function Remove-InstalledPackage([string]$Directory,[string]$ExternalCLI) {
@@ -134,7 +135,7 @@ function Remove-InstalledPackage([string]$Directory,[string]$ExternalCLI) {
         if (-not $done) { Show-RemovalDiagnostics $result.result_file; throw 'Windows package removal did not complete within 60 seconds' }
         Remove-Item -LiteralPath $result.result_file -Force
     } elseif ($result.state -ne 'removed') { throw 'Unrecognized package uninstall result' }
-    foreach ($path in @((Join-Path $Directory 'peerimeter-agent.exe'),(Join-Path $Directory 'pma.exe'),(Join-Path $Directory 'wireguard.dll'),(Join-Path $Directory '.install.ref'),(Join-Path (Join-Path $resourceRoot 'Documentation') 'peerimeter-agent.NOTICES.txt'),(Join-Path (Join-Path $resourceRoot 'State') '.install.yaml'),(Join-Path (Join-Path $resourceRoot 'Locks') '.install.lock'))) {
+    foreach ($path in @((Join-Path $Directory 'peerimeter-agent.exe'),(Join-Path $Directory 'pma.cmd'),(Join-Path $Directory 'pma.exe'),(Join-Path $Directory 'wireguard.dll'),(Join-Path $Directory '.install.ref'),(Join-Path (Join-Path $resourceRoot 'Documentation') 'peerimeter-agent.NOTICES.txt'),(Join-Path (Join-Path $resourceRoot 'State') '.install.yaml'),(Join-Path (Join-Path $resourceRoot 'Locks') '.install.lock'))) {
         if (Test-Path -LiteralPath $path) { throw "Installed program member survived uninstall: $path" }
     }
     if ([IO.File]::ReadAllText($sentinel) -ne 'operator data stays') { throw 'Full uninstall removed unrelated installation-parent data' }
@@ -172,6 +173,7 @@ try {
     $everyone = [Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-1-0'),[Security.AccessControl.FileSystemRights]::FullControl,[Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit',[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow)
     $acl.AddAccessRule($everyone)
     Set-Acl -LiteralPath $offline -AclObject $acl
+    Copy-Item -LiteralPath (Join-Path $offline 'peerimeter-agent.exe') -Destination (Join-Path $offline 'pma.exe')
     & $Installer -Archive $Archive -SHA256 $checksum -InstallDir $offline
     Assert-Package $offline
     if (@((Get-Acl -LiteralPath $offline).GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]) | Where-Object { $_.IdentityReference.Value -eq 'S-1-1-0' -and $_.AccessControlType -eq 'Allow' }).Count) { throw 'Unsafe explicit directory ACL survived installation' }
@@ -183,15 +185,26 @@ try {
     Write-Output 'PASS checksum rejection precedes installation mutation'
 
     New-Item -ItemType Directory -Path $collisionTarget | Out-Null
-    $unrelatedAlias = Join-Path $collisionTarget 'pma.exe'
+    $unrelatedAlias = Join-Path $collisionTarget 'pma.cmd'
     [IO.File]::WriteAllText($unrelatedAlias,'unrelated executable data')
     $unrelatedHash = (Get-FileHash -LiteralPath $unrelatedAlias -Algorithm SHA256).Hash
     Track-ResourceRoot $collisionTarget
     Expect-Failure { & $Installer -Archive $Archive -SHA256 $checksum -InstallDir $collisionTarget }
     if ((Get-FileHash -LiteralPath $unrelatedAlias -Algorithm SHA256).Hash -ne $unrelatedHash -or (Test-Path -LiteralPath (Join-Path $collisionTarget 'peerimeter-agent.exe'))) {
-        throw 'Unrelated pma.exe was changed during installer collision rejection'
+        throw 'Unrelated pma.cmd was changed during installer collision rejection'
     }
-    Write-Output 'PASS unrelated pma.exe is preserved and rejected before installer mutation'
+    Write-Output 'PASS unrelated pma.cmd is preserved and rejected before installer mutation'
+
+    New-Item -ItemType Directory -Path $legacyCollisionTarget | Out-Null
+    $unrelatedLegacyAlias = Join-Path $legacyCollisionTarget 'pma.exe'
+    [IO.File]::WriteAllText($unrelatedLegacyAlias,'unrelated executable data')
+    $unrelatedLegacyHash = (Get-FileHash -LiteralPath $unrelatedLegacyAlias -Algorithm SHA256).Hash
+    Track-ResourceRoot $legacyCollisionTarget
+    Expect-Failure { & $Installer -Archive $Archive -SHA256 $checksum -InstallDir $legacyCollisionTarget }
+    if ((Get-FileHash -LiteralPath $unrelatedLegacyAlias -Algorithm SHA256).Hash -ne $unrelatedLegacyHash -or (Test-Path -LiteralPath (Join-Path $legacyCollisionTarget 'peerimeter-agent.exe'))) {
+        throw 'Unrelated legacy pma.exe was changed during installer collision rejection'
+    }
+    Write-Output 'PASS unrelated legacy pma.exe is preserved and rejected before installer mutation'
 
     # Exercise release URL selection against a local, already verified ZIP.
     # These mocks prevent dependence on a release that has not been published.
