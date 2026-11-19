@@ -457,24 +457,21 @@ func waitForE2EVersion(t *testing.T, ctx context.Context, executable, caPath, ex
 
 func waitForWindowsCommandVersion(t *testing.T, ctx context.Context, command, caPath, expected string) {
 	t.Helper()
-	for {
-		commandLine := fmt.Sprintf("\"%s\" version --json", command)
-		cmd := exec.CommandContext(ctx, "cmd.exe", "/d", "/c", commandLine)
-		cmd.Env = append(os.Environ(), "SSL_CERT_FILE="+caPath, "NO_COLOR=1")
-		output, err := cmd.Output()
-		if err == nil {
-			var result struct {
-				Version string `json:"version"`
-			}
-			if json.Unmarshal(output, &result) == nil && result.Version == expected {
-				return
-			}
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("installed Windows command did not become %s before timeout; last output=%s err=%v", expected, output, err)
-		case <-time.After(250 * time.Millisecond):
-		}
+	commandLine := fmt.Sprintf("& '%s' version --json", strings.ReplaceAll(command, "'", "''"))
+	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", commandLine)
+	cmd.Env = append(os.Environ(), "SSL_CERT_FILE="+caPath, "NO_COLOR=1")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run installed Windows command: %v\n%s", err, output)
+	}
+	var result struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatalf("decode installed Windows command output %q: %v", output, err)
+	}
+	if result.Version != expected {
+		t.Fatalf("installed Windows command version = %s, want %s", result.Version, expected)
 	}
 }
 
