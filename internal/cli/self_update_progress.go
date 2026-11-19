@@ -48,6 +48,7 @@ type selfUpdateProgressModel struct {
 	message     string
 	active      bool
 	spinnerOnly bool
+	color       bool
 	err         error
 	percent     float64
 	generation  uint64
@@ -72,11 +73,13 @@ func (p *selfUpdateProgress) start(message string) func(error) {
 	if !p.tty {
 		_, _ = fmt.Fprintf(p.out, "→ %s\n", message)
 		return func(err error) {
-			icon := "✓"
+			line := "✓ " + message
 			if err != nil {
-				icon = "✗"
+				line = selfUpdateRed("✗ "+message, p.color)
+			} else {
+				line = selfUpdateGreen(line, p.color)
 			}
-			_, _ = fmt.Fprintf(p.out, "%s %s\n", icon, message)
+			_, _ = fmt.Fprintln(p.out, line)
 		}
 	}
 
@@ -104,7 +107,7 @@ func (p *selfUpdateProgress) getProgram() *tea.Program {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.program == nil {
-		model := selfUpdateProgressModel{bar: newSelfUpdateProgressBar(p.color), spinner: spinner.New(spinner.WithSpinner(spinner.Line))}
+		model := selfUpdateProgressModel{bar: newSelfUpdateProgressBar(p.color), spinner: spinner.New(spinner.WithSpinner(spinner.Line)), color: p.color}
 		program := tea.NewProgram(model, tea.WithInput(nil), tea.WithOutput(p.out))
 		stopped := make(chan struct{})
 		p.program = program
@@ -151,8 +154,10 @@ func (p *selfUpdateProgress) stop(outcome ...selfUpdateProgressOutcome) {
 	}
 	program.Send(selfUpdateProgressClose{})
 	<-stopped
-	if finished && finishErr == nil && spinnerOnly {
-		_, _ = fmt.Fprintf(p.out, "✓ %s\n\n", message)
+	if finished && finishErr != nil {
+		_, _ = fmt.Fprintf(p.out, "%s\n\n", selfUpdateRed("✗ "+message, p.color))
+	} else if finished && spinnerOnly {
+		_, _ = fmt.Fprintf(p.out, "%s\n\n", selfUpdateGreen("✓ "+message, p.color))
 	} else if finished && finishErr == nil && result != selfUpdateProgressNeutral && result != selfUpdateProgressUpdateAvailable {
 		_, _ = fmt.Fprintln(p.out, completedSelfUpdateProgressBar(result, p.color))
 		_, _ = fmt.Fprintln(p.out)
@@ -190,6 +195,27 @@ func completedSelfUpdateProgressBar(outcome selfUpdateProgressOutcome, color boo
 	}
 	bar := progress.New(options...)
 	return bar.ViewAs(1)
+}
+
+func selfUpdateGreen(text string, color bool) string {
+	if !color {
+		return text
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#22C55E")).Render(text)
+}
+
+func selfUpdateYellow(text string, color bool) string {
+	if !color {
+		return text
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#EAB308")).Render(text)
+}
+
+func selfUpdateRed(text string, color bool) string {
+	if !color {
+		return text
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#EF4444")).Render(text)
 }
 
 func (m selfUpdateProgressModel) Init() tea.Cmd { return nil }
@@ -236,14 +262,16 @@ func (m selfUpdateProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m selfUpdateProgressModel) View() tea.View {
-	icon := "✓"
+	status := "✓ " + m.message
 	if m.active {
-		icon = m.spinner.View()
+		status = m.spinner.View() + " " + m.message
 	} else if m.err != nil {
-		icon = "✗"
+		status = selfUpdateRed("✗ "+m.message, m.color)
+	} else {
+		status = selfUpdateGreen(status, m.color)
 	}
 	if m.spinnerOnly {
-		v := tea.NewView(fmt.Sprintf("%s %s", icon, m.message))
+		v := tea.NewView(status)
 		v.DisableBracketedPasteMode = true
 		return v
 	}
@@ -251,7 +279,7 @@ func (m selfUpdateProgressModel) View() tea.View {
 	if !m.active && m.err == nil && m.percent == 1 {
 		bar = m.bar.ViewAs(1)
 	}
-	v := tea.NewView(fmt.Sprintf("%s %s\n%s", icon, m.message, bar))
+	v := tea.NewView(fmt.Sprintf("%s\n%s", status, bar))
 	v.DisableBracketedPasteMode = true
 	return v
 }
