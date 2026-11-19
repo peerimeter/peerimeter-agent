@@ -89,6 +89,7 @@ func fetchAt(ctx context.Context, client *http.Client, goos, goarch, latestEndpo
 		return "", nil, err
 	}
 	if goos == "windows" {
+		files["pma.cmd"] = []byte(windowsCommandAlias)
 		files["pma.exe"] = append([]byte(nil), files["peerimeter-agent.exe"]...)
 	} else {
 		files["pma"] = append([]byte(nil), files["peerimeter-agent"]...)
@@ -106,6 +107,8 @@ func fetchAt(ctx context.Context, client *http.Client, goos, goarch, latestEndpo
 	}
 	return latest.TagName, files, nil
 }
+
+const windowsCommandAlias = "@echo off\r\n\"%~dp0peerimeter-agent.exe\" %*\r\nexit /b %ERRORLEVEL%\r\n"
 
 var releaseTag = regexp.MustCompile(`^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$`)
 

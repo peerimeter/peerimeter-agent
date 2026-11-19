@@ -81,7 +81,7 @@ func TestApplyUpdatesOnlyInventoryFilesAndCanRollback(t *testing.T) {
 
 func TestApplyAndRollbackPreservesInventoryWithPmaSymlink(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("Windows installs pma.exe as a binary copy")
+		t.Skip("Windows installs pma.cmd as a wrapper")
 	}
 	dir := t.TempDir()
 	for _, name := range installstate.ProgramNames() {

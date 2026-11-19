@@ -17,14 +17,22 @@ if (-not $admin) { throw 'Run the Windows installer from an elevated administrat
 if ($InstallDir -notmatch '^[A-Za-z]:[\\/]') { throw 'InstallDir must be an absolute local drive path' }
 if ($InstallDir.Contains(';')) { throw 'InstallDir must not contain a semicolon' }
 $InstallDir = [IO.Path]::GetFullPath($InstallDir)
-$aliasPath = Join-Path $InstallDir 'pma.exe'
+$aliasPath = Join-Path $InstallDir 'pma.cmd'
+$legacyAliasPath = Join-Path $InstallDir 'pma.exe'
 $agentPath = Join-Path $InstallDir 'peerimeter-agent.exe'
+$expectedAlias = "@echo off`r`n`"%~dp0peerimeter-agent.exe`" %*`r`nexit /b %ERRORLEVEL%`r`n"
 if (Test-Path -LiteralPath $aliasPath) {
     $aliasItem = Get-Item -LiteralPath $aliasPath -Force
-    if ($aliasItem.PSIsContainer -or ($aliasItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Test-Path -LiteralPath $agentPath -PathType Leaf)) {
-        throw 'pma.exe destination already exists and is not a managed Peerimeter alias'
+    if ($aliasItem.PSIsContainer -or ($aliasItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Test-Path -LiteralPath $agentPath -PathType Leaf) -or [IO.File]::ReadAllText($aliasPath) -ne $expectedAlias) {
+        throw 'pma.cmd destination already exists and is not a managed Peerimeter alias'
     }
-    if ((Get-FileHash -LiteralPath $aliasPath -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $agentPath -Algorithm SHA256).Hash) {
+}
+if (Test-Path -LiteralPath $legacyAliasPath) {
+    $legacyAliasItem = Get-Item -LiteralPath $legacyAliasPath -Force
+    if ($legacyAliasItem.PSIsContainer -or ($legacyAliasItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Test-Path -LiteralPath $agentPath -PathType Leaf)) {
+        throw 'pma.exe destination already exists and is not a managed legacy Peerimeter alias'
+    }
+    if ((Get-FileHash -LiteralPath $legacyAliasPath -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $agentPath -Algorithm SHA256).Hash) {
         throw 'pma.exe destination already exists and does not match the installed agent'
     }
 }
@@ -158,6 +166,7 @@ try {
             [IO.Compression.ZipFileExtensions]::ExtractToFile($entry,(Join-Path $unpacked $entry.FullName),$false)
         }
     } finally { $zip.Dispose() }
+    [IO.File]::WriteAllText((Join-Path $unpacked 'pma.cmd'),$expectedAlias,[Text.Encoding]::ASCII)
     $dll = Join-Path $unpacked 'wireguard.dll'
     $dllHash = switch ($arch) { 'amd64' { 'B1B85E072C45D81358BE29D94C599DC76652F912BE8C0F0A41E2D5D89A6461D3' } 'arm64' { '75BCDC025D6C00E8315AF5D62B869D760CA6A253FC82D70F146E789F059A3E0C' } }
     if ((Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash -ne $dllHash -or (Get-AuthenticodeSignature -LiteralPath $dll).Status -ne 'Valid') { throw 'Bundled WireGuardNT integrity/signature verification failed' }
@@ -172,7 +181,7 @@ try {
     Set-InstallerACL $DocDir
     Set-InstallerACL $DataDir $true
     Set-InstallerACL $LockDir $true
-    $packageFiles = @(@{Name='peerimeter-agent.exe';Dir=$InstallDir;Source='peerimeter-agent.exe'},@{Name='pma.exe';Dir=$InstallDir;Source='peerimeter-agent.exe'},@{Name='wireguard.dll';Dir=$InstallDir;Source='wireguard.dll'},@{Name='peerimeter-agent.NOTICES.txt';Dir=$DocDir;Source='peerimeter-agent.NOTICES.txt'})
+    $packageFiles = @(@{Name='peerimeter-agent.exe';Dir=$InstallDir;Source='peerimeter-agent.exe'},@{Name='pma.cmd';Dir=$InstallDir;Source='pma.cmd'},@{Name='wireguard.dll';Dir=$InstallDir;Source='wireguard.dll'},@{Name='peerimeter-agent.NOTICES.txt';Dir=$DocDir;Source='peerimeter-agent.NOTICES.txt'})
     $moved = @(); $installed = @(); $staged = @()
     try {
         # Stage and protect the complete package before replacing any old file.
@@ -182,6 +191,11 @@ try {
             $staged += $next
             Copy-Item -LiteralPath (Join-Path $unpacked $member.Source) -Destination $next
             Set-InstallerACL $next
+        }
+        if (Test-Path -LiteralPath $legacyAliasPath) {
+            $backup = $legacyAliasPath + '.old-' + [guid]::NewGuid()
+            Move-Item -LiteralPath $legacyAliasPath -Destination $backup
+            $moved += ,@($backup,$legacyAliasPath)
         }
         for ($i=0; $i -lt $packageFiles.Count; $i++) {
             $dest = Join-Path $packageFiles[$i].Dir $packageFiles[$i].Name

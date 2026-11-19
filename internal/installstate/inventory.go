@@ -120,7 +120,7 @@ func ProgramNames() []string {
 	names := []string{"peerimeter-agent", "pma", "peerimeter-agent.NOTICES.txt"}
 	if runtime.GOOS == "windows" {
 		names[0] += ".exe"
-		names[1] += ".exe"
+		names[1] += ".cmd"
 		names = append(names, "wireguard.dll")
 	}
 	return names
@@ -128,7 +128,7 @@ func ProgramNames() []string {
 
 func commandAliasName() string {
 	if runtime.GOOS == "windows" {
-		return "pma.exe"
+		return "pma.cmd"
 	}
 	return "pma"
 }
@@ -489,6 +489,10 @@ func loadAtDataDir(dir, requestedDataDir string, allowInsecureOverride bool) (In
 	for _, n := range ProgramNames() {
 		names[n] = true
 	}
+	if runtime.GOOS == "windows" {
+		// Accept the previous copy-based alias during upgrade registration.
+		names["pma.exe"] = true
+	}
 	seen := map[string]bool{}
 	for _, f := range inv.Files {
 		digest, e := hex.DecodeString(f.SHA256)
@@ -502,8 +506,12 @@ func loadAtDataDir(dir, requestedDataDir string, allowInsecureOverride bool) (In
 		}
 		seen[f.Name] = true
 	}
-	legacyInventory := len(seen) == len(names)-1 && !seen[commandAliasName()]
-	if len(seen) != len(names) && !legacyInventory {
+	missingCurrentAlias := !seen[commandAliasName()]
+	legacyWindowsAlias := runtime.GOOS == "windows" && seen["pma.exe"]
+	programCount := len(ProgramNames())
+	legacyInventory := missingCurrentAlias && (len(seen) == programCount-1 || legacyWindowsAlias && len(seen) == programCount)
+	currentInventory := !missingCurrentAlias && len(seen) == programCount
+	if !currentInventory && !legacyInventory {
 		return inv, errors.New("installation inventory is missing a program resource")
 	}
 	if len(inv.Profiles) > 256 {

@@ -268,16 +268,31 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	}
 	aliasName := commandAliasNameFor(goos)
 	aliasOwned := false
+	legacyAliasName := ""
+	if goos == "windows" {
+		legacyAliasName = "pma.exe"
+	}
 	for _, owned := range inv.Files {
-		if owned.Name == aliasName {
+		if owned.Name == aliasName || owned.Name == legacyAliasName {
+			aliasName = owned.Name
 			aliasOwned = true
 		}
 		if _, ok := files[owned.Name]; !ok {
 			return fmt.Errorf("release package is missing inventoried program file %q", owned.Name)
 		}
 	}
-	if !aliasOwned {
+	if aliasOwned {
+		aliasContents := files[aliasName]
+		delete(files, commandAliasNameFor(goos))
+		if legacyAliasName != "" {
+			delete(files, legacyAliasName)
+		}
+		files[aliasName] = aliasContents
+	} else {
 		delete(files, aliasName)
+		if legacyAliasName != "" {
+			delete(files, legacyAliasName)
+		}
 	}
 	if goos == "windows" {
 		// WireGuardNT is an independently pinned, Authenticode-verified runtime
@@ -614,7 +629,7 @@ func binaryNameFor(goos string) string {
 
 func commandAliasNameFor(goos string) string {
 	if goos == "windows" {
-		return "pma.exe"
+		return "pma.cmd"
 	}
 	return "pma"
 }
