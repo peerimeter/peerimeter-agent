@@ -43,6 +43,32 @@ import json,sys
 v=json.load(open(sys.argv[1]));assert v['os']==sys.argv[2] and v['go_version']=='go1.27.4'
 PYVERSION
 [[ -f "$data_destination/.install.yaml" ]]
+# A common user umask (0002) must not create writable managed directories.
+umask_destination="$work/umask install/bin"
+(umask 0002; sh "$installer" --binary "$work/peerimeter-agent" --sha256 "$hash" --notices "$work/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notices_hash" --install-dir "$umask_destination")
+python3 - "$umask_destination" "${umask_destination}.peerimeter" <<'PY'
+import pathlib,stat,sys
+for raw in sys.argv[1:]:
+    root=pathlib.Path(raw)
+    for path in [root, *root.rglob('*')]:
+        if path.is_dir():
+            assert stat.S_IMODE(path.stat().st_mode) & 0o022 == 0, f'unsafe mode on {path}: {oct(stat.S_IMODE(path.stat().st_mode))}'
+PY
+echo 'PASS: fresh install directories stay non-writable with umask 0002'
+
+# Existing unsafe resource directories fail before either package member is installed.
+unsafe_root="$work/unsafe install"
+mkdir -p "$unsafe_root/bin" "$unsafe_root/doc" "$unsafe_root/data"
+chmod 775 "$unsafe_root/doc"
+if sh "$installer" --binary "$work/peerimeter-agent" --sha256 "$hash" --notices "$work/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notices_hash" --install-dir "$unsafe_root/bin" --doc-dir "$unsafe_root/doc" --data-dir "$unsafe_root/data" --lock-dir "$unsafe_root/data" >"$work/unsafe.log" 2>&1; then
+  echo 'FAIL: writable documentation directory was accepted' >&2
+  exit 1
+fi
+grep -F 'Unsafe installation directory permissions:' "$work/unsafe.log" >/dev/null
+test ! -e "$unsafe_root/bin/peerimeter-agent"
+test ! -e "$unsafe_root/doc/peerimeter-agent.NOTICES.txt"
+echo 'PASS: unsafe destination permissions rejected before package installation'
+
 cp "$destination/peerimeter-agent" "$work/original.agent"
 cp "$doc_destination/peerimeter-agent.NOTICES.txt" "$work/original.notices"
 cp "$data_destination/.install.yaml" "$work/original.inventory"

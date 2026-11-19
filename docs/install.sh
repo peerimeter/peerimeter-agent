@@ -124,6 +124,18 @@ done
 [ "$(printf '%s' "$expected" | tr 'A-F' 'a-f')" = "$(sha256 "$binary")" ] || { echo 'Binary checksum verification failed.' >&2; exit 1; }
 [ "$(printf '%s' "$notices_expected" | tr 'A-F' 'a-f')" = "$(sha256 "$notices")" ] || { echo 'Notice checksum verification failed.' >&2; exit 1; }
 progress "Preparing installation directories under $install_dir."
+# XDG installs commonly run with umask 0002. Without overriding it, mkdir -p
+# creates managed resource directories as 0775 and registration rejects them.
+# Preflight every existing managed destination directory before creating
+# directories or replacing files. Registration repeats the full ownership,
+# ACL and ancestor checks after creation.
+for path in "$install_dir" "$doc_dir" "$data_dir" "$lock_dir"; do
+  if [ -d "$path" ] && find "$path" -prune \( -perm -g+w -o -perm -o+w \) -print | grep -q .; then
+    echo "Unsafe installation directory permissions: $path (remove group/other write access)." >&2
+    exit 1
+  fi
+done
+umask 022
 mkdir -p "$install_dir" "$doc_dir" "$data_dir" "$lock_dir" || { echo 'Cannot create destination; choose a writable directory or run with sudo.' >&2; exit 1; }
 [ ! -d "$install_dir/peerimeter-agent" ] || { echo 'Binary destination is a directory.' >&2; exit 1; }
 [ ! -d "$doc_dir/peerimeter-agent.NOTICES.txt" ] || { echo 'Notice destination is a directory.' >&2; exit 1; }
