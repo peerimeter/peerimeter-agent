@@ -420,7 +420,7 @@ func executableName() string {
 	return "peerimeter-agent"
 }
 
-const windowsPmaCommand = "@echo off\r\n\"%~dp0peerimeter-agent.exe\" %*\r\nexit /b %ERRORLEVEL%\r\n"
+const windowsPmaCommand = "@echo off\r\nsetlocal DisableDelayedExpansion\r\n\"%~dp0peerimeter-agent.exe\" %*\r\nexit /b %ERRORLEVEL%\r\n"
 
 func e2eReleaseArch(arch string) string {
 	switch arch {
@@ -457,10 +457,7 @@ func waitForE2EVersion(t *testing.T, ctx context.Context, executable, caPath, ex
 
 func waitForWindowsCommandVersion(t *testing.T, ctx context.Context, command, caPath, expected string) {
 	t.Helper()
-	commandLine := fmt.Sprintf("& '%s' version --json", strings.ReplaceAll(command, "'", "''"))
-	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", commandLine)
-	cmd.Env = append(os.Environ(), "SSL_CERT_FILE="+caPath, "NO_COLOR=1")
-	output, err := cmd.CombinedOutput()
+	output, err := runWindowsPmaCommand(ctx, command, caPath)
 	if err != nil {
 		t.Fatalf("run installed Windows command: %v\n%s", err, output)
 	}

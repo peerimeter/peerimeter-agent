@@ -506,12 +506,20 @@ func loadAtDataDir(dir, requestedDataDir string, allowInsecureOverride bool) (In
 		}
 		seen[f.Name] = true
 	}
-	missingCurrentAlias := !seen[commandAliasName()]
-	legacyWindowsAlias := runtime.GOOS == "windows" && seen["pma.exe"]
-	programCount := len(ProgramNames())
-	legacyInventory := missingCurrentAlias && (len(seen) == programCount-1 || legacyWindowsAlias && len(seen) == programCount)
-	currentInventory := !missingCurrentAlias && len(seen) == programCount
-	if !currentInventory && !legacyInventory {
+	programs := ProgramNames()
+	requiredPresent := true
+	for _, name := range programs {
+		if name != commandAliasName() && !seen[name] {
+			requiredPresent = false
+		}
+	}
+	currentAliasPresent := seen[commandAliasName()]
+	legacyAliasPresent := runtime.GOOS == "windows" && seen["pma.exe"]
+	currentAliasSet := currentAliasPresent && !legacyAliasPresent && len(seen) == len(programs)
+	legacyAliasSet := legacyAliasPresent && !currentAliasPresent && len(seen) == len(programs)
+	aliasFreeSet := !legacyAliasPresent && !currentAliasPresent && len(seen) == len(programs)-1
+	validAliasSet := currentAliasSet || legacyAliasSet || aliasFreeSet
+	if !requiredPresent || !validAliasSet {
 		return inv, errors.New("installation inventory is missing a program resource")
 	}
 	if len(inv.Profiles) > 256 {
