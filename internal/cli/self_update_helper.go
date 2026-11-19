@@ -313,6 +313,15 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) (resultErr error
 			resultErr = errors.Join(resultErr, startManagedService(*profile))
 		}
 	}()
+	// Acknowledge process startup before waiting for the parent to release its
+	// update lock. The parent releases that lock after it receives this signal.
+	ready, err := json.Marshal(windowsUpdateResult{State: "pending", HelperReady: true})
+	if err != nil {
+		return err
+	}
+	if err := installstate.WritePrivate(resultPath, append(ready, '\n')); err != nil {
+		return fmt.Errorf("confirm Windows update helper startup: %w", err)
+	}
 	// The parent already stopped the service before scheduling this helper.
 	// A bounded handoff lets the helper report failure and restart the service.
 	updateLock, err := acquireWindowsUpdateLock(ctx, inv, 45*time.Second)
@@ -367,13 +376,6 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) (resultErr error
 	}
 	if inv.Removing {
 		return errors.New("installation is being removed")
-	}
-	ready, err := json.Marshal(windowsUpdateResult{State: "pending", HelperReady: true, UpdatedVersion: manifest.Version})
-	if err != nil {
-		return err
-	}
-	if err := installstate.WritePrivate(resultPath, append(ready, '\n')); err != nil {
-		return fmt.Errorf("confirm Windows update helper startup: %w", err)
 	}
 	files := make(map[string][]byte, len(manifest.Hashes))
 	for name, want := range manifest.Hashes {
