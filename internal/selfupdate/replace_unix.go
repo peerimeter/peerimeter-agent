@@ -25,6 +25,9 @@ func setFileOwner(file *os.File, info os.FileInfo) error {
 }
 
 func replaceFile(stage, path string) error {
+	if isManagedAliasSymlink(path) {
+		return nil
+	}
 	if err := syncDirectory(filepath.Dir(path)); err != nil {
 		return err
 	}
@@ -32,6 +35,18 @@ func replaceFile(stage, path string) error {
 		return err
 	}
 	return syncDirectory(filepath.Dir(path))
+}
+
+func isManagedAliasSymlink(path string) bool {
+	if filepath.Base(path) != "pma" {
+		return false
+	}
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return false
+	}
+	target, err := os.Readlink(path)
+	return err == nil && target == "peerimeter-agent"
 }
 
 func restoreFile(backup, path string) error {

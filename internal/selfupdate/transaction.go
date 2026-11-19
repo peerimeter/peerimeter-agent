@@ -333,6 +333,11 @@ func recoverJournal(inv installstate.Inventory, path string, j *journal) error {
 	for i := len(j.Files) - 1; i >= 0; i-- {
 		f := j.Files[i]
 		oldHashes[f.Name] = f.OldHash
+		if isManagedAliasSymlink(f.Path) {
+			_ = os.Remove(f.Backup)
+			_ = os.Remove(f.Stage)
+			continue
+		}
 		hash, hashErr := installstate.Hash(f.Path)
 		if hashErr == nil && hash == f.OldHash {
 			_ = os.Remove(f.Backup)

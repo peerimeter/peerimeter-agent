@@ -11,6 +11,8 @@ import (
 
 func setFileOwner(_ *os.File, _ os.FileInfo) error { return nil }
 
+func isManagedAliasSymlink(string) bool { return false }
+
 func replaceFile(stage, path string) error {
 	if err := syncDirectory(filepath.Dir(path)); err != nil {
 		return err
