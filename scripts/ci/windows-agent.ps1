@@ -583,7 +583,8 @@ peers:
     [IO.File]::WriteAllBytes($noticePath,$noticeBytes)
     # Resume safely when a previous attempt already removed one tracked member.
     Remove-Item -LiteralPath $noticePath -Force
-    $removal = Invoke-Agent -CommandArgs @('uninstall','--yes','--install-dir',$installation) | ConvertFrom-Json
+    Push-Location $installation
+    try { $removal = Invoke-Agent -CommandArgs @('uninstall','--yes','--install-dir',$installation) | ConvertFrom-Json } finally { Pop-Location }
     if ($removal.state -eq 'pending') {
         $removalResult = $removal.result_file
         if (-not $removalResult) { throw 'Windows pending removal omitted its result path' }
