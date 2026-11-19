@@ -20,7 +20,7 @@ $InstallDir = [IO.Path]::GetFullPath($InstallDir)
 $aliasPath = Join-Path $InstallDir 'pma.cmd'
 $legacyAliasPath = Join-Path $InstallDir 'pma.exe'
 $agentPath = Join-Path $InstallDir 'peerimeter-agent.exe'
-$expectedAlias = "@echo off`r`n`"%~dp0peerimeter-agent.exe`" %*`r`nexit /b %ERRORLEVEL%`r`n"
+$expectedAlias = "@echo off`r`nsetlocal DisableDelayedExpansion`r`n`"%~dp0peerimeter-agent.exe`" %*`r`nexit /b %ERRORLEVEL%`r`n"
 if (Test-Path -LiteralPath $aliasPath) {
     $aliasItem = Get-Item -LiteralPath $aliasPath -Force
     if ($aliasItem.PSIsContainer -or ($aliasItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Test-Path -LiteralPath $agentPath -PathType Leaf) -or [IO.File]::ReadAllText($aliasPath) -ne $expectedAlias) {

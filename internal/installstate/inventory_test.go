@@ -196,6 +196,34 @@ func TestRegisterMigratesLegacyWindowsPmaExeInventory(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsLegacyAliasInPlaceOfRequiredWindowsProgram(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows legacy alias validation")
+	}
+	dir := fixtureInstall(t)
+	inv, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyAlias := File{Name: "pma.exe", Dir: dir}
+	remainingFiles := make([]File, 0, len(inv.Files))
+	for _, file := range inv.Files {
+		if file.Name == "pma.cmd" {
+			legacyAlias.SHA256 = file.SHA256
+		}
+		if file.Name != "peerimeter-agent.exe" {
+			remainingFiles = append(remainingFiles, file)
+		}
+	}
+	inv.Files = append(remainingFiles, legacyAlias)
+	if err := save(inv); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); err == nil {
+		t.Fatal("inventory missing the primary executable was accepted")
+	}
+}
+
 func fixtureProfile(t *testing.T) Profile {
 	t.Helper()
 	root := t.TempDir()

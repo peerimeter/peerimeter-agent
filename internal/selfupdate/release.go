@@ -108,7 +108,7 @@ func fetchAt(ctx context.Context, client *http.Client, goos, goarch, latestEndpo
 	return latest.TagName, files, nil
 }
 
-const windowsCommandAlias = "@echo off\r\n\"%~dp0peerimeter-agent.exe\" %*\r\nexit /b %ERRORLEVEL%\r\n"
+const windowsCommandAlias = "@echo off\r\nsetlocal DisableDelayedExpansion\r\n\"%~dp0peerimeter-agent.exe\" %*\r\nexit /b %ERRORLEVEL%\r\n"
 
 var releaseTag = regexp.MustCompile(`^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$`)
 

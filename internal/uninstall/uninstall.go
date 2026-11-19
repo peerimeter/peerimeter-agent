@@ -581,7 +581,12 @@ func executeWithRegistrationProbeAndFinalizer(ctx context.Context, opts Options,
 	}
 	inv, err := installstate.Load(dir)
 	if os.IsNotExist(err) {
-		for _, name := range append(append(installstate.ProgramNames(), installstate.Filename, installstate.LegacyYAMLFilename, installstate.LegacyJSONFilename), installstate.ReferenceFilename, installstate.LegacyReferenceFilename) {
+		programNames := installstate.ProgramNames()
+		if runtime.GOOS == "windows" {
+			// TODO(next major): remove legacy pma.exe detection with inventory compatibility.
+			programNames = append(programNames, "pma.exe")
+		}
+		for _, name := range append(append(programNames, installstate.Filename, installstate.LegacyYAMLFilename, installstate.LegacyJSONFilename), installstate.ReferenceFilename, installstate.LegacyReferenceFilename) {
 			if _, e := os.Lstat(filepath.Join(dir, name)); !os.IsNotExist(e) {
 				return errors.New("installation inventory is absent; existing files are untracked and were preserved")
 			}
