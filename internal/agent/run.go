@@ -38,21 +38,42 @@ func Run(ctx context.Context, backend platform.Backend, desired platform.Desired
 	return nil
 }
 
+// ManagedOptions groups the configuration and callbacks for managed runtime.
+type ManagedOptions struct {
+	Backend         platform.Backend
+	Desired         platform.Desired
+	Directory       string
+	Reload          func(context.Context) (platform.Desired, error)
+	Operator        string
+	InstanceID      string
+	BeforeServe     func() error
+	OnClose         func() error
+	RefreshInterval time.Duration
+	ConfigPath      string
+	ReplaceConfig   func([]byte) (func() error, error)
+	Background      func(context.Context)
+}
+
 // RunManaged exposes only protected local control after the native tunnel starts.
 // Reload validation happens before the backend touches OS state.
-func RunManaged(ctx context.Context, backend platform.Backend, desired platform.Desired, dir string, reload func() (platform.Desired, error), operator, instanceID string, beforeServe, onClose func() error) (result error) {
-	return RunManagedWithRefresh(ctx, backend, desired, dir, func(context.Context) (platform.Desired, error) { return reload() }, operator, instanceID, beforeServe, onClose, 0, "", nil)
+func RunManaged(ctx context.Context, options ManagedOptions) error {
+	return RunManagedWithBackground(ctx, options)
 }
 
 // RunManagedWithRefresh periodically obtains desired state from reload while
 // preserving the same local authenticated control surface as static mode.
-func RunManagedWithRefresh(ctx context.Context, backend platform.Backend, desired platform.Desired, dir string, reload func(context.Context) (platform.Desired, error), operator, instanceID string, beforeServe, onClose func() error, interval time.Duration, configPath string, replaceConfig func([]byte) (func() error, error)) (result error) {
-	return RunManagedWithBackground(ctx, backend, desired, dir, reload, operator, instanceID, beforeServe, onClose, interval, configPath, replaceConfig, nil)
+func RunManagedWithRefresh(ctx context.Context, options ManagedOptions) error {
+	return RunManagedWithBackground(ctx, options)
 }
 
-func RunManagedWithBackground(ctx context.Context, backend platform.Backend, desired platform.Desired, dir string, reload func(context.Context) (platform.Desired, error), operator, instanceID string, beforeServe, onClose func() error, interval time.Duration, configPath string, replaceConfig func([]byte) (func() error, error), background func(context.Context)) (result error) {
+func RunManagedWithBackground(ctx context.Context, options ManagedOptions) (result error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	backend, desired, dir := options.Backend, options.Desired, options.Directory
+	reload, operator, instanceID := options.Reload, options.Operator, options.InstanceID
+	beforeServe, onClose := options.BeforeServe, options.OnClose
+	interval, configPath, replaceConfig := options.RefreshInterval, options.ConfigPath, options.ReplaceConfig
+	background := options.Background
 	publicKey := ""
 	if public, err := secret.Public(desired.PrivateKey); err == nil {
 		publicKey = base64.StdEncoding.EncodeToString(public[:])
