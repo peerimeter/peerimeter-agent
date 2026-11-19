@@ -95,7 +95,8 @@ echo 'PASS: offline checksum verification, spaced destination and existing binar
 
 # Self-update replaces the inventoried symlink with the verified executable.
 # A later installer run must accept that equivalent alias and restore its symlink form.
-cp "$destination/peerimeter-agent" "$destination/pma"
+cp "$destination/peerimeter-agent" "$work/pma-updated"
+mv -f "$work/pma-updated" "$destination/pma"
 sh "$installer" --binary "$work/peerimeter-agent" --sha256 "$hash" --notices "$work/peerimeter-agent.NOTICES.txt" --notices-sha256 "$notices_hash" --install-dir "$destination" "${install_dirs[@]}"
 [[ -L "$destination/pma" && $(readlink "$destination/pma") == peerimeter-agent ]]
 "$destination/pma" version --json >"$work/reinstalled-pma-version.json"
