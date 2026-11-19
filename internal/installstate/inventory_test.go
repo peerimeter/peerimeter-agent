@@ -47,6 +47,33 @@ func TestCheckDirectoryRejectsWritableAncestor(t *testing.T) {
 	}
 }
 
+func TestCheckFileAllowsOnlyLocalPmaSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows uses a pma.exe copy")
+	}
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "peerimeter-agent")
+	if err := os.WriteFile(binary, []byte("agent"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(dir, "pma")
+	if err := os.Symlink("peerimeter-agent", alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckFile(alias); err != nil {
+		t.Fatalf("valid pma symlink rejected: %v", err)
+	}
+	if err := os.Remove(alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/etc/passwd", alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckFile(alias); err == nil {
+		t.Fatal("pma symlink to an unrelated file accepted")
+	}
+}
+
 func TestCreatePrivateTempDirProtectsChildren(t *testing.T) {
 	parent := t.TempDir()
 	dir, err := CreatePrivateTempDir(parent, ".private-")

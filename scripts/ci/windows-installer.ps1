@@ -67,7 +67,7 @@ function Track-ResourceRoot([string]$Directory) {
 }
 function Assert-Package([string]$Directory) {
     $resourceRoot = Get-ResourceRoot $Directory
-    foreach ($item in @(@{Name='peerimeter-agent.exe';Dir=$Directory},@{Name='wireguard.dll';Dir=$Directory},@{Name='peerimeter-agent.NOTICES.txt';Dir=(Join-Path $resourceRoot 'Documentation')})) {
+    foreach ($item in @(@{Name='peerimeter-agent.exe';Dir=$Directory},@{Name='pma.exe';Dir=$Directory},@{Name='wireguard.dll';Dir=$Directory},@{Name='peerimeter-agent.NOTICES.txt';Dir=(Join-Path $resourceRoot 'Documentation')})) {
         $name = $item.Name
         $path = Join-Path $item.Dir $name
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Installed package member missing: $name" }
@@ -88,6 +88,9 @@ function Assert-Package([string]$Directory) {
     $binary = Join-Path $Directory 'peerimeter-agent.exe'
     $version = & $binary version --json | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0 -or $version.os -ne 'windows' -or $version.go_version -ne 'go1.27.4') { throw 'Installed native agent executable failed version smoke test' }
+    $aliasVersion = & (Join-Path $Directory 'pma.exe') version --json | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or $aliasVersion.version -ne $version.version) { throw 'Installed pma.exe alias failed version smoke test' }
+    if ((Get-FileHash -LiteralPath (Join-Path $Directory 'pma.exe')).Hash -ne (Get-FileHash -LiteralPath $binary).Hash) { throw 'Installed pma.exe does not match the agent executable' }
     if (@(Get-ChildItem -LiteralPath $Directory -Force | Where-Object { $_.Name -match '\.(new|old)-' }).Count -or @(Get-ChildItem -LiteralPath (Join-Path $resourceRoot 'Documentation') -Force | Where-Object { $_.Name -match '\.(new|old)-' }).Count) { throw 'Installer leaked staged or backup files' }
 }
 function Remove-InstalledPackage([string]$Directory,[string]$ExternalCLI) {
@@ -130,7 +133,7 @@ function Remove-InstalledPackage([string]$Directory,[string]$ExternalCLI) {
         if (-not $done) { Show-RemovalDiagnostics $result.result_file; throw 'Windows package removal did not complete within 60 seconds' }
         Remove-Item -LiteralPath $result.result_file -Force
     } elseif ($result.state -ne 'removed') { throw 'Unrecognized package uninstall result' }
-    foreach ($path in @((Join-Path $Directory 'peerimeter-agent.exe'),(Join-Path $Directory 'wireguard.dll'),(Join-Path $Directory '.install.ref'),(Join-Path (Join-Path $resourceRoot 'Documentation') 'peerimeter-agent.NOTICES.txt'),(Join-Path (Join-Path $resourceRoot 'State') '.install.yaml'),(Join-Path (Join-Path $resourceRoot 'Locks') '.install.lock'))) {
+    foreach ($path in @((Join-Path $Directory 'peerimeter-agent.exe'),(Join-Path $Directory 'pma.exe'),(Join-Path $Directory 'wireguard.dll'),(Join-Path $Directory '.install.ref'),(Join-Path (Join-Path $resourceRoot 'Documentation') 'peerimeter-agent.NOTICES.txt'),(Join-Path (Join-Path $resourceRoot 'State') '.install.yaml'),(Join-Path (Join-Path $resourceRoot 'Locks') '.install.lock'))) {
         if (Test-Path -LiteralPath $path) { throw "Installed program member survived uninstall: $path" }
     }
     if ([IO.File]::ReadAllText($sentinel) -ne 'operator data stays') { throw 'Full uninstall removed unrelated installation-parent data' }

@@ -139,8 +139,9 @@ Organization Group Policy may still block scripts; follow your organization's
 policy in that case.
 
 The installer adds the installation directory to the machine PATH. Open a new
-PowerShell window to run `peerimeter-agent` by name. Full uninstall removes
-that PATH entry.
+PowerShell window to run `peerimeter-agent` or its short alias `pma` by name.
+On Linux and macOS, the installer creates `pma` as a symlink beside the agent
+binary. Full uninstall removes the alias and, on Windows, the PATH entry.
 
 ### Package verification
 
@@ -151,8 +152,10 @@ signature. For an offline Unix install, supply a local binary and notices file
 with `--binary`, `--notices`, `--sha256` and `--notices-sha256`; Windows accepts
 a local ZIP with `-Archive` and `-SHA256`. Installers replace program files
 only; they preserve configuration and keys. Installation ancestor owner and
-permission checks are disabled; symbolic links and reparse points remain
-rejected. Key files and managed inventory files retain their private-file checks.
+permission checks are disabled; unexpected symbolic links and reparse points
+remain rejected. The managed Unix `pma` symlink must point directly to the
+adjacent agent binary. Key files and managed inventory files retain their
+private-file checks.
 `peerimeter-agent self-update` explicitly updates a registered installation to
 the latest stable release. It displays the current and latest versions, then
 asks for confirmation before upgrading. In a terminal, a Yes/No selector is

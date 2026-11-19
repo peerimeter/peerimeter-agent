@@ -88,6 +88,11 @@ func fetchAt(ctx context.Context, client *http.Client, goos, goarch, latestEndpo
 	if err != nil {
 		return "", nil, err
 	}
+	if goos == "windows" {
+		files["pma.exe"] = append([]byte(nil), files["peerimeter-agent.exe"]...)
+	} else {
+		files["pma"] = append([]byte(nil), files["peerimeter-agent"]...)
+	}
 	if goos != "windows" {
 		noticesName := asset + ".NOTICES.txt"
 		notices, err := getBytes(ctx, client, base.ResolveReference(&url.URL{Path: noticesName}).String(), 8<<20)
