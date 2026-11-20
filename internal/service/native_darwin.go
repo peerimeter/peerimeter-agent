@@ -153,49 +153,14 @@ func RemoveOwned(ctx context.Context, expectedExe string, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	decoder := xml.NewDecoder(bytes.NewReader(data))
-	var arguments []string
-	key := ""
-	label := ""
-	inArray := false
-	for {
-		token, err := decoder.Token()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return errors.New("cannot verify launchd service ownership")
-		}
-		switch token := token.(type) {
-		case xml.StartElement:
-			switch token.Name.Local {
-			case "key":
-				if err := decoder.DecodeElement(&key, &token); err != nil {
-					return err
-				}
-			case "array":
-				inArray = key == "ProgramArguments"
-			case "string":
-				var value string
-				if err := decoder.DecodeElement(&value, &token); err != nil {
-					return err
-				}
-				if inArray {
-					arguments = append(arguments, value)
-				} else if key == "Label" {
-					label = value
-				}
-			}
-		case xml.EndElement:
-			if token.Name.Local == "array" {
-				inArray = false
-			}
-		}
+	plist, err := parseDarwinLaunchdPlist(data)
+	if err != nil {
+		return errors.New("cannot verify launchd service ownership")
 	}
-	if label != darwinServiceLabel {
+	if plist.Label != darwinServiceLabel {
 		return errors.New("launchd label belongs to another installation")
 	}
-	if err := verifyServiceArguments(arguments, expectedExe, cfg); err != nil {
+	if err := verifyServiceArguments(plist.ProgramArguments, expectedExe, cfg); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -224,20 +189,40 @@ func HasOwnedRegistration(ctx context.Context, expectedExe string) (bool, error)
 	return darwinRegistrationUsesExecutable(data, expectedExe)
 }
 func darwinRegistrationUsesExecutable(data []byte, expectedExe string) (bool, error) {
+	plist, err := parseDarwinLaunchdPlist(data)
+	if err != nil {
+		return false, errors.New("cannot inspect launchd executable registration")
+	}
+	executable := plist.Program
+	if executable == "" && len(plist.ProgramArguments) > 0 {
+		executable = plist.ProgramArguments[0]
+	}
+	if executable == "" || !filepath.IsAbs(executable) {
+		return false, errors.New("launchd registration does not expose an unambiguous absolute executable")
+	}
+	return equalServicePath(executable, expectedExe), nil
+}
+
+type darwinLaunchdPlist struct {
+	Label            string
+	Program          string
+	ProgramArguments []string
+}
+
+func parseDarwinLaunchdPlist(data []byte) (darwinLaunchdPlist, error) {
 	decoder := xml.NewDecoder(bytes.NewReader(data))
 	depth := 0
 	dictionary := 0
 	key := ""
 	seen := map[string]bool{}
-	program := ""
-	argumentZero := ""
+	var plist darwinLaunchdPlist
 	for {
 		token, err := decoder.Token()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return false, errors.New("cannot inspect launchd executable registration")
+			return darwinLaunchdPlist{}, err
 		}
 		switch token := token.(type) {
 		case xml.StartElement:
@@ -251,53 +236,54 @@ func darwinRegistrationUsesExecutable(data []byte, expectedExe string) (bool, er
 			}
 			if token.Name.Local == "key" {
 				if err := decoder.DecodeElement(&key, &token); err != nil {
-					return false, err
+					return darwinLaunchdPlist{}, err
 				}
 				depth--
 				if seen[key] {
-					return false, errors.New("ambiguous duplicate launchd registration key")
+					return darwinLaunchdPlist{}, errors.New("ambiguous duplicate launchd registration key")
 				}
 				seen[key] = true
 				continue
 			}
-			if key == "Program" {
+			switch key {
+			case "Label", "Program":
 				if token.Name.Local != "string" {
-					return false, errors.New("invalid launchd Program registration")
+					return darwinLaunchdPlist{}, fmt.Errorf("invalid launchd %s registration", key)
 				}
-				if err := decoder.DecodeElement(&program, &token); err != nil {
-					return false, err
+				var value string
+				if err := decoder.DecodeElement(&value, &token); err != nil {
+					return darwinLaunchdPlist{}, err
 				}
 				depth--
+				if key == "Label" {
+					plist.Label = value
+				} else {
+					plist.Program = value
+				}
 				key = ""
-				continue
-			}
-			if key == "ProgramArguments" {
+			case "ProgramArguments":
 				if token.Name.Local != "array" {
-					return false, errors.New("invalid launchd ProgramArguments registration")
+					return darwinLaunchdPlist{}, errors.New("invalid launchd ProgramArguments registration")
 				}
 				var args struct {
 					Values []string `xml:"string"`
 				}
 				if err := decoder.DecodeElement(&args, &token); err != nil {
-					return false, err
+					return darwinLaunchdPlist{}, err
 				}
 				depth--
-				if len(args.Values) > 0 {
-					argumentZero = args.Values[0]
+				plist.ProgramArguments = args.Values
+				key = ""
+			default:
+				if err := decoder.Skip(); err != nil {
+					return darwinLaunchdPlist{}, err
 				}
+				depth--
 				key = ""
 			}
 		case xml.EndElement:
 			depth--
 		}
 	}
-	// launchd executes Program when present; argv[0] may deliberately differ.
-	executable := program
-	if executable == "" {
-		executable = argumentZero
-	}
-	if executable == "" || !filepath.IsAbs(executable) {
-		return false, errors.New("launchd registration does not expose an unambiguous absolute executable")
-	}
-	return equalServicePath(executable, expectedExe), nil
+	return plist, nil
 }
