@@ -31,6 +31,19 @@ func renderResponse(out io.Writer, raw []byte, color bool, width int) error {
 	}
 	if state, ok := fields["state"]; ok {
 		var status string
+		if err := json.Unmarshal(state, &status); err == nil && status == "registered" {
+			var result struct {
+				NetworkID     string `json:"network_id"`
+				NodeID        string `json:"node_id"`
+				TunnelAddress string `json:"tunnel_address"`
+				PeerCount     int    `json:"peer_count"`
+			}
+			if err := json.Unmarshal(raw, &result); err != nil {
+				return err
+			}
+			_, err := fmt.Fprintf(out, "Joined network %s as %s (%s); %d peers configured.\n", presentation.Safe(result.NetworkID), presentation.Safe(result.NodeID), presentation.Safe(result.TunnelAddress), result.PeerCount)
+			return err
+		}
 		if err := json.Unmarshal(state, &status); err == nil && status == "example_generated" {
 			_, err := io.WriteString(out, "Example configuration generated. Credentials: protected local key files; keep private.\n")
 			return err
