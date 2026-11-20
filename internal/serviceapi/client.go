@@ -132,10 +132,16 @@ type Client struct {
 	baseURL string
 	token   string
 	http    *http.Client
+	debug   bool
 }
 
 func New(bundle JoinBundle) *Client {
-	return newClient(bundle, newAPIHTTPClient(bundle.APIURL))
+	return NewWithDebug(bundle, false)
+}
+
+// NewWithDebug enables response details for failed HTTP requests.
+func NewWithDebug(bundle JoinBundle, debug bool) *Client {
+	return newClientWithDebug(bundle, newAPIHTTPClient(bundle.APIURL), debug)
 }
 
 func newHTTPClient() *http.Client {
@@ -177,7 +183,11 @@ func isLoopbackRemoteAddress(address net.Addr) bool {
 }
 
 func newClient(bundle JoinBundle, client *http.Client) *Client {
-	return &Client{baseURL: strings.TrimRight(bundle.APIURL, "/"), token: bundle.EnrollmentToken, http: client}
+	return newClientWithDebug(bundle, client, false)
+}
+
+func newClientWithDebug(bundle JoinBundle, client *http.Client, debug bool) *Client {
+	return &Client{baseURL: strings.TrimRight(bundle.APIURL, "/"), token: bundle.EnrollmentToken, http: client, debug: debug}
 }
 
 func (c *Client) GetNetwork(ctx context.Context, networkID string) (NetworkResource, error) {
@@ -190,7 +200,7 @@ func (c *Client) GetNetwork(ctx context.Context, networkID string) (NetworkResou
 	}
 	var result NetworkResource
 	if err := json.Unmarshal(data, &result); err != nil || result.ID != networkID || !validNetworkResource(result) {
-		return NetworkResource{}, errors.New("service returned an invalid network")
+		return NetworkResource{}, c.responseBodyError("service returned an invalid network", data)
 	}
 	return result, nil
 }
@@ -228,7 +238,7 @@ func (c *Client) pullPeerSet(ctx context.Context, path string) (PeerSet, error) 
 	}
 	var result PeerSet
 	if err := json.Unmarshal(data, &result); err != nil || result.Version != 1 || result.Peers == nil {
-		return PeerSet{}, errors.New("service returned an invalid peer list")
+		return PeerSet{}, c.responseBodyError("service returned an invalid peer list", data)
 	}
 	return result, nil
 }
@@ -247,11 +257,11 @@ func (c *Client) RegisterNode(ctx context.Context, networkID, nodeID string, reg
 	}
 	var result RegisteredNode
 	if err := json.Unmarshal(data, &result); err != nil || result.NodeID != nodeID {
-		return RegisteredNode{}, errors.New("service returned an invalid registration")
+		return RegisteredNode{}, c.responseBodyError("service returned an invalid registration", data)
 	}
 	address, err := netip.ParseAddr(result.TunnelAddress)
 	if err != nil || !address.Is4() || !address.IsPrivate() {
-		return RegisteredNode{}, errors.New("service returned an invalid tunnel address")
+		return RegisteredNode{}, c.responseBodyError("service returned an invalid tunnel address", data)
 	}
 	return result, nil
 }
@@ -314,6 +324,9 @@ func (c *Client) request(ctx context.Context, method, path string, body []byte) 
 	}
 	res, err := c.http.Do(req)
 	if err != nil {
+		if c.debug {
+			return nil, fmt.Errorf("service API request failed: %w", err)
+		}
 		return nil, errors.New("service API request failed")
 	}
 	defer res.Body.Close()
@@ -323,18 +336,46 @@ func (c *Client) request(ctx context.Context, method, path string, body []byte) 
 	if method == http.MethodPut && res.StatusCode == http.StatusOK {
 		data, err := io.ReadAll(io.LimitReader(res.Body, maxConfigSize+1))
 		if err != nil || len(data) > maxConfigSize || !validConfig(data) {
-			return nil, errors.New("service returned an invalid registration")
+			return nil, c.responseBodyError("service returned an invalid registration", data)
 		}
 		return data, nil
 	}
 	if method == http.MethodGet && res.StatusCode == http.StatusOK {
 		data, err := io.ReadAll(io.LimitReader(res.Body, maxConfigSize+1))
 		if err != nil || len(data) > maxConfigSize || (!validConfig(data) && !validPeerSet(data)) {
-			return nil, errors.New("service returned an invalid configuration")
+			return nil, c.responseBodyError("service returned an invalid configuration", data)
 		}
 		return data, nil
 	}
-	return nil, fmt.Errorf("service API returned HTTP %d", res.StatusCode)
+	return nil, c.responseError(res)
+}
+
+func (c *Client) responseError(response *http.Response) error {
+	message := fmt.Sprintf("service API returned HTTP %d", response.StatusCode)
+	if !c.debug {
+		return errors.New(message)
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxConfigSize+1))
+	if err != nil {
+		return fmt.Errorf("%s (cannot read response body: %w)", message, err)
+	}
+	return c.responseBodyError(message, data)
+}
+
+func (c *Client) responseBodyError(message string, data []byte) error {
+	if !c.debug {
+		return errors.New(message)
+	}
+	if len(data) > maxConfigSize {
+		return fmt.Errorf("%s (response body exceeds 1 MiB debug limit)", message)
+	}
+	body := strings.TrimSpace(string(data))
+	if body == "" {
+		return errors.New(message)
+	}
+	// A server may echo request data in an error response. Never print the bearer token.
+	body = strings.ReplaceAll(body, c.token, "[REDACTED]")
+	return fmt.Errorf("%s: %s", message, body)
 }
 
 func validPeerSet(data []byte) bool {

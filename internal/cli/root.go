@@ -145,7 +145,7 @@ Use "peerimeter-agent info" to view environment variables and resolved directori
 	root.SetOut(app.out)
 	root.PersistentFlags().StringVar(&app.color, "color", "auto", "Color mode: auto, always or never (auto respects NO_COLOR)")
 	root.PersistentFlags().BoolVar(&app.jsonOutput, "json", false, "Use JSON output and structured logs where supported")
-	root.PersistentFlags().BoolVar(&app.debug, "debug", false, "include captured stack trace when an error occurs")
+	root.PersistentFlags().BoolVar(&app.debug, "debug", false, "include captured stack trace and service API response details on errors")
 	var showHidden bool
 	root.Flags().BoolVar(&showHidden, "all", false, "List all commands, including hidden commands")
 	defaultHelp := root.HelpFunc()

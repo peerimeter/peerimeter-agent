@@ -138,7 +138,7 @@ func runJoin(ctx context.Context, app *application, opts joinOptions) error {
 	if err != nil {
 		return err
 	}
-	client := serviceapi.New(bundle)
+	client := serviceapi.NewWithDebug(bundle, app.debug)
 	networkID := bundle.NetworkID
 	layout, err := paths.Resolve(opts.dirs)
 	if err != nil {

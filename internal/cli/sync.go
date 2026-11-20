@@ -109,7 +109,7 @@ func syncManagedNetwork(ctx context.Context, app *application, opts syncOptions,
 	if nodeID == "" {
 		return errors.New("--node-id is required because this network has no saved node ID")
 	}
-	serviceOptions := serviceConfigOptions{networkID: networkID, nodeID: nodeID, apiURL: opts.apiURL, allowInsecureHTTP: opts.allowInsecureHTTP}
+	serviceOptions := serviceConfigOptions{networkID: networkID, nodeID: nodeID, apiURL: opts.apiURL, allowInsecureHTTP: opts.allowInsecureHTTP, debug: app.debug}
 	identity, err := local.GetIdentity(ctx, runtimeDir)
 	if err != nil {
 		return err
