@@ -6,7 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"sort"
 
+	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/paths"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
@@ -16,78 +20,106 @@ type networkSnapshots struct {
 	Networks []platform.Snapshot `json:"networks"`
 }
 
-func networkRuntimeLayouts(layout paths.Layout, requestedID string) ([]paths.Layout, error) {
-	configs, configErr := discoverManagedConfigs(layout)
-	if configErr == nil {
-		layouts := make([]paths.Layout, 0, len(configs))
-		for _, item := range configs {
-			if requestedID != "" && requestedID != item.networkID {
-				continue
-			}
-			if item.profileScoped {
-				layouts = append(layouts, controlNetworkLayout(layout, item.networkID))
-			} else {
-				layouts = append(layouts, layout)
-			}
-		}
-		if len(layouts) == 0 {
-			return nil, fmt.Errorf("network %q is not registered", requestedID)
-		}
-		return layouts, nil
-	}
-	ids, err := managedNetworkIDs(layout.StateDir)
-	if err != nil {
-		return nil, err
-	}
-	if len(ids) == 0 {
-		if requestedID != "" {
-			identity, identityErr := local.GetIdentity(context.Background(), layout.RuntimeDir)
-			if identityErr != nil || identity.NetworkID != requestedID {
-				return nil, errors.New("no registered networks found")
-			}
-			return []paths.Layout{layout}, nil
-		}
-		return []paths.Layout{layout}, nil
-	}
-	selected, err := selectManagedNetworkIDs(ids, requestedID)
-	if err != nil {
-		return nil, err
-	}
-	layouts := make([]paths.Layout, 0, len(selected))
-	for _, id := range selected {
-		layouts = append(layouts, controlNetworkLayout(layout, id))
-	}
-	return layouts, nil
+type networkRuntime struct {
+	networkID string
+	layout    paths.Layout
 }
 
-func controlNetworkLayout(layout paths.Layout, networkID string) paths.Layout {
-	identity, err := local.GetIdentity(context.Background(), layout.RuntimeDir)
-	if err == nil && identity.NetworkID == networkID {
-		return layout
+func networkRuntimeLayouts(ctx context.Context, layout paths.Layout, requestedID string) ([]networkRuntime, error) {
+	profileDir := filepath.Join(layout.RuntimeDir, "networks")
+	entries, err := os.ReadDir(profileDir)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, errors.New("cannot read network runtime profiles")
 	}
-	return networkLayout(layout, networkID)
+	profiles := make([]networkRuntime, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() || !config.ValidIdentifier(entry.Name()) {
+			continue
+		}
+		profiles = append(profiles, networkRuntime{networkID: entry.Name(), layout: networkLayout(layout, entry.Name())})
+	}
+	sort.Slice(profiles, func(i, j int) bool { return profiles[i].networkID < profiles[j].networkID })
+	if requestedID != "" {
+		for _, profile := range profiles {
+			if profile.networkID == requestedID {
+				return []networkRuntime{profile}, nil
+			}
+		}
+	}
+
+	var root *networkRuntime
+	if _, err := os.Stat(layout.RuntimeDir); err == nil {
+		identity, identityErr := local.GetIdentity(ctx, layout.RuntimeDir)
+		if identityErr == nil {
+			root = &networkRuntime{networkID: identity.NetworkID, layout: layout}
+		} else if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, errors.New("cannot inspect local runtime directory")
+	}
+	if requestedID != "" {
+		if root != nil && root.networkID == requestedID {
+			return []networkRuntime{*root}, nil
+		}
+		for _, profile := range profiles {
+			if profile.networkID == requestedID {
+				return []networkRuntime{profile}, nil
+			}
+		}
+		return nil, fmt.Errorf("network %q has no known runtime profile", requestedID)
+	}
+	if root != nil {
+		profiles = append([]networkRuntime{*root}, profiles...)
+	}
+	if len(profiles) == 0 {
+		return []networkRuntime{{layout: layout}}, nil
+	}
+	return profiles, nil
+}
+
+func controlNetworkLayout(ctx context.Context, layout paths.Layout, networkID string) (paths.Layout, error) {
+	profile := networkLayout(layout, networkID)
+	if _, err := os.Stat(profile.RuntimeDir); err == nil {
+		return profile, nil
+	} else if !os.IsNotExist(err) {
+		return paths.Layout{}, errors.New("cannot inspect network runtime profile")
+	}
+	if _, err := os.Stat(layout.RuntimeDir); err == nil {
+		identity, identityErr := local.GetIdentity(ctx, layout.RuntimeDir)
+		if identityErr == nil && identity.NetworkID == networkID {
+			return layout, nil
+		}
+		if ctx.Err() != nil {
+			return paths.Layout{}, ctx.Err()
+		}
+	} else if !os.IsNotExist(err) {
+		return paths.Layout{}, errors.New("cannot inspect local runtime directory")
+	}
+	return profile, nil
 }
 
 func readNetworkSnapshots(ctx context.Context, layout paths.Layout, requestedID string) ([]platform.Snapshot, error) {
-	runtimes, err := networkRuntimeLayouts(layout, requestedID)
+	runtimes, err := networkRuntimeLayouts(ctx, layout, requestedID)
 	if err != nil {
 		return nil, err
 	}
 	snapshots := make([]platform.Snapshot, 0, len(runtimes))
-	for _, runtimeLayout := range runtimes {
-		var raw []byte
+	var failures []error
+	for _, runtime := range runtimes {
 		var output bufferWriter
-		if err := local.Request(ctx, runtimeLayout.RuntimeDir, "status", &output); err != nil {
-			return nil, err
+		if err := local.Request(ctx, runtime.layout.RuntimeDir, "status", &output); err != nil {
+			failures = append(failures, fmt.Errorf("network %q: %w", runtime.networkID, err))
+			continue
 		}
-		raw = output.Bytes()
 		var snapshot platform.Snapshot
-		if err := json.Unmarshal(raw, &snapshot); err != nil {
-			return nil, errors.New("cannot decode local network status")
+		if err := json.Unmarshal(output.Bytes(), &snapshot); err != nil {
+			failures = append(failures, fmt.Errorf("network %q: cannot decode local status", runtime.networkID))
+			continue
 		}
 		snapshots = append(snapshots, snapshot)
 	}
-	return snapshots, nil
+	return snapshots, errors.Join(failures...)
 }
 
 func writeNetworkSnapshots(out io.Writer, snapshots []platform.Snapshot) error {
@@ -98,17 +130,19 @@ func writeNetworkSnapshots(out io.Writer, snapshots []platform.Snapshot) error {
 }
 
 func requestAllNetworks(ctx context.Context, layout paths.Layout, requestedID, operation string, out io.Writer) error {
-	runtimes, err := networkRuntimeLayouts(layout, requestedID)
+	runtimes, err := networkRuntimeLayouts(ctx, layout, requestedID)
 	if err != nil {
 		return err
 	}
 	var failures []error
-	for _, runtimeLayout := range runtimes {
+	succeeded := 0
+	for _, runtime := range runtimes {
 		var raw bufferWriter
-		if err := local.Request(ctx, runtimeLayout.RuntimeDir, operation, &raw); err != nil {
-			failures = append(failures, err)
+		if err := local.Request(ctx, runtime.layout.RuntimeDir, operation, &raw); err != nil {
+			failures = append(failures, fmt.Errorf("network %q: %w", runtime.networkID, err))
 			continue
 		}
+		succeeded++
 		if len(runtimes) == 1 {
 			if _, err := out.Write(raw.Bytes()); err != nil {
 				return err
@@ -118,10 +152,12 @@ func requestAllNetworks(ctx context.Context, layout paths.Layout, requestedID, o
 	if len(failures) > 0 {
 		return errors.Join(failures...)
 	}
-	if len(runtimes) > 1 {
-		return json.NewEncoder(out).Encode(map[string]any{"state": operation, "network_count": len(runtimes)})
+	if len(runtimes) > 1 && succeeded > 0 {
+		if err := json.NewEncoder(out).Encode(map[string]any{"state": operation, "network_count": succeeded}); err != nil {
+			return err
+		}
 	}
-	return err
+	return errors.Join(failures...)
 }
 
 type bufferWriter struct{ data []byte }

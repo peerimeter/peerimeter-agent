@@ -58,6 +58,9 @@ func runSync(ctx context.Context, app *application, opts syncOptions) error {
 		return err
 	}
 	if len(networks) == 0 {
+		if opts.networkID != "" {
+			return errors.New("no joined network credentials found; run join before syncing Service API peers")
+		}
 		return syncManagedNetwork(ctx, app, opts, layout, "")
 	}
 	selected, err := selectManagedNetworkIDs(networks, opts.networkID)
@@ -89,7 +92,11 @@ func syncManagedNetwork(ctx context.Context, app *application, opts syncOptions,
 	if networkID == "" {
 		return local.Request(ctx, layout.RuntimeDir, "reload", app.out)
 	}
-	runtimeDir := controlNetworkLayout(layout, networkID).RuntimeDir
+	runtimeLayout, err := controlNetworkLayout(ctx, layout, networkID)
+	if err != nil {
+		return err
+	}
+	runtimeDir := runtimeLayout.RuntimeDir
 	metadata, metadataErr := readManagedNetworkMetadata(layout.StateDir, networkID)
 	// TODO(peerimeter): Remove the local-only fallback when legacy joins no longer need compatibility.
 	if shouldFallbackToLocalSync(metadata, metadataErr, opts.nodeID, opts.apiURL) {
