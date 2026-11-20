@@ -378,12 +378,18 @@ func (c *Client) responseBodyError(message string, data []byte) error {
 }
 
 func redactTokenFromJSON(body, token string) string {
+	if !json.Valid([]byte(body)) {
+		return redactTokenFromText(body, token)
+	}
 	var value any
-	if err := json.Unmarshal([]byte(body), &value); err == nil {
-		encoded, err := json.Marshal(redactJSONValue(value, token))
-		if err == nil {
-			return string(encoded)
-		}
+	decoder := json.NewDecoder(strings.NewReader(body))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return redactTokenFromText(body, token)
+	}
+	encoded, err := json.Marshal(redactJSONValue(value, token))
+	if err == nil {
+		return string(encoded)
 	}
 	return redactTokenFromText(body, token)
 }
@@ -392,6 +398,11 @@ func redactJSONValue(value any, token string) any {
 	switch value := value.(type) {
 	case string:
 		return strings.ReplaceAll(value, token, "[REDACTED]")
+	case json.Number:
+		if value.String() == token {
+			return "[REDACTED]"
+		}
+		return value
 	case []any:
 		for index, item := range value {
 			value[index] = redactJSONValue(item, token)
