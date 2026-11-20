@@ -248,7 +248,15 @@ configuration, run:
 
 ```sh
 cat /secure/join-token.txt | sudo peerimeter-agent join
+# or read the token from an explicit file
+sudo peerimeter-agent join --token-file /secure/join-token.txt
+# or pass the token directly
+sudo peerimeter-agent join --token 'BASE64URL_TOKEN'
 ```
+
+By default, `--token-file -` reads from standard input. `--token` and an
+explicit `--token-file` cannot be used together. The default output is a short
+console summary; pass `--json` for machine-readable output.
 
 `join` generates a local WireGuard key if needed, registers its public key and
 the default-route physical interface's addresses, then receives a tunnel IPv4

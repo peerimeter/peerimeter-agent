@@ -16,7 +16,7 @@ the full command list.
 | `validate-config` | Validate a static YAML config and its key |
 | `run` | Run the WireGuard agent in the foreground |
 | `daemon` | Run the agent and sync a joined network periodically |
-| `join` | Enroll this agent in a service-managed network |
+| `join` | Enroll this agent in a service-managed network (`--token` or `--token-file`) |
 | `sync` | Refresh enrollment and reconcile the running agent |
 | `status` | Show local tunnel status; `--watch` keeps it updated |
 | `wg [show]` | Show WireGuard interfaces and peers |

@@ -96,14 +96,19 @@ func refreshManagedPeers(ctx context.Context, client *serviceapi.Client, network
 }
 
 func newJoinCommand(app *application) *cobra.Command {
-	var nodeID, operator string
+	var nodeID, operator, token, tokenFile string
 	var allowInsecureHTTP bool
 	var listenPort int
 	var dirs paths.Options
-	cmd := &cobra.Command{Use: "join", Short: "Register this agent with a service-managed network", Args: noArguments, RunE: app.handle(func(cmd *cobra.Command) error {
-		return runJoin(cmd.Context(), app, joinOptions{nodeID: nodeID, operator: operator, listenPort: listenPort, allowInsecureHTTP: allowInsecureHTTP, dirs: dirs})
+	cmd := &cobra.Command{Use: "join", Short: "Register this agent with a service-managed network", Args: noArguments, RunE: app.handleResponse(func(cmd *cobra.Command) error {
+		if token != "" && cmd.Flags().Changed("token-file") {
+			return errors.New("--token and --token-file cannot be used together")
+		}
+		return runJoin(cmd.Context(), app, joinOptions{nodeID: nodeID, operator: operator, token: token, tokenFile: tokenFile, listenPort: listenPort, allowInsecureHTTP: allowInsecureHTTP, dirs: dirs})
 	})}
-	cmd.Long = "Register this agent using a network-scoped Base64URL token read from stdin and save its managed configuration. The network ID comes from the token; the node ID defaults to the machine hostname. Start a tunnel separately with run --config."
+	cmd.Long = "Register this agent using a network-scoped Base64URL token and save its managed configuration. The token is read from stdin by default. The network ID comes from the token; the node ID defaults to the machine hostname. Start a tunnel separately with run --config."
+	cmd.Flags().StringVar(&token, "token", "", "Join token (prefer --token-file for sensitive values)")
+	cmd.Flags().StringVar(&tokenFile, "token-file", "-", "Read join token from this file, or - for stdin (default)")
 	cmd.Flags().StringVar(&nodeID, "node-id", "", "Optional stable node ID (defaults to hostname)")
 	cmd.Flags().IntVar(&listenPort, "listen-port", 51820, "WireGuard UDP listen port")
 	cmd.Flags().StringVar(&operator, "operator", "", "Authorized local username/UID or Windows account/SID")
@@ -115,17 +120,18 @@ func newJoinCommand(app *application) *cobra.Command {
 type joinOptions struct {
 	nodeID            string
 	operator          string
+	token             string
+	tokenFile         string
 	listenPort        int
 	allowInsecureHTTP bool
 	dirs              paths.Options
 }
 
 func runJoin(ctx context.Context, app *application, opts joinOptions) error {
-	data, err := io.ReadAll(io.LimitReader(app.in, 16<<10+1))
-	if err != nil || len(data) > 16<<10 {
-		return errors.New("could not read join token from stdin or token is too large")
+	token, err := readJoinToken(opts.token, opts.tokenFile, app.in)
+	if err != nil {
+		return err
 	}
-	token := strings.TrimSpace(string(data))
 	bundle, err := serviceapi.DecodeJoinTokenWithInsecureHTTP(token, opts.allowInsecureHTTP)
 	if err != nil {
 		return err
@@ -210,6 +216,34 @@ func runJoin(ctx context.Context, app *application, opts joinOptions) error {
 		return err
 	}
 	return nil
+}
+
+func readJoinToken(token, tokenFile string, stdin io.Reader) (string, error) {
+	if token != "" {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			return "", errors.New("join token is empty")
+		}
+		return token, nil
+	}
+	reader := stdin
+	if tokenFile != "-" {
+		file, err := os.Open(tokenFile)
+		if err != nil {
+			return "", fmt.Errorf("cannot open join token file: %w", err)
+		}
+		defer file.Close()
+		reader = file
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, 16<<10+1))
+	if err != nil || len(data) > 16<<10 {
+		return "", errors.New("could not read join token from stdin or token is too large")
+	}
+	token = strings.TrimSpace(string(data))
+	if token == "" {
+		return "", errors.New("join token is empty")
+	}
+	return token, nil
 }
 
 func loadOrGenerateNetworkKey(keyPath string) ([32]byte, string, error) {
