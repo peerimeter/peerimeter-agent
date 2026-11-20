@@ -189,7 +189,7 @@ func runWindowsRecoveryHelper(ctx context.Context, args []string) error {
 	} else if err := installstate.CheckPrivateFile(journalPath); err != nil {
 		return err
 	}
-	profile, err := findAndCheckActiveProfiles(inv.Profiles, func(error) error {
+	profile, err := findAndCheckActiveProfiles(inv.Profiles, func(_ string, _ error) error {
 		return errors.New("stop active agent profiles before update recovery")
 	})
 	if errors.Is(err, errMultipleServiceProfiles) {
@@ -324,81 +324,12 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) (resultErr error
 		return err
 	}
 	defer func() { _ = scheduleWindowsCleanup(transactionDir) }()
-	manifestPath := filepath.Join(transactionDir, updateManifestName)
-	if _, err := os.Lstat(manifestPath); os.IsNotExist(err) {
-		// TODO(next major): remove fallback for the previous update manifest name.
-		manifestPath = filepath.Join(transactionDir, legacyUpdateManifestName)
-	} else if err != nil {
-		return err
-	}
-	if err := installstate.CheckPrivateFile(manifestPath); err != nil {
-		return err
-	}
-	data, err := os.ReadFile(manifestPath)
+	manifest, files, manifestProfile, err := loadAndVerifyHelperManifest(transactionDir, inv)
 	if err != nil {
 		return err
 	}
-	var manifest helperManifest
-	if json.Unmarshal(data, &manifest) != nil {
-		return errors.New("update helper manifest is invalid")
-	}
 	updatedVersion = manifest.Version
-	if manifest.InstallID != inv.ID || manifest.Snapshot.ID != inv.ID || manifest.Snapshot.InstallDir != inv.InstallDir || manifest.Snapshot.LockDir != inv.LockDir {
-		return errors.New("update helper manifest is invalid")
-	}
-	// The service was stopped using the profile set recorded before the release
-	// fetch. Prefer that profile for cleanup if another service profile was
-	// registered while the helper was being staged.
-	profile, multipleServiceProfiles := serviceProfileForHelper(inv.Profiles, manifest.Snapshot.Profiles, true)
-	if !manifest.Snapshot.matches(inv) {
-		return errors.New("update helper manifest is invalid")
-	}
-	if multipleServiceProfiles {
-		return errors.New("multiple service profiles are unsupported")
-	}
-	if _, ok := parseReleaseVersion(manifest.Version); !ok {
-		return errors.New("update helper version is invalid")
-	}
-	if manifest.Version != Version {
-		return errors.New("update helper executable does not match the staged release version")
-	}
-	if inv.Removing {
-		return errors.New("installation is being removed")
-	}
-	files := make(map[string][]byte, len(manifest.Hashes))
-	for name, want := range manifest.Hashes {
-		if !knownFileName(inv, name) {
-			return errors.New("update helper manifest contains an unowned file")
-		}
-		path := filepath.Join(transactionDir, name)
-		if err := installstate.CheckFile(path); err != nil {
-			return err
-		}
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		sum := sha256.Sum256(b)
-		if hex.EncodeToString(sum[:]) != want {
-			return errors.New("staged update file failed its checksum check")
-		}
-		files[name] = b
-	}
-	if len(files) != len(inv.Files) {
-		return errors.New("update helper package is incomplete")
-	}
-	for _, owned := range inv.Files {
-		if owned.Name != "wireguard.dll" {
-			continue
-		}
-		installed, err := os.ReadFile(installstate.ResourcePath(inv, owned))
-		if err != nil {
-			return err
-		}
-		if !bytes.Equal(installed, files[owned.Name]) {
-			return errors.New("staged update attempted to replace the pinned WireGuardNT DLL")
-		}
-	}
+	profile = manifestProfile
 	var newHashes map[string]string
 	var rollback func() error
 	var commit func() error
@@ -494,6 +425,82 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) (resultErr error
 	}
 	resultErr = nil
 	return nil
+}
+
+func loadAndVerifyHelperManifest(transactionDir string, inv installstate.Inventory) (helperManifest, map[string][]byte, *installstate.Profile, error) {
+	manifestPath := filepath.Join(transactionDir, updateManifestName)
+	if _, err := os.Lstat(manifestPath); os.IsNotExist(err) {
+		// TODO(next major): remove fallback for the previous update manifest name.
+		manifestPath = filepath.Join(transactionDir, legacyUpdateManifestName)
+	} else if err != nil {
+		return helperManifest{}, nil, nil, err
+	}
+	if err := installstate.CheckPrivateFile(manifestPath); err != nil {
+		return helperManifest{}, nil, nil, err
+	}
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return helperManifest{}, nil, nil, err
+	}
+	var manifest helperManifest
+	if json.Unmarshal(data, &manifest) != nil {
+		return helperManifest{}, nil, nil, errors.New("update helper manifest is invalid")
+	}
+	if manifest.InstallID != inv.ID || manifest.Snapshot.ID != inv.ID || manifest.Snapshot.InstallDir != inv.InstallDir || manifest.Snapshot.LockDir != inv.LockDir {
+		return helperManifest{}, nil, nil, errors.New("update helper manifest is invalid")
+	}
+	// Prefer the service profile recorded before staging if another profile was registered meanwhile.
+	profile, multipleServiceProfiles := serviceProfileForHelper(inv.Profiles, manifest.Snapshot.Profiles, true)
+	if !manifest.Snapshot.matches(inv) {
+		return helperManifest{}, nil, nil, errors.New("update helper manifest is invalid")
+	}
+	if multipleServiceProfiles {
+		return helperManifest{}, nil, nil, errors.New("multiple service profiles are unsupported")
+	}
+	if _, ok := parseReleaseVersion(manifest.Version); !ok {
+		return helperManifest{}, nil, nil, errors.New("update helper version is invalid")
+	}
+	if manifest.Version != Version {
+		return helperManifest{}, nil, nil, errors.New("update helper executable does not match the staged release version")
+	}
+	if inv.Removing {
+		return helperManifest{}, nil, nil, errors.New("installation is being removed")
+	}
+	files := make(map[string][]byte, len(manifest.Hashes))
+	for name, want := range manifest.Hashes {
+		if !knownFileName(inv, name) {
+			return helperManifest{}, nil, nil, errors.New("update helper manifest contains an unowned file")
+		}
+		path := filepath.Join(transactionDir, name)
+		if err := installstate.CheckFile(path); err != nil {
+			return helperManifest{}, nil, nil, err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return helperManifest{}, nil, nil, err
+		}
+		sum := sha256.Sum256(data)
+		if hex.EncodeToString(sum[:]) != want {
+			return helperManifest{}, nil, nil, errors.New("staged update file failed its checksum check")
+		}
+		files[name] = data
+	}
+	if len(files) != len(inv.Files) {
+		return helperManifest{}, nil, nil, errors.New("update helper package is incomplete")
+	}
+	for _, owned := range inv.Files {
+		if owned.Name != "wireguard.dll" {
+			continue
+		}
+		installed, err := os.ReadFile(installstate.ResourcePath(inv, owned))
+		if err != nil {
+			return helperManifest{}, nil, nil, err
+		}
+		if !bytes.Equal(installed, files[owned.Name]) {
+			return helperManifest{}, nil, nil, errors.New("staged update attempted to replace the pinned WireGuardNT DLL")
+		}
+	}
+	return manifest, files, profile, nil
 }
 
 func serviceProfileForHelper(current, beforeUpdate []installstate.Profile, preferSnapshot bool) (*installstate.Profile, bool) {
