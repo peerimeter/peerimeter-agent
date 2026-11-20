@@ -158,9 +158,12 @@ jobs:
           cache-dependency-path: go.sum
       - name: Build arm64 packages
         run: |
+          : > "$RUNNER_TEMP/SHA256SUMS.all"
           for os in linux darwin windows; do
             python scripts/package.py --os "$os" --arch arm64 --version "$RELEASE_VERSION"
+            cat dist/SHA256SUMS >> "$RUNNER_TEMP/SHA256SUMS.all"
           done
+          mv "$RUNNER_TEMP/SHA256SUMS.all" dist/SHA256SUMS
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: package-cross-arm64
