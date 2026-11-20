@@ -891,6 +891,10 @@ func executeWithRegistrationProbeAndFinalizer(ctx context.Context, opts Options,
 		}
 		return json.NewEncoder(out).Encode(report{State: "pending", ResultFile: result, Message: "The bounded removal helper runs after this process exits. Read the result file to confirm completion; remaining paths indicate a retry is required."})
 	}
+	return executeUnixRemoval(plan, inv, opts.Purge, confirmedPlanPurgeContents, lock, updateLock, &updateLockHeld, remove, out)
+}
+
+func executeUnixRemoval(plan removalPlan, inv installstate.Inventory, purge bool, purgeContents map[string][]string, lock, updateLock io.Closer, updateLockHeld *bool, remove trackedFileRemover, out io.Writer) error {
 	removedFiles := make([]string, 0, len(plan.Files)+3)
 	// Retain profile markers and inventory until all other removals succeed, so
 	// partial failure remains verifiable and a later invocation can safely retry.
@@ -910,9 +914,9 @@ func executeWithRegistrationProbeAndFinalizer(ctx context.Context, opts Options,
 			removedFiles = append(removedFiles, f.Path)
 		}
 	}
-	if opts.Purge {
+	if purge {
 		for _, dir := range plan.PurgeDirs {
-			purged, err := removeDirectoryContents(dir, plannedMarkersForRoot(dir, plan.Files), confirmedPlanPurgeContents[dir])
+			purged, err := removeDirectoryContents(dir, plannedMarkersForRoot(dir, plan.Files), purgeContents[dir])
 			if err != nil {
 				return fmt.Errorf("partial uninstall; cannot purge %s: %w", dir, err)
 			}
@@ -940,7 +944,7 @@ func executeWithRegistrationProbeAndFinalizer(ctx context.Context, opts Options,
 	if err := updateLock.Close(); err != nil {
 		return err
 	}
-	updateLockHeld = false
+	*updateLockHeld = false
 	finalizedFiles, err := removeFinalizationResources(plan, inv.InstallDir, remove)
 	if err != nil {
 		return err

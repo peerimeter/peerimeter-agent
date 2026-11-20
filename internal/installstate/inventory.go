@@ -840,67 +840,70 @@ func RegisterWithDirectories(dir, docDir, dataDir, lockDir string, allowInsecure
 	if err := save(inv); err != nil {
 		return err
 	}
+	if err := updateInstallReference(dir, dataDir, allowInsecure); err != nil {
+		rollbackErr := rollbackInventoryFile(dataDir, previousInventoryName, previousInventory, previousInventoryErr, allowInsecure)
+		return errors.Join(fmt.Errorf("update installation reference: %w", err), rollbackErr)
+	}
+	if legacyInventory && dataDir != dir {
+		cleanupLegacyInstallMetadata(dir, docDir, legacyNotice, legacyNoticeDigest)
+	}
+	return nil
+}
+
+func updateInstallReference(dir, dataDir string, allowInsecure bool) error {
 	refPath := filepath.Join(dir, ReferenceFilename)
-	var refErr error
 	defaultDataDir, defaultErr := defaultInstallDataDir(dir)
 	if defaultErr == nil && dataDir == defaultDataDir {
-		refErr = os.Remove(refPath)
-		if os.IsNotExist(refErr) {
-			refErr = nil
+		if err := os.Remove(refPath); err != nil && !os.IsNotExist(err) {
+			return err
 		}
 	} else {
 		ref, _ := json.Marshal(installReference{DataDir: dataDir})
-		refErr = WritePrivateWithPolicy(refPath, append(ref, '\n'), allowInsecure)
-	}
-	if refErr == nil {
-		// TODO(next major): remove cleanup of the previous reference filename.
-		legacyRef := filepath.Join(dir, LegacyReferenceFilename)
-		if _, legacyErr := readPrivate(legacyRef); legacyErr == nil {
-			refErr = os.Remove(legacyRef)
-			if os.IsNotExist(refErr) {
-				refErr = nil
-			}
-		} else if !os.IsNotExist(legacyErr) {
-			refErr = legacyErr
+		if err := WritePrivateWithPolicy(refPath, append(ref, '\n'), allowInsecure); err != nil {
+			return err
 		}
 	}
-	if refErr != nil {
-		inventoryPath := filepath.Join(dataDir, Filename)
-		var rollbackErr error
-		if previousInventoryErr == nil {
-			if previousInventoryName != Filename {
-				rollbackErr = os.Remove(inventoryPath)
-				if os.IsNotExist(rollbackErr) {
-					rollbackErr = nil
-				}
-				if rollbackErr == nil {
-					rollbackErr = WritePrivateWithPolicy(filepath.Join(dataDir, previousInventoryName), previousInventory, allowInsecure)
-				}
-			} else {
-				rollbackErr = WritePrivateWithPolicy(inventoryPath, previousInventory, allowInsecure)
-			}
-		} else {
-			rollbackErr = os.Remove(inventoryPath)
-			if os.IsNotExist(rollbackErr) {
-				rollbackErr = nil
-			}
+	// TODO(next major): remove cleanup of the previous reference filename.
+	legacyRef := filepath.Join(dir, LegacyReferenceFilename)
+	if _, err := readPrivate(legacyRef); err == nil {
+		if err := os.Remove(legacyRef); err != nil && !os.IsNotExist(err) {
+			return err
 		}
-		return errors.Join(fmt.Errorf("update installation reference: %w", refErr), rollbackErr)
-	}
-	if legacyInventory && dataDir != dir {
-		_ = os.Remove(filepath.Join(dir, Filename))
-		// TODO(next major): remove cleanup of old inventory and lock filenames.
-		_ = os.Remove(filepath.Join(dir, LegacyYAMLFilename))
-		_ = os.Remove(filepath.Join(dir, LegacyJSONFilename))
-		_ = os.Remove(filepath.Join(dir, LockFilename))
-		_ = os.Remove(filepath.Join(dir, LegacyLockFilename))
-		if legacyNotice != "" && filepath.Join(docDir, "peerimeter-agent.NOTICES.txt") != legacyNotice {
-			if oldHash, e := Hash(legacyNotice); e == nil && oldHash == legacyNoticeDigest {
-				_ = os.Remove(legacyNotice)
-			}
-		}
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 	return nil
+}
+
+func rollbackInventoryFile(dataDir, previousName string, previousData []byte, previousErr error, allowInsecure bool) error {
+	inventoryPath := filepath.Join(dataDir, Filename)
+	if previousErr == nil {
+		if previousName != Filename {
+			if err := os.Remove(inventoryPath); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			return WritePrivateWithPolicy(filepath.Join(dataDir, previousName), previousData, allowInsecure)
+		}
+		return WritePrivateWithPolicy(inventoryPath, previousData, allowInsecure)
+	}
+	if err := os.Remove(inventoryPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func cleanupLegacyInstallMetadata(dir, docDir, legacyNotice, legacyNoticeDigest string) {
+	_ = os.Remove(filepath.Join(dir, Filename))
+	// TODO(next major): remove cleanup of old inventory and lock filenames.
+	_ = os.Remove(filepath.Join(dir, LegacyYAMLFilename))
+	_ = os.Remove(filepath.Join(dir, LegacyJSONFilename))
+	_ = os.Remove(filepath.Join(dir, LockFilename))
+	_ = os.Remove(filepath.Join(dir, LegacyLockFilename))
+	if legacyNotice != "" && filepath.Join(docDir, "peerimeter-agent.NOTICES.txt") != legacyNotice {
+		if oldHash, err := Hash(legacyNotice); err == nil && oldHash == legacyNoticeDigest {
+			_ = os.Remove(legacyNotice)
+		}
+	}
 }
 
 func uniqueSortedPaths(paths []string) []string {
@@ -972,21 +975,9 @@ func registerProfileLocked(dir string, p Profile) error {
 	}
 	found := findProfileByStateDir(inv.Profiles, p.StateDir)
 	if found >= 0 {
-		old := inv.Profiles[found]
-		p.ID = old.ID
-		if p.ConfigDir == "" {
-			p.ConfigDir = old.ConfigDir
-		}
-		p.Service = p.Service || old.Service
-		p.RuntimeOwned = old.RuntimeOwned
-		p.ConfigOwned = old.ConfigOwned
-		p.PendingConfigDir = old.PendingConfigDir
-		p.PendingRuntimeDir = old.PendingRuntimeDir
-		if p.LegacyConfigDir == "" {
-			p.LegacyConfigDir = old.LegacyConfigDir
-		}
-		if p.RuntimeDir != old.RuntimeDir || old.ConfigDir != "" && p.ConfigDir != old.ConfigDir {
-			return errors.New("installation profile paths changed without migration")
+		p, err = mergeExistingProfile(inv.Profiles[found], p)
+		if err != nil {
+			return err
 		}
 	}
 	if found < 0 {
@@ -998,38 +989,7 @@ func registerProfileLocked(dir string, p Profile) error {
 	if (p.ClaimRuntime || p.ClaimConfig) && found < 0 {
 		return errors.New("register the planned persistent-state profile before claiming its runtime")
 	}
-	markerPath := filepath.Join(p.StateDir, MarkerFilename)
-	before, err := readPrivate(markerPath)
-	legacyMarkerPath := filepath.Join(p.StateDir, LegacyMarkerFilename)
-	legacyMarker := false
-	if os.IsNotExist(err) {
-		// TODO(next major): remove migration of the previous profile marker filename.
-		before, err = readPrivate(legacyMarkerPath)
-		legacyMarker = err == nil
-	}
-	expected := marker{Version: 1, InstallID: inv.ID, ProfileID: p.ID}
-	if err == nil {
-		var got marker
-		if json.Unmarshal(before, &got) != nil || got != expected {
-			return errors.New("persistent state belongs to another installation profile")
-		}
-		if legacyMarker {
-			if err := WritePrivateWithPolicy(markerPath, before, inv.AllowInsecureInstallDir); err != nil {
-				return err
-			}
-			if err := os.Remove(legacyMarkerPath); err != nil && !os.IsNotExist(err) {
-				return err
-			}
-		}
-	} else if os.IsNotExist(err) {
-		if p.ClaimRuntime {
-			return errors.New("planned persistent profile marker is absent; runtime ownership cannot be claimed")
-		}
-		data, _ := json.Marshal(expected)
-		if err := WritePrivateWithPolicy(markerPath, append(data, '\n'), inv.AllowInsecureInstallDir); err != nil {
-			return err
-		}
-	} else {
+	if err := ensureProfileMarker(inv, p); err != nil {
 		return err
 	}
 	if p.ClaimConfig {
@@ -1051,6 +1011,61 @@ func registerProfileLocked(dir string, p Profile) error {
 	}
 	sort.Slice(inv.Profiles, func(i, j int) bool { return inv.Profiles[i].StateDir < inv.Profiles[j].StateDir })
 	return save(inv)
+}
+
+func mergeExistingProfile(existing, next Profile) (Profile, error) {
+	next.ID = existing.ID
+	if next.ConfigDir == "" {
+		next.ConfigDir = existing.ConfigDir
+	}
+	next.Service = next.Service || existing.Service
+	next.RuntimeOwned = existing.RuntimeOwned
+	next.ConfigOwned = existing.ConfigOwned
+	next.PendingConfigDir = existing.PendingConfigDir
+	next.PendingRuntimeDir = existing.PendingRuntimeDir
+	if next.LegacyConfigDir == "" {
+		next.LegacyConfigDir = existing.LegacyConfigDir
+	}
+	if next.RuntimeDir != existing.RuntimeDir || existing.ConfigDir != "" && next.ConfigDir != existing.ConfigDir {
+		return Profile{}, errors.New("installation profile paths changed without migration")
+	}
+	return next, nil
+}
+
+func ensureProfileMarker(inv Inventory, profile Profile) error {
+	markerPath := filepath.Join(profile.StateDir, MarkerFilename)
+	before, err := readPrivate(markerPath)
+	legacyMarkerPath := filepath.Join(profile.StateDir, LegacyMarkerFilename)
+	legacyMarker := false
+	if os.IsNotExist(err) {
+		// TODO(next major): remove migration of the previous profile marker filename.
+		before, err = readPrivate(legacyMarkerPath)
+		legacyMarker = err == nil
+	}
+	expected := marker{Version: 1, InstallID: inv.ID, ProfileID: profile.ID}
+	if err == nil {
+		var got marker
+		if json.Unmarshal(before, &got) != nil || got != expected {
+			return errors.New("persistent state belongs to another installation profile")
+		}
+		if legacyMarker {
+			if err := WritePrivateWithPolicy(markerPath, before, inv.AllowInsecureInstallDir); err != nil {
+				return err
+			}
+			if err := os.Remove(legacyMarkerPath); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return err
+	}
+	if profile.ClaimRuntime {
+		return errors.New("planned persistent profile marker is absent; runtime ownership cannot be claimed")
+	}
+	data, _ := json.Marshal(expected)
+	return WritePrivateWithPolicy(markerPath, append(data, '\n'), inv.AllowInsecureInstallDir)
 }
 func VerifyProfile(inv Inventory, p Profile) error {
 	if _, err := os.Lstat(p.StateDir); os.IsNotExist(err) {

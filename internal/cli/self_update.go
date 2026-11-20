@@ -275,7 +275,9 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	}
 	if err := runSelfUpdateAction(deps.progress, "Checking that agent profiles are stopped", func() error {
 		var err error
-		managedService, err = findAndCheckActiveProfiles(inv.Profiles, selfUpdateProfileLockError)
+		managedService, err = findAndCheckActiveProfiles(inv.Profiles, func(_ string, err error) error {
+			return selfUpdateProfileLockError(err)
+		})
 		if errors.Is(err, errMultipleServiceProfiles) {
 			return errors.New("installation has multiple service profiles; self-update cannot select one safely")
 		}
@@ -532,7 +534,12 @@ func recoverInterruptedUpdate(installDir string, inv installstate.Inventory, goo
 	if goos == "windows" {
 		return true, scheduleWindowsRecovery(inv)
 	}
-	profile, err := findAndCheckActiveProfiles(inv.Profiles, func(error) error {
+	profile, err := findAndCheckActiveProfiles(inv.Profiles, func(dir string, lockErr error) error {
+		for _, candidate := range inv.Profiles {
+			if candidate.StateDir == dir {
+				return fmt.Errorf("cannot safely update while an agent profile is active: %w", lockErr)
+			}
+		}
 		return errors.New("stop active agent profiles before update recovery")
 	})
 	if errors.Is(err, errMultipleServiceProfiles) {
@@ -710,7 +717,7 @@ func ensureNoActiveUpdateProfiles(inv installstate.Inventory) error {
 
 var errMultipleServiceProfiles = errors.New("multiple service profiles")
 
-func findAndCheckActiveProfiles(profiles []installstate.Profile, mapErr func(error) error) (*installstate.Profile, error) {
+func findAndCheckActiveProfiles(profiles []installstate.Profile, mapErr func(string, error) error) (*installstate.Profile, error) {
 	var serviceProfile *installstate.Profile
 	for i := range profiles {
 		profile := &profiles[i]
@@ -724,7 +731,7 @@ func findAndCheckActiveProfiles(profiles []installstate.Profile, mapErr func(err
 		for _, dir := range []string{profile.StateDir, profile.RuntimeDir} {
 			guard, err := local.TryAcquireExisting(dir)
 			if err != nil {
-				return nil, mapErr(err)
+				return nil, mapErr(dir, err)
 			}
 			if guard != nil {
 				_ = guard.Close()

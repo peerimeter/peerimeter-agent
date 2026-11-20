@@ -263,38 +263,12 @@ func (s *linuxSession) reconcileLocked(ctx context.Context, d Desired) error {
 		addrPresent[linuxAddrKey(a)] = true
 	}
 	wantedAddrs := map[string]bool{}
-	for _, a := range addrs {
-		wantedAddrs[linuxAddrKey(a)] = true
-		if addrPresent[linuxAddrKey(a)] {
-			continue
-		}
-		if err := ctx.Err(); err != nil {
-			return undo.rollback(err)
-		}
-		a := a
-		if err := s.links.AddrAdd(s.link, &a); err != nil {
-			return undo.rollback(fmt.Errorf("add Linux tunnel address: %w", err))
-		}
-		undo.push(func() error { return s.links.AddrDel(s.link, &a) })
+	if err := s.addMissingLinuxAddresses(ctx, addrs, addrPresent, wantedAddrs, &undo); err != nil {
+		return undo.rollback(err)
 	}
 	wantedRoutes := map[string]bool{}
-	for _, r := range routes {
-		wantedRoutes[r.Dst.String()] = true
-		exists, err := linuxRouteExists(s.links, r)
-		if err != nil {
-			return undo.rollback(err)
-		}
-		if exists {
-			continue
-		}
-		if err := ctx.Err(); err != nil {
-			return undo.rollback(err)
-		}
-		r := r
-		if err := s.links.RouteAdd(&r); err != nil {
-			return undo.rollback(fmt.Errorf("add Linux peer route: %w", err))
-		}
-		undo.push(func() error { return s.links.RouteDel(&r) })
+	if err := s.addMissingLinuxRoutes(ctx, routes, wantedRoutes, &undo); err != nil {
+		return undo.rollback(err)
 	}
 	if linuxHasWGChange(change) {
 		reverse := linuxWGUndo(before, change)
@@ -307,34 +281,90 @@ func (s *linuxSession) reconcileLocked(ctx context.Context, d Desired) error {
 	if err := ctx.Err(); err != nil {
 		return undo.rollback(err)
 	}
-	for _, r := range linuxRoutes(s.desired, s.link.Attrs().Index) {
-		if wantedRoutes[r.Dst.String()] {
+	if err := s.removeObsoleteLinuxRoutes(wantedRoutes, &undo); err != nil {
+		return undo.rollback(err)
+	}
+	if err := s.removeObsoleteLinuxAddresses(wantedAddrs, addrPresent, &undo); err != nil {
+		return undo.rollback(err)
+	}
+	s.desired = cloneDesired(d)
+	return nil
+}
+
+func (s *linuxSession) addMissingLinuxAddresses(ctx context.Context, addresses []netlink.Addr, present, wanted map[string]bool, undo *undoStack) error {
+	for _, address := range addresses {
+		key := linuxAddrKey(address)
+		wanted[key] = true
+		if present[key] {
 			continue
 		}
-		exists, err := linuxRouteExists(s.links, r)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		address := address
+		if err := s.links.AddrAdd(s.link, &address); err != nil {
+			return fmt.Errorf("add Linux tunnel address: %w", err)
+		}
+		undo.push(func() error { return s.links.AddrDel(s.link, &address) })
+	}
+	return nil
+}
+
+func (s *linuxSession) addMissingLinuxRoutes(ctx context.Context, routes []netlink.Route, wanted map[string]bool, undo *undoStack) error {
+	for _, route := range routes {
+		wanted[route.Dst.String()] = true
+		exists, err := linuxRouteExists(s.links, route)
 		if err != nil {
-			return undo.rollback(err)
+			return err
+		}
+		if exists {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		route := route
+		if err := s.links.RouteAdd(&route); err != nil {
+			return fmt.Errorf("add Linux peer route: %w", err)
+		}
+		undo.push(func() error { return s.links.RouteDel(&route) })
+	}
+	return nil
+}
+
+func (s *linuxSession) removeObsoleteLinuxRoutes(wanted map[string]bool, undo *undoStack) error {
+	for _, route := range linuxRoutes(s.desired, s.link.Attrs().Index) {
+		if wanted[route.Dst.String()] {
+			continue
+		}
+		exists, err := linuxRouteExists(s.links, route)
+		if err != nil {
+			return err
 		}
 		if !exists {
 			continue
 		}
-		r := r
-		if err := s.links.RouteDel(&r); err != nil {
-			return undo.rollback(fmt.Errorf("remove obsolete Linux peer route: %w", err))
+		route := route
+		if err := s.links.RouteDel(&route); err != nil {
+			return fmt.Errorf("remove obsolete Linux peer route: %w", err)
 		}
-		undo.push(func() error { return s.links.RouteAdd(&r) })
+		undo.push(func() error { return s.links.RouteAdd(&route) })
 	}
-	for _, a := range linuxAddresses(s.desired) {
-		if wantedAddrs[linuxAddrKey(a)] || !addrPresent[linuxAddrKey(a)] {
+	return nil
+}
+
+func (s *linuxSession) removeObsoleteLinuxAddresses(wanted, present map[string]bool, undo *undoStack) error {
+	for _, address := range linuxAddresses(s.desired) {
+		key := linuxAddrKey(address)
+		if wanted[key] || !present[key] {
 			continue
 		}
-		a := a
-		if err := s.links.AddrDel(s.link, &a); err != nil {
-			return undo.rollback(fmt.Errorf("remove obsolete Linux tunnel address: %w", err))
+		address := address
+		if err := s.links.AddrDel(s.link, &address); err != nil {
+			return fmt.Errorf("remove obsolete Linux tunnel address: %w", err)
 		}
-		undo.push(func() error { return s.links.AddrAdd(s.link, &a) })
+		undo.push(func() error { return s.links.AddrAdd(s.link, &address) })
 	}
-	s.desired = cloneDesired(d)
 	return nil
 }
 
