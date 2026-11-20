@@ -263,6 +263,9 @@ func makePlan(inv installstate.Inventory, purge bool) removalPlan {
 	for _, profile := range inv.Profiles {
 		managedDir := filepath.Join(profile.StateDir, "managed")
 		dirs[managedDir] = true
+		if purge && profile.ConfigDir != "" {
+			dirs[profile.ConfigDir] = true
+		}
 		for _, f := range resources(profile) {
 			if !seen[f.Path] {
 				p.Files = append(p.Files, f)

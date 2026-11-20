@@ -493,8 +493,9 @@ sudo peerimeter-agent uninstall --install-dir '/opt/Peerimeter Agent'
 ```
 
 Use `--purge` instead of the standard uninstall when you also want to remove
-all contents of the profile's config, state (including `managed/`), and runtime
-directories. The confirmation list includes the files that will be removed.
+all contents of the profile's config and state directories (including
+`managed/`), plus agent-owned runtime directories. The confirmation list
+includes the files that will be removed.
 
 Installers write a protected installation inventory. Full removal refuses
 arbitrary untracked paths, preserves unrelated files and original source
