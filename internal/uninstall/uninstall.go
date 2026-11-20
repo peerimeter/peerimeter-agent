@@ -53,6 +53,7 @@ type removalPlan struct {
 	Directories       []string               `json:"directories"`
 	PurgeDirs         []string               `json:"purge_directories,omitempty"`
 	PurgeContents     map[string][]string    `json:"purge_contents,omitempty"`
+	PurgePreserve     []string               `json:"purge_preserve,omitempty"`
 	Profiles          []installstate.Profile `json:"profiles"`
 	ResultFile        string                 `json:"result_file"`
 }
@@ -294,7 +295,27 @@ func makePlan(inv installstate.Inventory, purge bool) removalPlan {
 	}
 	sort.Strings(p.PurgeDirs)
 	sort.Slice(p.Directories, func(i, j int) bool { return len(p.Directories[i]) > len(p.Directories[j]) })
+	for _, path := range finalizationResources(p) {
+		for _, root := range p.PurgeDirs {
+			if filepath.Dir(path) == root {
+				p.PurgePreserve = append(p.PurgePreserve, path)
+			}
+		}
+	}
+	sort.Strings(p.PurgePreserve)
 	return p
+}
+
+func finalizationResources(plan removalPlan) []string {
+	return append([]string{
+		plan.Lock,
+		plan.LegacyLock,
+		plan.DataLock,
+		plan.LegacyDataLock,
+		plan.UpdateLock,
+		plan.LegacyUpdateLock,
+		plan.Inventory,
+	}, plan.LegacyInventories...)
 }
 
 func windowsInstallerResourceRoot(inv installstate.Inventory) string {
@@ -353,7 +374,7 @@ func samePathSet(a, b []string) bool {
 }
 
 func sameConfirmedPlan(a, b removalPlan) bool {
-	if len(a.Files) != len(b.Files) || !samePathSet(a.Directories, b.Directories) || !samePathSet(a.PurgeDirs, b.PurgeDirs) || len(a.Profiles) != len(b.Profiles) {
+	if len(a.Files) != len(b.Files) || !samePathSet(a.Directories, b.Directories) || !samePathSet(a.PurgeDirs, b.PurgeDirs) || !samePathSet(a.PurgePreserve, b.PurgePreserve) || len(a.Profiles) != len(b.Profiles) {
 		return false
 	}
 	files := make(map[string]removalFile, len(a.Files))
@@ -418,6 +439,11 @@ func validatePurgeRoots(inv installstate.Inventory, plan removalPlan) error {
 	for _, root := range plan.PurgeDirs {
 		for _, protected := range []struct{ name, path string }{{"installation", inv.InstallDir}, {"installation data", inv.DataDir}, {"installation lock", inv.LockDir}} {
 			if purgeRootContains(root, protected.path) {
+				// Exact metadata directories are safe purge roots because their
+				// inventory and lock files stay protected until finalization.
+				if root == protected.path && protected.name != "installation" {
+					continue
+				}
 				return fmt.Errorf("purge directory %s contains the %s directory %s; refusing to delete installation metadata", root, protected.name, protected.path)
 			}
 		}
@@ -451,14 +477,40 @@ func verifyProfileOwnership(inv *installstate.Inventory) error {
 	return nil
 }
 
-func plannedMarkersForRoot(root string, files []removalFile) map[string]bool {
+func plannedMarkersForRoot(root string, plan removalPlan) map[string]bool {
 	markers := make(map[string]bool)
-	for _, file := range files {
+	for _, file := range plan.Files {
 		if file.Marker && filepath.Dir(file.Path) == root {
 			markers[file.Path] = true
 		}
 	}
+	for _, path := range plan.PurgePreserve {
+		if filepath.Dir(path) == root {
+			markers[path] = true
+		}
+	}
 	return markers
+}
+
+func purgeContentsWithoutPreserved(root string, contents []string, plan removalPlan) []string {
+	preserved := plannedMarkersForRoot(root, removalPlan{PurgePreserve: plan.PurgePreserve})
+	filtered := make([]string, 0, len(contents))
+	for _, path := range contents {
+		if !preserved[path] {
+			filtered = append(filtered, path)
+		}
+	}
+	return filtered
+}
+
+func approvePreservedPurgePaths(root string, contents []string, plan removalPlan) []string {
+	approved := append([]string(nil), contents...)
+	for _, path := range plan.PurgePreserve {
+		if filepath.Dir(path) == root && !contains(approved, path) {
+			approved = append(approved, path)
+		}
+	}
+	return approved
 }
 
 func validateOverrides(opts Options, inv installstate.Inventory) error {
@@ -892,7 +944,7 @@ func reverifyPlanUnderLock(dir string, initialInv installstate.Inventory, confir
 			if err != nil {
 				return installstate.Inventory{}, removalPlan{}, fmt.Errorf("cannot recheck purge contents of %s: %w", root, err)
 			}
-			if !samePathSet(confirmedPurgeContents[root], current) {
+			if !samePathSet(purgeContentsWithoutPreserved(root, confirmedPurgeContents[root], plan), purgeContentsWithoutPreserved(root, current, plan)) {
 				return installstate.Inventory{}, removalPlan{}, errors.New("purge contents changed after confirmation; review the updated contents and retry uninstall")
 			}
 		}
@@ -922,7 +974,7 @@ func executeUnixRemoval(plan removalPlan, inv installstate.Inventory, purge bool
 	}
 	if purge {
 		for _, dir := range plan.PurgeDirs {
-			purged, err := removeDirectoryContents(dir, plannedMarkersForRoot(dir, plan.Files), purgeContents[dir])
+			purged, err := removeDirectoryContents(dir, plannedMarkersForRoot(dir, plan), approvePreservedPurgePaths(dir, purgeContents[dir], plan))
 			if err != nil {
 				return fmt.Errorf("partial uninstall; cannot purge %s: %w", dir, err)
 			}
@@ -981,8 +1033,7 @@ func removeFinalizationResources(plan removalPlan, installDir string, remove tra
 	if err != nil {
 		return nil, fmt.Errorf("read uninstall inventory before finalization: %w", err)
 	}
-	paths := []string{plan.Lock, plan.LegacyLock, plan.DataLock, plan.LegacyDataLock, plan.UpdateLock, plan.LegacyUpdateLock, plan.Inventory}
-	paths = append(paths, plan.LegacyInventories...)
+	paths := finalizationResources(plan)
 	paths = append(paths, filepath.Join(installDir, installstate.ReferenceFilename), filepath.Join(installDir, installstate.LegacyReferenceFilename))
 	var removed []string
 	inventoryRemoved := false
