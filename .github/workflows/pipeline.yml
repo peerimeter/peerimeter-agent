@@ -25,10 +25,13 @@ jobs:
         include:
           - runner: ubuntu-24.04
             os: linux
-          - runner: macos-15-intel
+            arch: amd64
+          - runner: macos-15
             os: darwin
+            arch: arm64
           - runner: windows-2022
             os: windows
+            arch: amd64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     env:
@@ -120,12 +123,12 @@ jobs:
       - name: Build package with licenses and bundled Windows driver
         env:
           CGO_ENABLED: '0'
-        run: python scripts/package.py --os '${{ matrix.os }}' --arch amd64 --version "$RELEASE_VERSION"
+        run: python scripts/package.py --os '${{ matrix.os }}' --arch '${{ matrix.arch }}' --version "$RELEASE_VERSION"
       - name: Unix installer latest/pin/offline/custom-path tests
         if: runner.os != 'Windows'
         run: |
           bash scripts/ci/unix-installer.sh
-          asset="peerimeter-agent-${{ matrix.os }}-x86_64"
+          asset="peerimeter-agent-${{ matrix.os }}-${{ matrix.arch == 'amd64' && 'x86_64' || 'aarch64' }}"
           digest=$(awk -v name="$asset" '$2 == name {print $1}' dist/SHA256SUMS)
           notices="$asset.NOTICES.txt"
           notices_digest=$(awk -v name="$notices" '$2 == name {print $1}' dist/SHA256SUMS)
@@ -138,13 +141,13 @@ jobs:
         run: ./scripts/ci/windows-installer.ps1 -PackageDirectory ./dist
       - uses: actions/upload-artifact@v7.0.2
         with:
-          name: package-${{ matrix.os }}-amd64
+          name: package-${{ matrix.os }}-${{ matrix.arch }}
           path: dist/*
           if-no-files-found: error
           retention-days: 14
 
   package-cross:
-    name: Package / arm64 cross-compile
+    name: Package / cross-compile
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -157,17 +160,19 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
-      - name: Build arm64 packages
+      - name: Build cross-compiled packages
         run: |
           : > "$RUNNER_TEMP/SHA256SUMS.all"
-          for os in linux darwin windows; do
-            python scripts/package.py --os "$os" --arch arm64 --version "$RELEASE_VERSION"
+          for target in linux/arm64 windows/arm64 darwin/amd64; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            python scripts/package.py --os "$os" --arch "$arch" --version "$RELEASE_VERSION"
             cat dist/SHA256SUMS >> "$RUNNER_TEMP/SHA256SUMS.all"
           done
           mv "$RUNNER_TEMP/SHA256SUMS.all" dist/SHA256SUMS
       - uses: actions/upload-artifact@v7.0.2
         with:
-          name: package-cross-arm64
+          name: package-cross
           path: dist/*
           if-no-files-found: error
           retention-days: 14
