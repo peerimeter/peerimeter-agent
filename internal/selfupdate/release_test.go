@@ -22,7 +22,7 @@ func TestFetchVerifiesReleasePackageAndSeparateNotices(t *testing.T) {
 	binary, notices := []byte("binary"), []byte("notices")
 	manifest := sumLine("peerimeter-agent-linux-x86_64", binary) + sumLine("peerimeter-agent-linux-x86_64.NOTICES.txt", notices)
 	responses := map[string]string{
-		latestURL: `{"tag_name":"v1.2.3"}`,
+		latestReleaseEndpoint: `{"tag_name":"v1.2.3"}`,
 		"https://github.com/peerimeter/peerimeter-agent/releases/download/v1.2.3/SHA256SUMS":                                manifest,
 		"https://github.com/peerimeter/peerimeter-agent/releases/download/v1.2.3/peerimeter-agent-linux-x86_64":             string(binary),
 		"https://github.com/peerimeter/peerimeter-agent/releases/download/v1.2.3/peerimeter-agent-linux-x86_64.NOTICES.txt": string(notices),
