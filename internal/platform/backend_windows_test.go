@@ -105,6 +105,15 @@ func TestWindowsConfigurationIdentityAndListenPortDiff(t *testing.T) {
 	}
 }
 
+func TestWindowsPreviousConfigurationReturnsBuildError(t *testing.T) {
+	attempted := windowsTestDesired()
+	previous := windowsTestDesired()
+	previous.Config.Peers[0].Endpoint = "invalid"
+	if _, _, err := windowsPreviousConfiguration(attempted, previous); err == nil {
+		t.Fatal("invalid previous state must return an error before a rollback configuration is used")
+	}
+}
+
 func TestWindowsValidationPrecedesNativeChanges(t *testing.T) {
 	desired := windowsTestDesired()
 	desired.Config.Version = 99

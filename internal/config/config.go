@@ -20,7 +20,16 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/diagnostic"
 )
 
-const MaxSize = 1 << 20
+const (
+	MaxSize               = 1 << 20
+	maxIdentifierBytes    = 128
+	maxNetworkNameBytes   = 128
+	maxInterfaceAddresses = 16
+	maxPeers              = 1024
+	maxAllowedIPsPerPeer  = 256
+	maxTotalRoutes        = 4096
+	maxListenPort         = 65535
+)
 
 // Config is the version 1 static configuration. Keep credentials in a separate
 // protected file; they must never be embedded in this structure.
@@ -117,106 +126,33 @@ func Validate(cfg Config, targetOS string) error {
 	if cfg.Mode != "static" {
 		return invalid("mode must be static")
 	}
-	if !identifier(cfg.Network.ID) {
+	if !ValidIdentifier(cfg.Network.ID) {
 		return invalid("network.id must be a 1–128 byte ASCII identifier")
 	}
-	if strings.TrimSpace(cfg.Network.Name) == "" || len(cfg.Network.Name) > 128 || strings.IndexFunc(cfg.Network.Name, unicode.IsControl) >= 0 {
+	if strings.TrimSpace(cfg.Network.Name) == "" || len(cfg.Network.Name) > maxNetworkNameBytes || strings.IndexFunc(cfg.Network.Name, unicode.IsControl) >= 0 {
 		return invalid("network.name must be nonempty, at most 128 bytes, without control characters")
 	}
 	if cfg.Network.CIDR != "" {
 		prefix, err := netip.ParsePrefix(cfg.Network.CIDR)
-		if err != nil || !prefix.Addr().Is4() || prefix != prefix.Masked() || prefix.Bits() < 8 || prefix.Bits() > 30 || !privateIPv4Prefix(prefix) {
+		if err != nil || !prefix.Addr().Is4() || prefix != prefix.Masked() || prefix.Bits() < 8 || prefix.Bits() > 30 || !IsPrivateIPv4Prefix(prefix) {
 			return invalid("network.cidr must be a canonical private IPv4 prefix between /8 and /30")
 		}
 	}
-	if strings.TrimSpace(cfg.Interface.PrivateKeyFile) == "" || strings.ContainsRune(cfg.Interface.PrivateKeyFile, 0) {
-		return invalid("interface.private_key_file is required")
+	local, err := validateInterface(cfg.Interface, targetOS)
+	if err != nil {
+		return err
 	}
-	if cfg.Interface.ListenPort < 1 || cfg.Interface.ListenPort > 65535 {
-		return invalid("interface.listen_port must be 1–65535")
+	if len(cfg.Peers) > maxPeers {
+		return invalid(fmt.Sprintf("peers supports at most %d entries", maxPeers))
 	}
-	if cfg.Interface.Name != "" {
-		if targetOS != "linux" {
-			return invalid("interface.name is supported only on Linux")
-		}
-		if !interfaceName(cfg.Interface.Name) {
-			return invalid("interface.name must be a safe Linux interface name of at most 15 bytes")
-		}
-	}
-	if len(cfg.Interface.Address) == 0 || len(cfg.Interface.Address) > 16 {
-		return invalid("interface.address requires 1–16 prefixes")
-	}
-	var local []netip.Prefix
-	for _, raw := range cfg.Interface.Address {
-		p, err := netip.ParsePrefix(raw)
-		if err != nil || p.Bits() == 0 || !usable(p.Addr()) || p.Addr().Is4In6() {
-			return invalid("interface.address contains an invalid unicast prefix")
-		}
-		for _, prev := range local {
-			if p.Overlaps(prev) {
-				return invalid("interface.address contains overlapping prefixes")
-			}
-		}
-		local = append(local, p)
-	}
-	if len(cfg.Peers) > 1024 {
-		return invalid("peers supports at most 1024 entries")
-	}
-	keys := map[string]bool{}
-	var routes []netip.Prefix
-	endpoints := map[netip.AddrPort]bool{}
+	state := peerValidationState{keys: map[string]bool{}, endpoints: map[netip.AddrPort]bool{}}
 	for i, peer := range cfg.Peers {
-		field := fmt.Sprintf("peers[%d]", i)
-		key, err := base64.StdEncoding.Strict().DecodeString(peer.PublicKey)
-		if err != nil || len(key) != 32 || allZero(key) || base64.StdEncoding.EncodeToString(key) != peer.PublicKey {
-			return invalid(field + ".public_key must be a canonical nonzero 32-byte base64 key")
-		}
-		if keys[peer.PublicKey] {
-			return invalid(field + ".public_key is duplicated")
-		}
-		keys[peer.PublicKey] = true
-		ep, err := netip.ParseAddrPort(peer.Endpoint)
-		if err != nil || ep.Port() == 0 || (!ep.Addr().IsGlobalUnicast() && !ep.Addr().IsLoopback()) || ep.Addr().Zone() != "" || ep.Addr().Is4In6() {
-			return invalid(field + ".endpoint must be a numeric unicast IP:port")
-		}
-		if endpoints[ep] {
-			return invalid(field + ".endpoint is duplicated")
-		}
-		endpoints[ep] = true
-		for _, own := range local {
-			if own.Contains(ep.Addr()) {
-				return invalid(field + ".endpoint falls inside a local tunnel prefix")
-			}
-		}
-		if peer.PersistentKeepaliveSeconds < 0 || peer.PersistentKeepaliveSeconds > 65535 {
-			return invalid(field + ".persistent_keepalive_seconds must be 0–65535")
-		}
-		if len(peer.AllowedIPs) == 0 || len(peer.AllowedIPs) > 256 {
-			return invalid(field + ".allowed_ips requires 1–256 prefixes")
-		}
-		for _, raw := range peer.AllowedIPs {
-			p, err := netip.ParsePrefix(raw)
-			if err != nil || p != p.Masked() || p.Bits() == 0 || !usable(p.Addr()) || p.Addr().Is4In6() {
-				return invalid(field + ".allowed_ips contains an invalid canonical unicast prefix (default routes are unsupported)")
-			}
-			for _, own := range local {
-				if p.Contains(own.Addr()) {
-					return invalid(field + ".allowed_ips contains a local interface address")
-				}
-			}
-			for _, prev := range routes {
-				if p.Overlaps(prev) {
-					return invalid(field + ".allowed_ips overlaps another configured route")
-				}
-			}
-			if len(routes) >= 4096 {
-				return invalid("allowed_ips exceeds 4096 total routes")
-			}
-			routes = append(routes, p)
+		if err := validatePeer(i, peer, local, &state); err != nil {
+			return err
 		}
 	}
-	for endpoint := range endpoints {
-		for _, route := range routes {
+	for endpoint := range state.endpoints {
+		for _, route := range state.routes {
 			if route.Contains(endpoint.Addr()) {
 				return invalid("peer endpoint falls inside a tunnel route")
 			}
@@ -225,7 +161,99 @@ func Validate(cfg Config, targetOS string) error {
 	return nil
 }
 
-func privateIPv4Prefix(prefix netip.Prefix) bool {
+type peerValidationState struct {
+	keys      map[string]bool
+	endpoints map[netip.AddrPort]bool
+	routes    []netip.Prefix
+}
+
+func validateInterface(iface Interface, targetOS string) ([]netip.Prefix, error) {
+	if strings.TrimSpace(iface.PrivateKeyFile) == "" || strings.ContainsRune(iface.PrivateKeyFile, 0) {
+		return nil, invalid("interface.private_key_file is required")
+	}
+	if iface.ListenPort < 1 || iface.ListenPort > maxListenPort {
+		return nil, invalid("interface.listen_port must be 1–65535")
+	}
+	if iface.Name != "" {
+		if targetOS != "linux" {
+			return nil, invalid("interface.name is supported only on Linux")
+		}
+		if !interfaceName(iface.Name) {
+			return nil, invalid("interface.name must be a safe Linux interface name of at most 15 bytes")
+		}
+	}
+	if len(iface.Address) == 0 || len(iface.Address) > maxInterfaceAddresses {
+		return nil, invalid("interface.address requires 1–16 prefixes")
+	}
+	var local []netip.Prefix
+	for _, raw := range iface.Address {
+		prefix, err := netip.ParsePrefix(raw)
+		if err != nil || prefix.Bits() == 0 || !usable(prefix.Addr()) || prefix.Addr().Is4In6() {
+			return nil, invalid("interface.address contains an invalid unicast prefix")
+		}
+		for _, previous := range local {
+			if prefix.Overlaps(previous) {
+				return nil, invalid("interface.address contains overlapping prefixes")
+			}
+		}
+		local = append(local, prefix)
+	}
+	return local, nil
+}
+
+func validatePeer(index int, peer Peer, local []netip.Prefix, state *peerValidationState) error {
+	field := fmt.Sprintf("peers[%d]", index)
+	key, err := base64.StdEncoding.Strict().DecodeString(peer.PublicKey)
+	if err != nil || len(key) != 32 || IsAllZeroKey(key) || base64.StdEncoding.EncodeToString(key) != peer.PublicKey {
+		return invalid(field + ".public_key must be a canonical nonzero 32-byte base64 key")
+	}
+	if state.keys[peer.PublicKey] {
+		return invalid(field + ".public_key is duplicated")
+	}
+	state.keys[peer.PublicKey] = true
+	endpoint, err := netip.ParseAddrPort(peer.Endpoint)
+	if err != nil || endpoint.Port() == 0 || (!endpoint.Addr().IsGlobalUnicast() && !endpoint.Addr().IsLoopback()) || endpoint.Addr().Zone() != "" || endpoint.Addr().Is4In6() {
+		return invalid(field + ".endpoint must be a numeric unicast IP:port")
+	}
+	if state.endpoints[endpoint] {
+		return invalid(field + ".endpoint is duplicated")
+	}
+	state.endpoints[endpoint] = true
+	for _, own := range local {
+		if own.Contains(endpoint.Addr()) {
+			return invalid(field + ".endpoint falls inside a local tunnel prefix")
+		}
+	}
+	if peer.PersistentKeepaliveSeconds < 0 || peer.PersistentKeepaliveSeconds > maxListenPort {
+		return invalid(field + ".persistent_keepalive_seconds must be 0–65535")
+	}
+	if len(peer.AllowedIPs) == 0 || len(peer.AllowedIPs) > maxAllowedIPsPerPeer {
+		return invalid(field + ".allowed_ips requires 1–256 prefixes")
+	}
+	for _, raw := range peer.AllowedIPs {
+		prefix, err := netip.ParsePrefix(raw)
+		if err != nil || prefix != prefix.Masked() || prefix.Bits() == 0 || !usable(prefix.Addr()) || prefix.Addr().Is4In6() {
+			return invalid(field + ".allowed_ips contains an invalid canonical unicast prefix (default routes are unsupported)")
+		}
+		for _, own := range local {
+			if prefix.Contains(own.Addr()) {
+				return invalid(field + ".allowed_ips contains a local interface address")
+			}
+		}
+		for _, previous := range state.routes {
+			if prefix.Overlaps(previous) {
+				return invalid(field + ".allowed_ips overlaps another configured route")
+			}
+		}
+		if len(state.routes) >= maxTotalRoutes {
+			return invalid("allowed_ips exceeds 4096 total routes")
+		}
+		state.routes = append(state.routes, prefix)
+	}
+	return nil
+}
+
+func IsPrivateIPv4Prefix(prefix netip.Prefix) bool {
 	for _, raw := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} {
 		block, _ := netip.ParsePrefix(raw)
 		if block.Contains(prefix.Addr()) && prefix.Bits() >= block.Bits() {
@@ -235,7 +263,7 @@ func privateIPv4Prefix(prefix netip.Prefix) bool {
 	return false
 }
 func usable(a netip.Addr) bool { return a.IsValid() && a.IsGlobalUnicast() && a.Zone() == "" }
-func allZero(b []byte) bool {
+func IsAllZeroKey(b []byte) bool {
 	for _, v := range b {
 		if v != 0 {
 			return false
@@ -243,8 +271,8 @@ func allZero(b []byte) bool {
 	}
 	return true
 }
-func identifier(s string) bool {
-	if len(s) == 0 || len(s) > 128 {
+func ValidIdentifier(s string) bool {
+	if len(s) == 0 || len(s) > maxIdentifierBytes {
 		return false
 	}
 	for _, c := range s {
@@ -254,7 +282,7 @@ func identifier(s string) bool {
 	}
 	return s != "." && s != ".."
 }
-func interfaceName(s string) bool { return len(s) <= 15 && identifier(s) }
+func interfaceName(s string) bool { return len(s) <= 15 && ValidIdentifier(s) }
 
 func checkYAML(data []byte) error {
 	bad := errors.New("static config contains invalid YAML structure")

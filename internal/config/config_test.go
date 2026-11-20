@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/netip"
 
 	"github.com/peerimeter/peerimeter-agent/internal/diagnostic"
 	"os"
@@ -17,6 +18,25 @@ func fixture() Config {
 	key := make([]byte, 32)
 	key[0] = 1
 	return Config{Version: 1, Mode: "static", Network: Network{ID: "network-home", Name: "Home Network"}, Interface: Interface{PrivateKeyFile: "keys/local.key", Address: []string{"10.80.0.1/32", "fd80::1/128"}, ListenPort: 51820}, Peers: []Peer{{PublicKey: base64.StdEncoding.EncodeToString(key), AllowedIPs: []string{"10.80.0.2/32", "fd80::2/128"}, Endpoint: "127.0.0.1:51821", PersistentKeepaliveSeconds: 25}}}
+}
+
+func TestSharedValidators(t *testing.T) {
+	for _, test := range []struct {
+		value string
+		want  bool
+	}{
+		{"network-1", true}, {".", false}, {"..", false}, {"bad/id", false}, {strings.Repeat("a", 129), false},
+	} {
+		if got := ValidIdentifier(test.value); got != test.want {
+			t.Errorf("ValidIdentifier(%q) = %t, want %t", test.value, got, test.want)
+		}
+	}
+	if !IsAllZeroKey(make([]byte, 32)) || IsAllZeroKey([]byte{1}) {
+		t.Fatal("IsAllZeroKey did not distinguish zero and nonzero keys")
+	}
+	if !IsPrivateIPv4Prefix(netip.MustParsePrefix("10.0.0.0/8")) || IsPrivateIPv4Prefix(netip.MustParsePrefix("8.8.8.0/24")) {
+		t.Fatal("IsPrivateIPv4Prefix returned an unexpected result")
+	}
 }
 func TestValidate(t *testing.T) {
 	for _, os := range []string{"linux", "darwin", "windows"} {

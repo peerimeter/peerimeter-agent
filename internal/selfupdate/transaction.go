@@ -135,43 +135,8 @@ func Apply(inv installstate.Inventory, packageFiles map[string][]byte) (map[stri
 			cleanupStages()
 			return nil, nil, nil, err
 		}
-		stage, err := os.CreateTemp(filepath.Dir(path), ".peerimeter-update-stage-*")
+		stagePath, err := stageUpdateFile(path, info, packageFiles[owned.Name])
 		if err != nil {
-			cleanupStages()
-			return nil, nil, nil, err
-		}
-		stagePath := stage.Name()
-		if err := stage.Chmod(info.Mode().Perm()); err != nil {
-			stage.Close()
-			os.Remove(stagePath)
-			cleanupStages()
-			return nil, nil, nil, err
-		}
-		if err := setFileOwner(stage, info); err != nil {
-			stage.Close()
-			os.Remove(stagePath)
-			cleanupStages()
-			return nil, nil, nil, err
-		}
-		if _, err := stage.Write(packageFiles[owned.Name]); err != nil {
-			stage.Close()
-			os.Remove(stagePath)
-			cleanupStages()
-			return nil, nil, nil, err
-		}
-		if err := stage.Sync(); err != nil {
-			stage.Close()
-			os.Remove(stagePath)
-			cleanupStages()
-			return nil, nil, nil, err
-		}
-		if err := stage.Close(); err != nil {
-			os.Remove(stagePath)
-			cleanupStages()
-			return nil, nil, nil, err
-		}
-		if err := installstate.CheckFile(stagePath); err != nil {
-			os.Remove(stagePath)
 			cleanupStages()
 			return nil, nil, nil, err
 		}
@@ -228,6 +193,40 @@ func Apply(inv installstate.Inventory, packageFiles map[string][]byte) (map[stri
 		return syncDirectory(inv.LockDir)
 	}
 	return hashes, rollback, commit, nil
+}
+
+func stageUpdateFile(targetPath string, info os.FileInfo, data []byte) (string, error) {
+	stage, err := os.CreateTemp(filepath.Dir(targetPath), ".peerimeter-update-stage-*")
+	if err != nil {
+		return "", err
+	}
+	stagePath := stage.Name()
+	fail := func(cause error) (string, error) {
+		_ = stage.Close()
+		_ = os.Remove(stagePath)
+		return "", cause
+	}
+	if err := stage.Chmod(info.Mode().Perm()); err != nil {
+		return fail(err)
+	}
+	if err := setFileOwner(stage, info); err != nil {
+		return fail(err)
+	}
+	if _, err := stage.Write(data); err != nil {
+		return fail(err)
+	}
+	if err := stage.Sync(); err != nil {
+		return fail(err)
+	}
+	if err := stage.Close(); err != nil {
+		_ = os.Remove(stagePath)
+		return "", err
+	}
+	if err := installstate.CheckFile(stagePath); err != nil {
+		_ = os.Remove(stagePath)
+		return "", err
+	}
+	return stagePath, nil
 }
 
 func createBackup(path string, info os.FileInfo, expectedHash string) (string, error) {

@@ -259,6 +259,18 @@ func windowsConfiguration(old *Desired, next Desired) (*driver.ConfigBuilder, er
 	return builder, nil
 }
 
+func windowsPreviousConfiguration(attempted, previous Desired) (driver.Interface, uint32, error) {
+	builder, err := windowsConfiguration(&attempted, previous)
+	if err != nil {
+		return driver.Interface{}, 0, err
+	}
+	if builder == nil {
+		return driver.Interface{}, 0, errors.New("empty configuration")
+	}
+	interfaze, size := builder.Interface()
+	return interfaze, size, nil
+}
+
 func windowsNextHop(prefix netip.Prefix) netip.Addr {
 	if prefix.Addr().Is4() {
 		return netip.IPv4Unspecified()
@@ -316,28 +328,8 @@ func (nativeBackend) Start(ctx context.Context, desired Desired) (Session, error
 			family = windows.AF_INET
 		}
 		if !families[family] {
-			var row *winipcfg.MibIPInterfaceRow
-			for attempts := 0; attempts < 100; attempts++ {
-				row, err = session.luid.IPInterface(family)
-				if err == nil {
-					break
-				}
-				select {
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				case <-time.After(50 * time.Millisecond):
-				}
-			}
-			if err != nil {
-				return nil, fmt.Errorf("wait for Windows IP interface: %w", err)
-			}
-			row.NLMTU = 1420
-			row.DadTransmits = 0
-			row.RouterDiscoveryBehavior = winipcfg.RouterDiscoveryDisabled
-			row.UseAutomaticMetric = false
-			row.Metric = 0
-			if err := row.Set(); err != nil {
-				return nil, fmt.Errorf("configure Windows IP interface: %w", err)
+			if err := configureWindowsIPInterface(ctx, session.luid, family); err != nil {
+				return nil, err
 			}
 			families[family] = true
 		}
@@ -356,6 +348,34 @@ func (nativeBackend) Start(ctx context.Context, desired Desired) (Session, error
 	}
 	complete = true
 	return session, nil
+}
+
+func configureWindowsIPInterface(ctx context.Context, luid winipcfg.LUID, family winipcfg.AddressFamily) error {
+	var row *winipcfg.MibIPInterfaceRow
+	var err error
+	for attempts := 0; attempts < 100; attempts++ {
+		row, err = luid.IPInterface(family)
+		if err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("wait for Windows IP interface: %w", err)
+	}
+	row.NLMTU = defaultTunnelMTU
+	row.DadTransmits = 0
+	row.RouterDiscoveryBehavior = winipcfg.RouterDiscoveryDisabled
+	row.UseAutomaticMetric = false
+	row.Metric = 0
+	if err := row.Set(); err != nil {
+		return fmt.Errorf("configure Windows IP interface: %w", err)
+	}
+	return nil
 }
 
 func (nativeBackend) Inspect(context.Context) (Snapshot, error) {
@@ -387,6 +407,13 @@ func (s *windowsSession) Reconcile(ctx context.Context, desired Desired) error {
 		return err
 	}
 	nextRoutes := windowsRoutes(desired)
+	restorePreviousConfig := func() error {
+		oldInterface, oldSize, err := windowsPreviousConfiguration(desired, s.desired)
+		if err != nil {
+			return fmt.Errorf("build previous WireGuardNT configuration: %w", err)
+		}
+		return s.adapter.SetConfiguration(oldInterface, oldSize)
+	}
 	var added, removed []netip.Prefix
 	rollbackRoutes := func() error {
 		var problems []error
@@ -413,18 +440,14 @@ func (s *windowsSession) Reconcile(ctx context.Context, desired Desired) error {
 	interfaze, size := builder.Interface()
 	if interfaze.Flags != 0 || interfaze.PeerCount != 0 {
 		if err := s.adapter.SetConfiguration(interfaze, size); err != nil {
-			reverse, _ := windowsConfiguration(&desired, s.desired)
-			oldInterface, oldSize := reverse.Interface()
-			restoreErr := s.adapter.SetConfiguration(oldInterface, oldSize)
+			restoreErr := restorePreviousConfig()
 			return errors.Join(fmt.Errorf("update WireGuardNT configuration: %w", err), restoreErr, rollbackRoutes())
 		}
 	}
 	for prefix := range s.routes {
 		if !nextRoutes[prefix] {
 			if err := s.luid.DeleteRoute(prefix, windowsNextHop(prefix)); err != nil {
-				reverse, _ := windowsConfiguration(&desired, s.desired)
-				oldInterface, oldSize := reverse.Interface()
-				restoreErr := s.adapter.SetConfiguration(oldInterface, oldSize)
+				restoreErr := restorePreviousConfig()
 				return errors.Join(fmt.Errorf("remove Windows tunnel route: %w", err), restoreErr, rollbackRoutes())
 			}
 			removed = append(removed, prefix)

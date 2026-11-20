@@ -70,7 +70,7 @@ func (nativeBackend) Start(ctx context.Context, d Desired) (Session, error) {
 	if err := darwinPreflight(ops, 0, d.Config, darwinDesiredRoutes(d.Config)); err != nil {
 		return nil, err
 	}
-	t, err := tun.CreateTUN("utun", 1420)
+	t, err := tun.CreateTUN("utun", defaultTunnelMTU)
 	if err != nil {
 		return nil, errors.New("cannot create native macOS utun interface")
 	}
@@ -87,7 +87,7 @@ func (nativeBackend) Start(ctx context.Context, d Desired) (Session, error) {
 	// Keep the embedded backend silent: unfiltered upstream logs must not reach
 	// product JSON output. Snapshot exposes only selected non-secret UAPI fields.
 	dev := device.NewDevice(t, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
-	s := &darwinSession{dev: dev, name: name, index: iface.Index, desired: darwinCopy(d), owned: map[netip.Prefix]bool{}, ops: ops}
+	s := &darwinSession{dev: dev, name: name, index: iface.Index, desired: cloneDesired(d), owned: map[netip.Prefix]bool{}, ops: ops}
 	fail := func(err error) (Session, error) {
 		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -144,14 +144,6 @@ func darwinValidate(d Desired) error {
 		}
 	}
 	return nil
-}
-func darwinCopy(d Desired) Desired {
-	d.Config.Interface.Address = slices.Clone(d.Config.Interface.Address)
-	d.Config.Peers = slices.Clone(d.Config.Peers)
-	for i := range d.Config.Peers {
-		d.Config.Peers[i].AllowedIPs = slices.Clone(d.Config.Peers[i].AllowedIPs)
-	}
-	return d
 }
 func darwinDesiredRoutes(c config.Config) []netip.Prefix {
 	var result []netip.Prefix
@@ -346,26 +338,24 @@ func (s *darwinSession) Reconcile(ctx context.Context, d Desired) error {
 		added = append(added, p)
 	}
 	update := darwinIPC(s.desired, d)
+	restorePreviousIPC := func() error {
+		if err := s.dev.IpcSet(darwinIPC(d, s.desired)); err != nil {
+			return errors.New("cannot restore previous embedded WireGuard configuration")
+		}
+		return nil
+	}
 	if update != "" {
 		if err := s.dev.IpcSet(update); err != nil {
-			restore := s.dev.IpcSet(darwinIPC(d, s.desired))
-			if restore != nil {
-				restore = errors.New("cannot restore previous embedded WireGuard configuration")
-			}
-			return errors.Join(errors.New("cannot reconcile embedded WireGuard configuration"), restore, rollbackRoutes())
+			return errors.Join(errors.New("cannot reconcile embedded WireGuard configuration"), restorePreviousIPC(), rollbackRoutes())
 		}
 	}
 	for _, p := range remove {
 		if err := s.removeRoute(ctx, p); err != nil {
-			restore := s.dev.IpcSet(darwinIPC(d, s.desired))
-			if restore != nil {
-				restore = errors.New("cannot restore previous embedded WireGuard configuration")
-			}
-			return errors.Join(err, restore, rollbackRoutes())
+			return errors.Join(err, restorePreviousIPC(), rollbackRoutes())
 		}
 		removed = append(removed, p)
 	}
-	s.desired = darwinCopy(d)
+	s.desired = cloneDesired(d)
 	return nil
 }
 

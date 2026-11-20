@@ -221,79 +221,111 @@ func Serve(ctx context.Context, dir string, ops Operations) (func() error, error
 		return nil, errors.Join(errors.New("cannot create local runtime identity"), listener.Close())
 	}
 	runtimeID := hex.EncodeToString(runtimeIDBytes[:])
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/identity", func(w http.ResponseWriter, r *http.Request) {
-		write(w, map[string]string{"instance_id": ops.InstanceID, "runtime_id": runtimeID, "network_id": ops.NetworkID, "config_path": ops.ConfigPath, "public_key": ops.PublicKey}, nil)
-	})
-	mux.HandleFunc("GET /v1/config", func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Peerimeter-Runtime-ID") != runtimeID || ops.Config == nil {
-			write(w, nil, errors.New("running agent identity changed or config is unavailable"))
-			return
-		}
-		data, err := ops.Config()
-		if err != nil {
-			write(w, nil, err)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(append(append([]byte(`{"config":`), data...), '}'))
-	})
-	var applyMu sync.Mutex
-	var applyStateMu sync.Mutex
-	var applyWG sync.WaitGroup
-	applyStopping := false
-	mux.HandleFunc("POST /v1/config/apply", func(w http.ResponseWriter, r *http.Request) {
-		var request struct {
-			RuntimeID string `json:"runtime_id"`
-			NetworkID string `json:"network_id"`
-			Config    []byte `json:"config"`
-		}
-		decoder := json.NewDecoder(io.LimitReader(r.Body, (2<<20)+1))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&request); err != nil || decoder.Decode(new(any)) != io.EOF || request.RuntimeID != runtimeID || request.NetworkID != ops.NetworkID || ops.ApplyConfig == nil {
-			write(w, nil, errors.New("running agent identity changed or config update is unavailable"))
-			return
-		}
-		applyStateMu.Lock()
-		if applyStopping {
-			applyStateMu.Unlock()
-			write(w, nil, errors.New("agent is stopping"))
-			return
-		}
-		applyWG.Add(1)
-		applyStateMu.Unlock()
-		defer applyWG.Done()
-		applyMu.Lock()
-		defer applyMu.Unlock()
-		applyCtx, cancelApply := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
-		defer cancelApply()
-		write(w, map[string]string{"state": "reconciled"}, ops.ApplyConfig(applyCtx, request.Config))
-	})
-	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) { s, err := ops.Snapshot(r.Context()); write(w, s, err) })
-	mux.HandleFunc("GET /v1/peers", func(w http.ResponseWriter, r *http.Request) {
-		s, err := ops.Snapshot(r.Context())
-		write(w, s.Peers, err)
-	})
-	mux.HandleFunc("POST /v1/reload", func(w http.ResponseWriter, r *http.Request) {
-		write(w, map[string]string{"state": "reconciled"}, ops.Reload(r.Context()))
-	})
-	mux.HandleFunc("POST /v1/stop", func(w http.ResponseWriter, r *http.Request) {
-		write(w, map[string]string{"state": "stopping"}, nil)
-		ops.Stop()
-	})
-	server := &http.Server{Handler: mux, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 4096}
+	control := &controlServer{runtimeID: runtimeID, ops: ops}
+	server := &http.Server{Handler: control.handler(), ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 4096}
 	go func() { _ = server.Serve(listener) }()
 	return func() error {
-		applyStateMu.Lock()
-		applyStopping = true
-		applyStateMu.Unlock()
-		applyWG.Wait()
+		control.stopApplying()
 		shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		// net/http ignores some listener Close errors. Explicit idempotent Close
 		// retrieves the recorded callback/guard error instead of reporting success.
 		return errors.Join(server.Shutdown(shutdown), listener.Close())
 	}, nil
+}
+
+type controlServer struct {
+	runtimeID     string
+	ops           Operations
+	applyMu       sync.Mutex
+	applyStateMu  sync.Mutex
+	applyWG       sync.WaitGroup
+	applyStopping bool
+}
+
+func (server *controlServer) handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/identity", server.identity)
+	mux.HandleFunc("GET /v1/config", server.config)
+	mux.HandleFunc("POST /v1/config/apply", server.applyConfig)
+	mux.HandleFunc("GET /v1/status", server.status)
+	mux.HandleFunc("GET /v1/peers", server.peers)
+	mux.HandleFunc("POST /v1/reload", server.reload)
+	mux.HandleFunc("POST /v1/stop", server.stop)
+	return mux
+}
+
+func (server *controlServer) identity(w http.ResponseWriter, _ *http.Request) {
+	ops := server.ops
+	write(w, map[string]string{"instance_id": ops.InstanceID, "runtime_id": server.runtimeID, "network_id": ops.NetworkID, "config_path": ops.ConfigPath, "public_key": ops.PublicKey}, nil)
+}
+
+func (server *controlServer) config(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Peerimeter-Runtime-ID") != server.runtimeID || server.ops.Config == nil {
+		write(w, nil, errors.New("running agent identity changed or config is unavailable"))
+		return
+	}
+	data, err := server.ops.Config()
+	if err != nil {
+		write(w, nil, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(append(append([]byte(`{"config":`), data...), '}'))
+}
+
+func (server *controlServer) applyConfig(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		RuntimeID string `json:"runtime_id"`
+		NetworkID string `json:"network_id"`
+		Config    []byte `json:"config"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(r.Body, (2<<20)+1))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || decoder.Decode(new(any)) != io.EOF || request.RuntimeID != server.runtimeID || request.NetworkID != server.ops.NetworkID || server.ops.ApplyConfig == nil {
+		write(w, nil, errors.New("running agent identity changed or config update is unavailable"))
+		return
+	}
+	server.applyStateMu.Lock()
+	if server.applyStopping {
+		server.applyStateMu.Unlock()
+		write(w, nil, errors.New("agent is stopping"))
+		return
+	}
+	server.applyWG.Add(1)
+	server.applyStateMu.Unlock()
+	defer server.applyWG.Done()
+	server.applyMu.Lock()
+	defer server.applyMu.Unlock()
+	applyCtx, cancelApply := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
+	defer cancelApply()
+	write(w, map[string]string{"state": "reconciled"}, server.ops.ApplyConfig(applyCtx, request.Config))
+}
+
+func (server *controlServer) status(w http.ResponseWriter, r *http.Request) {
+	snapshot, err := server.ops.Snapshot(r.Context())
+	write(w, snapshot, err)
+}
+
+func (server *controlServer) peers(w http.ResponseWriter, r *http.Request) {
+	snapshot, err := server.ops.Snapshot(r.Context())
+	write(w, snapshot.Peers, err)
+}
+
+func (server *controlServer) reload(w http.ResponseWriter, r *http.Request) {
+	write(w, map[string]string{"state": "reconciled"}, server.ops.Reload(r.Context()))
+}
+
+func (server *controlServer) stop(w http.ResponseWriter, _ *http.Request) {
+	write(w, map[string]string{"state": "stopping"}, nil)
+	server.ops.Stop()
+}
+
+func (server *controlServer) stopApplying() {
+	server.applyStateMu.Lock()
+	server.applyStopping = true
+	server.applyStateMu.Unlock()
+	server.applyWG.Wait()
 }
 
 type Identity struct {
@@ -306,9 +338,8 @@ type Identity struct {
 
 func GetIdentity(ctx context.Context, dir string) (Identity, error) {
 	var identity Identity
-	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx, dir) }, DisableKeepAlives: true}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 15 * time.Second}
+	client, closeClient := newControlClient(dir, 15*time.Second)
+	defer closeClient()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://local/v1/identity", nil)
 	if err != nil {
 		return identity, err
@@ -325,9 +356,8 @@ func GetIdentity(ctx context.Context, dir string) (Identity, error) {
 }
 
 func GetConfig(ctx context.Context, dir string, identity Identity) ([]byte, error) {
-	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx, dir) }, DisableKeepAlives: true}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 15 * time.Second}
+	client, closeClient := newControlClient(dir, 15*time.Second)
+	defer closeClient()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://local/v1/config", nil)
 	if err != nil {
 		return nil, err
@@ -338,11 +368,15 @@ func GetConfig(ctx context.Context, dir string, identity Identity) ([]byte, erro
 		return nil, errors.New("agent is not reachable through its local control channel; check service status and permissions")
 	}
 	defer resp.Body.Close()
+	response, err := readControlResponse(resp, "cannot read running agent configuration", 2<<20)
+	if err != nil {
+		return nil, err
+	}
 	var result struct {
 		Config json.RawMessage `json:"config"`
 		Error  string          `json:"error"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&result); err != nil || resp.StatusCode != http.StatusOK || len(result.Config) == 0 {
+	if err := json.NewDecoder(bytes.NewReader(response)).Decode(&result); err != nil || len(result.Config) == 0 {
 		if result.Error != "" {
 			return nil, errors.New(result.Error)
 		}
@@ -360,9 +394,8 @@ func ApplyConfig(ctx context.Context, dir string, identity Identity, data []byte
 	if err != nil {
 		return err
 	}
-	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx, dir) }, DisableKeepAlives: true}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
+	client, closeClient := newControlClient(dir, 30*time.Second)
+	defer closeClient()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://local/v1/config/apply", bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -373,18 +406,9 @@ func ApplyConfig(ctx context.Context, dir string, identity Identity, data []byte
 		return errors.New("agent is not reachable through its local control channel; check service status and permissions")
 	}
 	defer resp.Body.Close()
-	response, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	response, err := readControlResponse(resp, "local agent request failed", 1<<20)
 	if err != nil {
-		return errors.New("cannot read local agent response")
-	}
-	if resp.StatusCode != http.StatusOK {
-		var message struct {
-			Error string `json:"error"`
-		}
-		if json.Unmarshal(response, &message) != nil || message.Error == "" {
-			return errors.New("local agent request failed")
-		}
-		return errors.New(message.Error)
+		return err
 	}
 	_, err = out.Write(response)
 	return err
@@ -399,14 +423,36 @@ func write(w http.ResponseWriter, value any, err error) {
 	}
 	_ = json.NewEncoder(w).Encode(value)
 }
+
+func newControlClient(dir string, timeout time.Duration) (*http.Client, func()) {
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx, dir) }, DisableKeepAlives: true}
+	return &http.Client{Transport: transport, Timeout: timeout}, transport.CloseIdleConnections
+}
+
+func readControlResponse(resp *http.Response, fallback string, maxBytes int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+	if err != nil {
+		return nil, errors.New("cannot read local agent response")
+	}
+	if resp.StatusCode == http.StatusOK {
+		return data, nil
+	}
+	var result struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(data, &result) != nil || result.Error == "" {
+		return nil, errors.New(fallback)
+	}
+	return nil, errors.New(result.Error)
+}
+
 func Request(ctx context.Context, dir, operation string, out io.Writer) error {
 	method := "GET"
 	if operation == "stop" || operation == "reload" {
 		method = "POST"
 	}
-	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx, dir) }, DisableKeepAlives: true}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 15 * time.Second}
+	client, closeClient := newControlClient(dir, 15*time.Second)
+	defer closeClient()
 	req, err := http.NewRequestWithContext(ctx, method, "http://local/v1/"+operation, nil)
 	if err != nil {
 		return err
@@ -416,18 +462,9 @@ func Request(ctx context.Context, dir, operation string, out io.Writer) error {
 		return errors.New("agent is not reachable through its local control channel; check service status and permissions")
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	data, err := readControlResponse(resp, "local agent request failed", 1<<20)
 	if err != nil {
-		return errors.New("cannot read local agent response")
-	}
-	if resp.StatusCode != http.StatusOK {
-		var msg struct {
-			Error string `json:"error"`
-		}
-		if json.Unmarshal(data, &msg) != nil || msg.Error == "" {
-			return errors.New("local agent request failed")
-		}
-		return errors.New(msg.Error)
+		return err
 	}
 	_, err = out.Write(data)
 	return err

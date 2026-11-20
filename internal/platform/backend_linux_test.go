@@ -223,7 +223,7 @@ func TestLinuxReconcilePreservesUntouchedPeersAndRoaming(t *testing.T) {
 	if len(wg.changes) != previousCalls {
 		t.Fatal("unchanged reconciliation reset WireGuard state")
 	}
-	changed := cloneLinuxDesired(d)
+	changed := cloneDesired(d)
 	changed.Config.Peers[0].Endpoint = "192.0.2.99:51822"
 	if err := s.Reconcile(context.Background(), changed); err != nil {
 		t.Fatal(err)
@@ -283,7 +283,7 @@ func TestLinuxReconcileFailureRollsBack(t *testing.T) {
 	s, links, wg, d := linuxTestSession(t)
 	before := wg.device.Peers[0].Endpoint.String()
 	oldRoutes := append([]netlink.Route(nil), links.routes...)
-	changed := cloneLinuxDesired(d)
+	changed := cloneDesired(d)
 	changed.Config.Peers[0].Endpoint = "192.0.2.77:50000"
 	changed.Config.Peers[0].AllowedIPs = []string{"10.80.0.4/32"}
 	wg.failNext = true
@@ -337,7 +337,7 @@ func TestLinuxPersistedOwnershipRecoversOnlyItsStaleInterface(t *testing.T) {
 	if links.dels != 1 || links.adds != 2 {
 		t.Fatal("owned stale interface was not recreated")
 	}
-	wrong := cloneLinuxDesired(d)
+	wrong := cloneDesired(d)
 	wrong.OwnershipToken = strings.Repeat("b", 64)
 	if _, err := startLinux(context.Background(), wrong, links, nil); err == nil {
 		t.Fatal("another protected state took over an interface")

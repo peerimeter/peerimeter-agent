@@ -394,62 +394,8 @@ func loadAtDataDir(dir, requestedDataDir string, allowInsecureOverride bool) (In
 	if err := CheckDirectoryWithPolicy(canonical, true); err != nil {
 		return inv, err
 	}
-	dataDir := ""
-	hasReference := false
-	refData, legacyRef, refErr := readCompatPrivate(canonical, ReferenceFilename, LegacyReferenceFilename)
-	if refErr == nil {
-		hasReference = true
-		var ref installReference
-		if json.Unmarshal(refData, &ref) != nil {
-			return inv, errors.New("installation reference is invalid")
-		}
-		dataDir, err = Canonical(ref.DataDir)
-		if err != nil || dataDir != ref.DataDir {
-			return inv, errors.New("installation reference path is invalid")
-		}
-	} else if !os.IsNotExist(refErr) {
-		return inv, refErr
-	}
-	if legacyRef {
-		// TODO(next major): remove previous install reference discovery.
-	}
-	if !hasReference {
-		if requestedDataDir != "" {
-			dataDir, err = Canonical(requestedDataDir)
-			if err != nil {
-				return inv, err
-			}
-		} else {
-			dataDir, err = defaultInstallDataDir(canonical)
-			if err != nil {
-				return inv, err
-			}
-		}
-	}
-	// Older installations kept their inventory beside the executable. Ignore a
-	// different installation's default inventory and preserve this legacy lookup.
-	if !hasReference && requestedDataDir == "" {
-		if defaultData, _, readErr := readInventory(dataDir); readErr == nil {
-			var owner struct {
-				InstallDir string `yaml:"install_dir"`
-			}
-			if yaml.Unmarshal(defaultData, &owner) != nil || owner.InstallDir == "" {
-				return inv, errors.New("installation inventory is invalid")
-			}
-			if owner.InstallDir != canonical {
-				dataDir = canonical
-			}
-		} else if os.IsNotExist(readErr) {
-			if _, _, legacyErr := readInventory(canonical); legacyErr == nil {
-				dataDir = canonical
-			} else if legacyErr != nil && !os.IsNotExist(legacyErr) {
-				return inv, legacyErr
-			}
-		} else {
-			return inv, readErr
-		}
-	}
-	if err := CheckDirectoryWithPolicy(dataDir, true); err != nil {
+	dataDir, err := resolveInventoryDataDir(canonical, requestedDataDir)
+	if err != nil {
 		return inv, err
 	}
 	data, _, err := readInventory(dataDir)
@@ -485,26 +431,94 @@ func loadAtDataDir(dir, requestedDataDir string, allowInsecureOverride bool) (In
 	if err := CheckDirectoryWithPolicy(canonical, inv.AllowInsecureInstallDir || allowInsecureOverride); err != nil {
 		return inv, err
 	}
+	if err := validateInventoryPrograms(inv); err != nil {
+		return inv, err
+	}
+	if err := validateInventoryProfiles(inv.Profiles); err != nil {
+		return inv, err
+	}
+	return inv, nil
+}
+
+func resolveInventoryDataDir(canonical, requestedDataDir string) (string, error) {
+	dataDir := ""
+	hasReference := false
+	refData, _, refErr := readCompatPrivate(canonical, ReferenceFilename, LegacyReferenceFilename)
+	if refErr == nil {
+		hasReference = true
+		var ref installReference
+		if json.Unmarshal(refData, &ref) != nil {
+			return "", errors.New("installation reference is invalid")
+		}
+		var err error
+		dataDir, err = Canonical(ref.DataDir)
+		if err != nil || dataDir != ref.DataDir {
+			return "", errors.New("installation reference path is invalid")
+		}
+	} else if !os.IsNotExist(refErr) {
+		return "", refErr
+	}
+	if !hasReference {
+		var err error
+		if requestedDataDir != "" {
+			dataDir, err = Canonical(requestedDataDir)
+		} else {
+			dataDir, err = defaultInstallDataDir(canonical)
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+	// Older installations kept their inventory beside the executable. Ignore a
+	// different installation's default inventory and preserve this legacy lookup.
+	if !hasReference && requestedDataDir == "" {
+		if defaultData, _, readErr := readInventory(dataDir); readErr == nil {
+			var owner struct {
+				InstallDir string `yaml:"install_dir"`
+			}
+			if yaml.Unmarshal(defaultData, &owner) != nil || owner.InstallDir == "" {
+				return "", errors.New("installation inventory is invalid")
+			}
+			if owner.InstallDir != canonical {
+				dataDir = canonical
+			}
+		} else if os.IsNotExist(readErr) {
+			if _, _, legacyErr := readInventory(canonical); legacyErr == nil {
+				dataDir = canonical
+			} else if legacyErr != nil && !os.IsNotExist(legacyErr) {
+				return "", legacyErr
+			}
+		} else {
+			return "", readErr
+		}
+	}
+	if err := CheckDirectoryWithPolicy(dataDir, true); err != nil {
+		return "", err
+	}
+	return dataDir, nil
+}
+
+func validateInventoryPrograms(inv Inventory) error {
 	names := map[string]bool{}
-	for _, n := range ProgramNames() {
-		names[n] = true
+	for _, name := range ProgramNames() {
+		names[name] = true
 	}
 	if runtime.GOOS == "windows" {
 		// TODO(next major): remove pma.exe inventory compatibility after migration.
 		names["pma.exe"] = true
 	}
 	seen := map[string]bool{}
-	for _, f := range inv.Files {
-		digest, e := hex.DecodeString(f.SHA256)
-		dir := f.Dir
+	for _, file := range inv.Files {
+		digest, err := hex.DecodeString(file.SHA256)
+		dir := file.Dir
 		if dir == "" {
 			dir = inv.InstallDir
 		}
 		resolved, dirErr := Canonical(dir)
-		if !names[f.Name] || seen[f.Name] || dirErr != nil || resolved != dir || e != nil || len(digest) != 32 {
-			return inv, errors.New("installation inventory contains an invalid program resource")
+		if !names[file.Name] || seen[file.Name] || dirErr != nil || resolved != dir || err != nil || len(digest) != 32 {
+			return errors.New("installation inventory contains an invalid program resource")
 		}
-		seen[f.Name] = true
+		seen[file.Name] = true
 	}
 	programs := ProgramNames()
 	requiredPresent := true
@@ -518,30 +532,33 @@ func loadAtDataDir(dir, requestedDataDir string, allowInsecureOverride bool) (In
 	currentAliasSet := currentAliasPresent && !legacyAliasPresent && len(seen) == len(programs)
 	legacyAliasSet := legacyAliasPresent && !currentAliasPresent && len(seen) == len(programs)
 	aliasFreeSet := !legacyAliasPresent && !currentAliasPresent && len(seen) == len(programs)-1
-	validAliasSet := currentAliasSet || legacyAliasSet || aliasFreeSet
-	if !requiredPresent || !validAliasSet {
-		return inv, errors.New("installation inventory is missing a program resource")
+	if !requiredPresent || !(currentAliasSet || legacyAliasSet || aliasFreeSet) {
+		return errors.New("installation inventory is missing a program resource")
 	}
-	if len(inv.Profiles) > 256 {
-		return inv, errors.New("installation inventory has too many profiles")
+	return nil
+}
+
+func validateInventoryProfiles(profiles []Profile) error {
+	if len(profiles) > 256 {
+		return errors.New("installation inventory has too many profiles")
 	}
-	seen = map[string]bool{}
-	for _, p := range inv.Profiles {
-		if !validID(p.ID) || p.StateDir == "" || p.RuntimeDir == "" || seen[p.StateDir] {
-			return inv, errors.New("installation profile identity is invalid")
+	seen := map[string]bool{}
+	for _, profile := range profiles {
+		if !validID(profile.ID) || profile.StateDir == "" || profile.RuntimeDir == "" || seen[profile.StateDir] {
+			return errors.New("installation profile identity is invalid")
 		}
-		seen[p.StateDir] = true
-		for _, path := range []string{p.ConfigDir, p.LegacyConfigDir, p.PendingConfigDir, p.PendingRuntimeDir, p.StateDir, p.RuntimeDir} {
+		seen[profile.StateDir] = true
+		for _, path := range []string{profile.ConfigDir, profile.LegacyConfigDir, profile.PendingConfigDir, profile.PendingRuntimeDir, profile.StateDir, profile.RuntimeDir} {
 			if path == "" {
 				continue
 			}
-			c, e := Canonical(path)
-			if e != nil || c != path {
-				return inv, errors.New("installation profile path is invalid")
+			canonical, err := Canonical(path)
+			if err != nil || canonical != path {
+				return errors.New("installation profile path is invalid")
 			}
 		}
 	}
-	return inv, nil
+	return nil
 }
 
 func loadForRegistration(dir, dataDir string, allowInsecureOverride bool) (Inventory, error) {
@@ -644,19 +661,11 @@ func Lock(dir string) (io.Closer, error) {
 	if err != nil {
 		return LockWithPolicy(dir, false)
 	}
-	lockDirs := uniqueSortedPaths([]string{inv.LockDir, inv.DataDir})
-	locks := make([]io.Closer, 0, len(lockDirs))
-	for _, lockDir := range lockDirs {
-		lock, lockErr := LockWithPolicy(lockDir, inv.AllowInsecureInstallDir)
-		if lockErr != nil {
-			for i := len(locks) - 1; i >= 0; i-- {
-				_ = locks[i].Close()
-			}
-			return nil, lockErr
-		}
-		locks = append(locks, lock)
+	locks, err := acquireDirectoryLocks([]string{inv.LockDir, inv.DataDir}, inv.AllowInsecureInstallDir)
+	if err != nil {
+		return nil, err
 	}
-	return lockGroup(locks), nil
+	return locks, nil
 }
 
 type lockGroup []io.Closer
@@ -668,6 +677,23 @@ func (locks lockGroup) Close() error {
 	}
 	return errors.Join(errs...)
 }
+
+func acquireDirectoryLocks(dirs []string, allowInsecure bool) (lockGroup, error) {
+	lockDirs := uniqueSortedPaths(dirs)
+	locks := make(lockGroup, 0, len(lockDirs))
+	for _, dir := range lockDirs {
+		lock, err := LockWithPolicy(dir, allowInsecure)
+		if err != nil {
+			for i := len(locks) - 1; i >= 0; i-- {
+				_ = locks[i].Close()
+			}
+			return nil, err
+		}
+		locks = append(locks, lock)
+	}
+	return locks, nil
+}
+
 func LockWithPolicy(dir string, allowInsecure bool) (io.Closer, error) {
 	if err := CheckDirectoryWithPolicy(dir, allowInsecure); err != nil {
 		return nil, err
@@ -745,23 +771,11 @@ func RegisterWithDirectories(dir, docDir, dataDir, lockDir string, allowInsecure
 	if loadErr == nil {
 		lockDirs = append(lockDirs, existing.LockDir)
 	}
-	lockDirs = uniqueSortedPaths(lockDirs)
-	var locks []io.Closer
-	for _, lockDir := range lockDirs {
-		lock, lockErr := LockWithPolicy(lockDir, allowInsecure)
-		if lockErr != nil {
-			for i := len(locks) - 1; i >= 0; i-- {
-				_ = locks[i].Close()
-			}
-			return lockErr
-		}
-		locks = append(locks, lock)
+	locks, err := acquireDirectoryLocks(lockDirs, allowInsecure)
+	if err != nil {
+		return err
 	}
-	defer func() {
-		for i := len(locks) - 1; i >= 0; i-- {
-			_ = locks[i].Close()
-		}
-	}()
+	defer locks.Close()
 	// Re-read after acquiring the shared data-directory lock. Two distinct
 	// executable directories must never overwrite one another's inventory.
 	if current, _, readErr := readInventory(dataDir); readErr == nil {
@@ -956,26 +970,23 @@ func registerProfileLocked(dir string, p Profile) error {
 			}
 		}
 	}
-	found := -1
-	for i, old := range inv.Profiles {
-		if old.StateDir == p.StateDir {
-			found = i
-			p.ID = old.ID
-			if p.ConfigDir == "" {
-				p.ConfigDir = old.ConfigDir
-			}
-			p.Service = p.Service || old.Service
-			p.RuntimeOwned = old.RuntimeOwned
-			p.ConfigOwned = old.ConfigOwned
-			p.PendingConfigDir = old.PendingConfigDir
-			p.PendingRuntimeDir = old.PendingRuntimeDir
-			if p.LegacyConfigDir == "" {
-				p.LegacyConfigDir = old.LegacyConfigDir
-			}
-			if p.RuntimeDir != old.RuntimeDir || old.ConfigDir != "" && p.ConfigDir != old.ConfigDir {
-				return errors.New("installation profile paths changed without migration")
-			}
-			break
+	found := findProfileByStateDir(inv.Profiles, p.StateDir)
+	if found >= 0 {
+		old := inv.Profiles[found]
+		p.ID = old.ID
+		if p.ConfigDir == "" {
+			p.ConfigDir = old.ConfigDir
+		}
+		p.Service = p.Service || old.Service
+		p.RuntimeOwned = old.RuntimeOwned
+		p.ConfigOwned = old.ConfigOwned
+		p.PendingConfigDir = old.PendingConfigDir
+		p.PendingRuntimeDir = old.PendingRuntimeDir
+		if p.LegacyConfigDir == "" {
+			p.LegacyConfigDir = old.LegacyConfigDir
+		}
+		if p.RuntimeDir != old.RuntimeDir || old.ConfigDir != "" && p.ConfigDir != old.ConfigDir {
+			return errors.New("installation profile paths changed without migration")
 		}
 	}
 	if found < 0 {
@@ -1092,13 +1103,7 @@ func MigrateProfile(dir string, oldProfile, next Profile) error {
 	if oldProfile.StateDir != next.StateDir {
 		return errors.New("profile migration cannot change persistent identity directory")
 	}
-	index := -1
-	for i, p := range inv.Profiles {
-		if p.StateDir == oldProfile.StateDir {
-			index = i
-			break
-		}
-	}
+	index := findProfileByStateDir(inv.Profiles, oldProfile.StateDir)
 	if index < 0 {
 		return RegisterProfile(dir, next)
 	}
@@ -1114,13 +1119,7 @@ func MigrateProfile(dir string, oldProfile, next Profile) error {
 	if inv.Removing {
 		return errors.New("installation is being removed; migration is disabled")
 	}
-	index = -1
-	for i, p := range inv.Profiles {
-		if p.StateDir == oldProfile.StateDir {
-			index = i
-			break
-		}
-	}
+	index = findProfileByStateDir(inv.Profiles, oldProfile.StateDir)
 	if index < 0 {
 		return errors.New("profile changed during migration")
 	}
@@ -1158,4 +1157,13 @@ func MigrateProfile(dir string, oldProfile, next Profile) error {
 	next.RuntimeOwned = next.RuntimeDir == existing.RuntimeDir && existing.RuntimeOwned
 	inv.Profiles[index] = next
 	return save(inv)
+}
+
+func findProfileByStateDir(profiles []Profile, stateDir string) int {
+	for index, profile := range profiles {
+		if profile.StateDir == stateDir {
+			return index
+		}
+	}
+	return -1
 }

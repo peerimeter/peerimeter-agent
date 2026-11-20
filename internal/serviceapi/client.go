@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/peerimeter/peerimeter-agent/internal/config"
 )
 
 const maxConfigSize = 1 << 20
@@ -81,7 +83,7 @@ func DecodeJoinTokenWithInsecureHTTP(token string, allowInsecureHTTP bool) (Join
 	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
 		return JoinBundle{}, errors.New("join token must contain exactly one JSON object")
 	}
-	if bundle.Version != 1 || !validAPIToken(bundle.EnrollmentToken) || !validNetworkID(bundle.NetworkID) {
+	if bundle.Version != 1 || !validAPIToken(bundle.EnrollmentToken) || !config.ValidIdentifier(bundle.NetworkID) {
 		return JoinBundle{}, errors.New("join token has an unsupported version or missing API token or network ID")
 	}
 	u, err := url.Parse(bundle.APIURL)
@@ -110,18 +112,6 @@ func isLoopbackHost(host string) bool {
 	}
 	address, err := netip.ParseAddr(host)
 	return err == nil && address.IsLoopback()
-}
-
-func validNetworkID(value string) bool {
-	if value == "" || len(value) > 128 || value == "." || value == ".." {
-		return false
-	}
-	for _, r := range value {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '.' || r == '-') {
-			return false
-		}
-	}
-	return true
 }
 
 func validAPIToken(token string) bool {
@@ -190,7 +180,7 @@ func newClient(bundle JoinBundle, client *http.Client) *Client {
 }
 
 func (c *Client) GetNetwork(ctx context.Context, networkID string) (NetworkResource, error) {
-	if !validID(networkID) {
+	if !config.ValidIdentifier(networkID) {
 		return NetworkResource{}, errors.New("network ID is invalid")
 	}
 	data, err := c.request(ctx, http.MethodGet, "/api/v1/networks/"+url.PathEscape(networkID), nil)
@@ -206,46 +196,29 @@ func (c *Client) GetNetwork(ctx context.Context, networkID string) (NetworkResou
 
 func validNetworkResource(n NetworkResource) bool {
 	prefix, err := netip.ParsePrefix(n.CIDR)
-	return n.Version == 1 && validID(n.ID) && strings.TrimSpace(n.Name) != "" && len(n.Name) <= 128 && err == nil && prefix.Addr().Is4() && prefix == prefix.Masked() && prefix.Bits() >= 8 && prefix.Bits() <= 30 && privateIPv4Prefix(prefix)
-}
-
-func privateIPv4Prefix(prefix netip.Prefix) bool {
-	for _, raw := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"} {
-		block, _ := netip.ParsePrefix(raw)
-		if block.Contains(prefix.Addr()) && prefix.Bits() >= block.Bits() {
-			return true
-		}
-	}
-	return false
+	return n.Version == 1 && config.ValidIdentifier(n.ID) && strings.TrimSpace(n.Name) != "" && len(n.Name) <= 128 && err == nil && prefix.Addr().Is4() && prefix == prefix.Masked() && prefix.Bits() >= 8 && prefix.Bits() <= 30 && config.IsPrivateIPv4Prefix(prefix)
 }
 
 // PullPeers returns the other node documents registered for a network.
 func (c *Client) PullPeers(ctx context.Context, networkID, nodeID string) (PeerSet, error) {
-	if !validID(networkID) || !validID(nodeID) {
+	if !config.ValidIdentifier(networkID) || !config.ValidIdentifier(nodeID) {
 		return PeerSet{}, errors.New("network or node ID is invalid")
 	}
-	data, err := c.request(ctx, http.MethodGet, "/api/v1/networks/"+url.PathEscape(networkID)+"/nodes/"+url.PathEscape(nodeID)+"/peers", nil)
-	if err != nil {
-		return PeerSet{}, err
-	}
-	if !validPeerSet(data) {
-		return PeerSet{}, errors.New("service returned an invalid peer list")
-	}
-	var result PeerSet
-	if err := json.Unmarshal(data, &result); err != nil || result.Version != 1 || result.Peers == nil {
-		return PeerSet{}, errors.New("service returned an invalid peer list")
-	}
-	return result, nil
+	return c.pullPeerSet(ctx, "/api/v1/networks/"+url.PathEscape(networkID)+"/nodes/"+url.PathEscape(nodeID)+"/peers")
 }
 
 // PullNetworkPeers returns every registered node document, including the
 // caller. It is used to retain this node's last known public endpoint when
 // STUN cannot bind the WireGuard listen port during a sync.
 func (c *Client) PullNetworkPeers(ctx context.Context, networkID string) (PeerSet, error) {
-	if !validID(networkID) {
+	if !config.ValidIdentifier(networkID) {
 		return PeerSet{}, errors.New("network ID is invalid")
 	}
-	data, err := c.request(ctx, http.MethodGet, "/api/v1/networks/"+url.PathEscape(networkID)+"/peers", nil)
+	return c.pullPeerSet(ctx, "/api/v1/networks/"+url.PathEscape(networkID)+"/peers")
+}
+
+func (c *Client) pullPeerSet(ctx context.Context, path string) (PeerSet, error) {
+	data, err := c.request(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return PeerSet{}, err
 	}
@@ -260,7 +233,7 @@ func (c *Client) PullNetworkPeers(ctx context.Context, networkID string) (PeerSe
 }
 
 func (c *Client) RegisterNode(ctx context.Context, networkID, nodeID string, registration NodeRegistration) (RegisteredNode, error) {
-	if !validID(networkID) || !validID(nodeID) || !validNodeRegistration(registration) {
+	if !config.ValidIdentifier(networkID) || !config.ValidIdentifier(nodeID) || !validNodeRegistration(registration) {
 		return RegisteredNode{}, errors.New("node registration is invalid")
 	}
 	body, err := json.Marshal(registration)
@@ -284,7 +257,7 @@ func (c *Client) RegisterNode(ctx context.Context, networkID, nodeID string, reg
 
 func validNodeRegistration(registration NodeRegistration) bool {
 	key, err := base64.StdEncoding.Strict().DecodeString(registration.PublicKey)
-	if registration.Version != 1 || err != nil || len(key) != 32 || allZero(key) || base64.StdEncoding.EncodeToString(key) != registration.PublicKey || registration.ListenPort < 1 || registration.ListenPort > 65535 || strings.TrimSpace(registration.PrimaryInterface) == "" || len(registration.PrimaryInterface) > 64 || len(registration.LocalAddresses) == 0 || len(registration.LocalAddresses) > 16 {
+	if registration.Version != 1 || err != nil || len(key) != 32 || config.IsAllZeroKey(key) || base64.StdEncoding.EncodeToString(key) != registration.PublicKey || registration.ListenPort < 1 || registration.ListenPort > 65535 || strings.TrimSpace(registration.PrimaryInterface) == "" || len(registration.PrimaryInterface) > 64 || len(registration.LocalAddresses) == 0 || len(registration.LocalAddresses) > 16 {
 		return false
 	}
 	for _, raw := range registration.LocalAddresses {
@@ -296,15 +269,6 @@ func validNodeRegistration(registration NodeRegistration) bool {
 	if registration.PublicEndpoint != "" {
 		endpoint, err := netip.ParseAddrPort(registration.PublicEndpoint)
 		if err != nil || endpoint.Port() == 0 || !endpoint.Addr().IsGlobalUnicast() || endpoint.Addr().Zone() != "" || endpoint.Addr().Is4In6() {
-			return false
-		}
-	}
-	return true
-}
-
-func allZero(value []byte) bool {
-	for _, b := range value {
-		if b != 0 {
 			return false
 		}
 	}
@@ -362,8 +326,8 @@ func validPeerSet(data []byte) bool {
 	if err := json.Unmarshal(data, &value); err != nil || value.Version != 1 || value.Peers == nil {
 		return false
 	}
-	for id, config := range value.Peers {
-		if !validID(id) || !validConfig(config) {
+	for id, document := range value.Peers {
+		if !config.ValidIdentifier(id) || !validConfig(document) {
 			return false
 		}
 	}
@@ -377,16 +341,4 @@ func validConfig(data []byte) bool {
 	}
 	var version int
 	return json.Unmarshal(value["version"], &version) == nil && version == 1
-}
-
-func validID(value string) bool {
-	if value == "" || len(value) > 128 || value == "." || value == ".." {
-		return false
-	}
-	for _, r := range value {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '.' || r == '-') {
-			return false
-		}
-	}
-	return true
 }
