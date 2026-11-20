@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/peerimeter/peerimeter-agent/internal/helperprocess"
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
 	"github.com/peerimeter/peerimeter-agent/internal/selfupdate"
 	"github.com/peerimeter/peerimeter-agent/internal/service"
@@ -88,24 +89,7 @@ func scheduleWindowsUpdate(inv installstate.Inventory, files map[string][]byte, 
 		cleanup()
 		return restartManagedServiceAfterFailure(profile, fmt.Errorf("start Windows update helper: %w", err))
 	}
-	ready := false
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		var response windowsUpdateResult
-		if data, readErr := os.ReadFile(resultPath); readErr == nil && json.Unmarshal(data, &response) == nil {
-			if response.HelperReady {
-				ready = true
-				break
-			}
-			if response.State == "failed" {
-				break
-			}
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if !ready {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+	if !helperprocess.WaitUntilReady(cmd, resultPath) {
 		return restartManagedServiceAfterFailure(profile, fmt.Errorf("Windows update helper could not initialize; inspect %s", resultPath))
 	}
 	_ = cmd.Process.Release()

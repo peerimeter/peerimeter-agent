@@ -8,8 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"time"
 
+	"github.com/peerimeter/peerimeter-agent/internal/helperprocess"
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
 	"golang.org/x/sys/windows"
 )
@@ -103,30 +103,9 @@ func scheduleRemoval(plan removalPlan) (string, error) {
 	// Confirm PowerShell parsed/initialized while the parent still owns all
 	// removal guards. The helper cannot delete installation data before parent
 	// exit, so terminating an uninitialized child leaves managed data untouched.
-	ready := false
 	// Starting Windows PowerShell can take longer on cold or busy Windows hosts.
 	// The helper cannot remove managed files until the parent exits.
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		var response struct {
-			State string `json:"state"`
-			Ready bool   `json:"helper_ready"`
-		}
-		raw, readErr := os.ReadFile(plan.ResultFile)
-		if readErr == nil && json.Unmarshal(raw, &response) == nil {
-			if response.Ready {
-				ready = true
-				break
-			}
-			if response.State == "failed" {
-				break
-			}
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if !ready {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+	if !helperprocess.WaitUntilReady(cmd, plan.ResultFile) {
 		remaining := []string{}
 		for _, f := range plan.Files {
 			if _, e := os.Lstat(f.Path); e == nil {
