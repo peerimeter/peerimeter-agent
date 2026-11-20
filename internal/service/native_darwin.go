@@ -211,79 +211,86 @@ type darwinLaunchdPlist struct {
 
 func parseDarwinLaunchdPlist(data []byte) (darwinLaunchdPlist, error) {
 	decoder := xml.NewDecoder(bytes.NewReader(data))
-	depth := 0
-	dictionary := 0
-	key := ""
-	seen := map[string]bool{}
-	var plist darwinLaunchdPlist
 	for {
 		token, err := decoder.Token()
 		if err == io.EOF {
-			break
+			return darwinLaunchdPlist{}, errors.New("launchd plist has no dictionary")
 		}
 		if err != nil {
 			return darwinLaunchdPlist{}, err
 		}
-		switch token := token.(type) {
-		case xml.StartElement:
-			depth++
-			if token.Name.Local == "dict" && dictionary == 0 {
-				dictionary = depth
-				continue
-			}
-			if depth != dictionary+1 {
-				continue
-			}
-			if token.Name.Local == "key" {
-				if err := decoder.DecodeElement(&key, &token); err != nil {
-					return darwinLaunchdPlist{}, err
-				}
-				depth--
-				if seen[key] {
-					return darwinLaunchdPlist{}, errors.New("ambiguous duplicate launchd registration key")
-				}
-				seen[key] = true
-				continue
-			}
-			switch key {
-			case "Label", "Program":
-				if token.Name.Local != "string" {
-					return darwinLaunchdPlist{}, fmt.Errorf("invalid launchd %s registration", key)
-				}
-				var value string
-				if err := decoder.DecodeElement(&value, &token); err != nil {
-					return darwinLaunchdPlist{}, err
-				}
-				depth--
-				if key == "Label" {
-					plist.Label = value
-				} else {
-					plist.Program = value
-				}
-				key = ""
-			case "ProgramArguments":
-				if token.Name.Local != "array" {
-					return darwinLaunchdPlist{}, errors.New("invalid launchd ProgramArguments registration")
-				}
-				var args struct {
-					Values []string `xml:"string"`
-				}
-				if err := decoder.DecodeElement(&args, &token); err != nil {
-					return darwinLaunchdPlist{}, err
-				}
-				depth--
-				plist.ProgramArguments = args.Values
-				key = ""
-			default:
-				if err := decoder.Skip(); err != nil {
-					return darwinLaunchdPlist{}, err
-				}
-				depth--
-				key = ""
-			}
-		case xml.EndElement:
-			depth--
+		if start, ok := token.(xml.StartElement); ok && start.Name.Local == "dict" {
+			return decodeDarwinLaunchdDictionary(decoder, start)
 		}
 	}
-	return plist, nil
+}
+
+func decodeDarwinLaunchdDictionary(decoder *xml.Decoder, dictionary xml.StartElement) (darwinLaunchdPlist, error) {
+	var plist darwinLaunchdPlist
+	seen := make(map[string]bool)
+	for {
+		keyStart, err := nextLaunchdElement(decoder, dictionary.Name)
+		if err != nil {
+			return darwinLaunchdPlist{}, err
+		}
+		var key string
+		if err := decoder.DecodeElement(&key, &keyStart); err != nil {
+			return darwinLaunchdPlist{}, err
+		}
+		if seen[key] {
+			return darwinLaunchdPlist{}, errors.New("ambiguous duplicate launchd registration key")
+		}
+		seen[key] = true
+		valueStart, err := nextLaunchdElement(decoder, dictionary.Name)
+		if err != nil {
+			return darwinLaunchdPlist{}, err
+		}
+		switch key {
+		case "Label", "Program":
+			if valueStart.Name.Local != "string" {
+				return darwinLaunchdPlist{}, fmt.Errorf("invalid launchd %s registration", key)
+			}
+			var value string
+			if err := decoder.DecodeElement(&value, &valueStart); err != nil {
+				return darwinLaunchdPlist{}, err
+			}
+			if key == "Label" {
+				plist.Label = value
+			} else {
+				plist.Program = value
+			}
+		case "ProgramArguments":
+			if valueStart.Name.Local != "array" {
+				return darwinLaunchdPlist{}, errors.New("invalid launchd ProgramArguments registration")
+			}
+			var args struct {
+				Values []string `xml:"string"`
+			}
+			if err := decoder.DecodeElement(&args, &valueStart); err != nil {
+				return darwinLaunchdPlist{}, err
+			}
+			plist.ProgramArguments = args.Values
+		default:
+			if err := decoder.Skip(); err != nil {
+				return darwinLaunchdPlist{}, err
+			}
+		}
+	}
+}
+
+func nextLaunchdElement(decoder *xml.Decoder, endElement xml.Name) (xml.StartElement, error) {
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return xml.StartElement{}, err
+		}
+		switch token := token.(type) {
+		case xml.StartElement:
+			return token, nil
+		case xml.EndElement:
+			if token.Name == endElement {
+				return xml.StartElement{}, io.EOF
+			}
+		}
+	}
 }
