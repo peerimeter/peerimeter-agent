@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   native:
-    name: Test, integration & package / ${{ matrix.os }}
+    name: ${{ matrix.os }} / Test, integration & package
     strategy:
       fail-fast: false
       matrix:
