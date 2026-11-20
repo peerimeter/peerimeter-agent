@@ -46,6 +46,7 @@ type NetworkResource struct {
 
 type NodeRegistration struct {
 	Version          int      `json:"version"`
+	AgentCLIVersion  string   `json:"agent_cli_version,omitempty"`
 	PublicKey        string   `json:"public_key"`
 	ListenPort       int      `json:"listen_port"`
 	PrimaryInterface string   `json:"primary_interface"`

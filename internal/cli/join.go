@@ -173,7 +173,7 @@ func runJoin(ctx context.Context, app *application, opts joinOptions) error {
 		fmt.Fprintln(os.Stderr, "STUN endpoint discovery unavailable; joining with LAN candidates only")
 	}
 	registered, err := client.RegisterNode(ctx, networkID, nodeID, serviceapi.NodeRegistration{
-		Version: 1, PublicKey: publicText, ListenPort: opts.listenPort, PrimaryInterface: underlay.Name,
+		Version: 1, AgentCLIVersion: Version, PublicKey: publicText, ListenPort: opts.listenPort, PrimaryInterface: underlay.Name,
 		LocalAddresses: underlay.Addresses, PublicEndpoint: publicEndpoint,
 	})
 	if err != nil {

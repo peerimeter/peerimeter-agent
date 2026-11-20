@@ -40,7 +40,7 @@ func refreshManagedRegistration(ctx context.Context, client *serviceapi.Client, 
 		publicEndpoint = mapped.MappedAddress
 	}
 	updated, err := client.RegisterNode(ctx, networkID, nodeID, serviceapi.NodeRegistration{
-		Version: 1, PublicKey: publicKey, ListenPort: desired.Interface.ListenPort,
+		Version: 1, AgentCLIVersion: Version, PublicKey: publicKey, ListenPort: desired.Interface.ListenPort,
 		PrimaryInterface: underlay.Name, LocalAddresses: underlay.Addresses,
 		PublicEndpoint: publicEndpoint,
 	})
