@@ -24,7 +24,7 @@ func darwinFixture() Desired {
 }
 func TestDarwinPeerDiffKeepsUnchangedSessions(t *testing.T) {
 	old := darwinFixture()
-	next := darwinCopy(old)
+	next := cloneDesired(old)
 	if got := darwinIPC(old, next); got != "" {
 		t.Fatalf("unchanged config produced UAPI update: %q", got)
 	}
@@ -33,18 +33,18 @@ func TestDarwinPeerDiffKeepsUnchangedSessions(t *testing.T) {
 	if !strings.Contains(got, "persistent_keepalive_interval=25\n") || strings.Contains(got, "endpoint=") || strings.Contains(got, "replace_peers=") || strings.Contains(got, "private_key=") {
 		t.Fatalf("keepalive change disturbed unrelated state: %q", got)
 	}
-	next = darwinCopy(old)
+	next = cloneDesired(old)
 	next.Config.Peers[0].Endpoint = "127.0.0.1:51822"
 	got = darwinIPC(old, next)
 	if !strings.Contains(got, "endpoint=127.0.0.1:51822\n") || strings.Contains(got, "replace_allowed_ips=") {
 		t.Fatalf("endpoint diff resets unaffected configuration: %q", got)
 	}
-	next = darwinCopy(old)
+	next = cloneDesired(old)
 	next.Config.Peers = nil
 	if !strings.Contains(darwinIPC(old, next), "remove=true\n") {
 		t.Fatal("removed peer retained")
 	}
-	next = darwinCopy(old)
+	next = cloneDesired(old)
 	next.Config.Peers[0].AllowedIPs = []string{"10.203.0.3/32"}
 	if !strings.Contains(darwinIPC(old, next), "replace_allowed_ips=true\nallowed_ip=10.203.0.3/32\n") {
 		t.Fatal("allowed IP change missing")
@@ -114,7 +114,7 @@ func TestDarwinReconcileRejectsAddressChangeBeforeMutation(t *testing.T) {
 	old := darwinFixture()
 	dev := &darwinFakeDevice{}
 	session := darwinSession{dev: dev, desired: old, owned: map[netip.Prefix]bool{}}
-	next := darwinCopy(old)
+	next := cloneDesired(old)
 	next.Config.Interface.Address = []string{"10.203.1.1/32"}
 	if err := session.Reconcile(context.Background(), next); err == nil {
 		t.Fatal("live address change accepted")
@@ -127,8 +127,8 @@ func TestDarwinReconcileFailureRestoresExistingPeers(t *testing.T) {
 	old := darwinFixture()
 	dev := &darwinFakeDevice{fail: true}
 	p := netip.MustParsePrefix("10.203.0.2/32")
-	session := darwinSession{dev: dev, desired: darwinCopy(old), index: 7, owned: map[netip.Prefix]bool{p: true}, ops: darwinOps{addresses: func(int, []string) error { return nil }, routes: func() ([]darwinRoute, error) { return []darwinRoute{{p, 7}}, nil }}}
-	next := darwinCopy(old)
+	session := darwinSession{dev: dev, desired: cloneDesired(old), index: 7, owned: map[netip.Prefix]bool{p: true}, ops: darwinOps{addresses: func(int, []string) error { return nil }, routes: func() ([]darwinRoute, error) { return []darwinRoute{{p, 7}}, nil }}}
+	next := cloneDesired(old)
 	next.Config.Peers[0].Endpoint = "127.0.0.1:51822"
 	err := session.Reconcile(context.Background(), next)
 	if err == nil || strings.Contains(err.Error(), "private backend failure") {

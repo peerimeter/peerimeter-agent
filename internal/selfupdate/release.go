@@ -19,8 +19,9 @@ import (
 	"time"
 )
 
-const latestURL = "https://api.github.com/repos/peerimeter/peerimeter-agent/releases/latest"
-const releaseDownloadBase = "https://github.com/peerimeter/peerimeter-agent/releases/download/"
+var latestReleaseEndpoint = "https://api.github.com/repos/peerimeter/peerimeter-agent/releases/latest"
+var releaseDownloadBase = "https://github.com/peerimeter/peerimeter-agent/releases/download/"
+
 const maxAssetSize = 128 << 20
 
 type release struct {
@@ -31,7 +32,7 @@ type release struct {
 // entry from the release's SHA256SUMS file. The manifest and package share the
 // HTTPS GitHub release trust channel; no detached signature is implied.
 func Fetch(ctx context.Context, client *http.Client, goos, goarch string) (string, map[string][]byte, error) {
-	return fetchAt(ctx, client, goos, goarch, latestURL, releaseDownloadBase)
+	return fetchAt(ctx, client, goos, goarch, latestReleaseEndpoint, releaseDownloadBase)
 }
 
 func fetchAt(ctx context.Context, client *http.Client, goos, goarch, latestEndpoint, releaseBase string) (string, map[string][]byte, error) {
