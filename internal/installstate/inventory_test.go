@@ -1,6 +1,7 @@
 package installstate
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -336,12 +337,24 @@ func TestRegistrationFailureRestoresInstallReferenceAndInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 	referencePath := filepath.Join(dir, ReferenceFilename)
+	formattedReference, err := json.MarshalIndent(installReference{DataDir: dataDir}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	formattedReference = append(formattedReference, '\n')
+	if err := os.WriteFile(referencePath, formattedReference, 0600); err != nil {
+		t.Fatal(err)
+	}
 	previousReference, err := os.ReadFile(referencePath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	inventoryPath := filepath.Join(dataDir, Filename)
-	previousInventory, err := os.ReadFile(inventoryPath)
+	legacyInventoryPath := filepath.Join(dataDir, LegacyJSONFilename)
+	if err := os.Rename(inventoryPath, legacyInventoryPath); err != nil {
+		t.Fatal(err)
+	}
+	previousInventory, err := os.ReadFile(legacyInventoryPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +371,10 @@ func TestRegistrationFailureRestoresInstallReferenceAndInventory(t *testing.T) {
 	if string(restoredReference) != string(previousReference) {
 		t.Fatal("failed registration left the install reference changed")
 	}
-	restoredInventory, err := os.ReadFile(inventoryPath)
+	if _, err := os.Lstat(inventoryPath); !os.IsNotExist(err) {
+		t.Fatalf("failed registration left a migrated inventory at the current path: %v", err)
+	}
+	restoredInventory, err := os.ReadFile(legacyInventoryPath)
 	if err != nil {
 		t.Fatal(err)
 	}

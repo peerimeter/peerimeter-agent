@@ -27,10 +27,11 @@ var errWindowsHelperReplacementFailed = errors.New("Windows update helper could 
 var errWindowsHelperRecoveryPending = errors.New("Windows update recovery is pending; run update recovery")
 
 type windowsUpdateResult struct {
-	State          string `json:"state"`
-	HelperReady    bool   `json:"helper_ready,omitempty"`
-	UpdatedVersion string `json:"updated_version,omitempty"`
-	Message        string `json:"message,omitempty"`
+	State          string                `json:"state"`
+	HelperReady    bool                  `json:"helper_ready,omitempty"`
+	UpdatedVersion string                `json:"updated_version,omitempty"`
+	Message        string                `json:"message,omitempty"`
+	StoppedProfile *installstate.Profile `json:"stopped_profile,omitempty"`
 }
 
 // TODO(next major): remove fallback for update manifests staged by older agents.
@@ -72,7 +73,7 @@ func scheduleWindowsUpdate(inv installstate.Inventory, files map[string][]byte, 
 		return restartManagedServiceAfterFailure(profile, err)
 	}
 	resultPath := dir + updateResultSuffix
-	pending, _ := json.Marshal(windowsUpdateResult{State: "pending"})
+	pending, _ := json.Marshal(windowsUpdateResult{State: "pending", StoppedProfile: profile})
 	if err := installstate.WritePrivate(resultPath, append(pending, '\n')); err != nil {
 		cleanup()
 		return restartManagedServiceAfterFailure(profile, fmt.Errorf("create Windows update result file: %w", err))
@@ -281,21 +282,26 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) (resultErr error
 	}
 	resultPath := transactionDir + updateResultSuffix
 	updatedVersion := ""
+	var profile *installstate.Profile
 	defer func() {
 		message := ""
 		if resultErr != nil {
 			message = resultErr.Error()
 		}
-		data, marshalErr := json.Marshal(windowsUpdateResult{State: windowsUpdateResultState(resultErr), UpdatedVersion: updatedVersion, Message: message})
+		data, marshalErr := json.Marshal(windowsUpdateResult{State: windowsUpdateResultState(resultErr), UpdatedVersion: updatedVersion, Message: message, StoppedProfile: profile})
 		if marshalErr == nil {
 			resultErr = errors.Join(resultErr, installstate.WritePrivate(resultPath, append(data, '\n')))
 		}
 	}()
+	startupResult, err := readWindowsUpdateResult(resultPath)
+	if err != nil {
+		return err
+	}
+	profile = startupResult.StoppedProfile
 	inv, err := installstate.Load(installDir)
 	if err != nil {
 		return err
 	}
-	profile, _ := serviceProfileForHelper(inv.Profiles, nil, false)
 	serviceRestartAttempted := false
 	defer func() {
 		if !serviceRestartAttempted && profile != nil {
@@ -304,7 +310,7 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) (resultErr error
 	}()
 	// Acknowledge process startup before waiting for the parent to release its
 	// update lock. The parent releases that lock after it receives this signal.
-	ready, err := json.Marshal(windowsUpdateResult{State: "pending", HelperReady: true})
+	ready, err := json.Marshal(windowsUpdateResult{State: "pending", HelperReady: true, StoppedProfile: profile})
 	if err != nil {
 		return err
 	}
@@ -330,7 +336,9 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) (resultErr error
 		return err
 	}
 	updatedVersion = manifest.Version
-	profile = manifestProfile
+	if manifestProfile != nil {
+		profile = manifestProfile
+	}
 	_, rollback, commit, lock, err := applyHelperUpdateWithRetry(ctx, installDir, manifest, files)
 	if err != nil {
 		err, serviceRestartAttempted = restartAfterWindowsReplacementFailure(err, profile, startManagedService)
@@ -353,7 +361,7 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) (resultErr error
 		)
 		if err != nil {
 			if rollbackMustWaitForRecovery(err) {
-				return err
+				return windowsHelperRecoveryPending(err)
 			}
 			return helperRollback(installDir, rollback, profileValue, err)
 		}
@@ -446,6 +454,24 @@ func windowsUpdateResultState(err error) string {
 	default:
 		return "failed"
 	}
+}
+
+func readWindowsUpdateResult(path string) (windowsUpdateResult, error) {
+	if err := installstate.CheckPrivateFile(path); err != nil {
+		return windowsUpdateResult{}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return windowsUpdateResult{}, err
+	}
+	var result windowsUpdateResult
+	if json.Unmarshal(data, &result) != nil || result.State != "pending" || result.HelperReady {
+		return windowsUpdateResult{}, errors.New("Windows update helper startup result is invalid")
+	}
+	if result.StoppedProfile != nil && (!result.StoppedProfile.Service || result.StoppedProfile.ConfigDir == "" || result.StoppedProfile.StateDir == "" || result.StoppedProfile.RuntimeDir == "") {
+		return windowsUpdateResult{}, errors.New("Windows update helper stopped-service context is invalid")
+	}
+	return result, nil
 }
 
 func restartAfterWindowsReplacementFailure(err error, profile *installstate.Profile, start func(installstate.Profile) error) (error, bool) {
