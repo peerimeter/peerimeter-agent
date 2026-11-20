@@ -230,36 +230,12 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	if err := prepareReleaseFiles(inv, files, goos); err != nil {
 		return err
 	}
-	var managedService *installstate.Profile
 	restartAfterFailure := func(profile *installstate.Profile, cause error) error {
 		return restartServiceAfterFailure(profile, cause, deps.manage, deps.wait)
 	}
-	if err := runSelfUpdateAction(deps.progress, "Checking that agent profiles are stopped", func() error {
-		var err error
-		managedService, err = findAndCheckActiveProfiles(inv.Profiles, func(dir string, lockErr error) error {
-			if errors.Is(lockErr, local.ErrBusy) {
-				return selfUpdateProfileLockError(lockErr)
-			}
-			return diagnostic.Wrap(fmt.Errorf("cannot verify whether agent profile directory %s is stopped: %w", dir, lockErr))
-		})
-		if errors.Is(err, errMultipleServiceProfiles) {
-			return errors.New("installation has multiple service profiles; self-update cannot select one safely")
-		}
-		return err
-	}); err != nil {
-		return err
-	}
-	if managedService != nil {
-		if err := runSelfUpdateAction(deps.progress, "Stopping the managed agent service", func() error {
-			return deps.manage("stop", profileServiceConfig(*managedService))
-		}); err != nil {
-			return restartAfterFailure(managedService, fmt.Errorf("stop installed service before update: %w", err))
-		}
-		if err := runSelfUpdateAction(deps.progress, "Waiting for the stopped agent to release its locks", func() error {
-			return waitForProfileStopped(ctx, *managedService)
-		}); err != nil {
-			return restartAfterFailure(managedService, fmt.Errorf("wait for installed service to stop: %w", err))
-		}
+	managedService, err := stopServiceForSelfUpdate(ctx, inv, deps)
+	if err != nil {
+		return restartAfterFailure(managedService, err)
 	}
 	if goos == "windows" {
 		return runSelfUpdateAction(deps.progress, "Scheduling Windows file replacement", func() error {
@@ -273,6 +249,49 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 		}
 		return restartAfterFailure(managedService, err)
 	}
+	if err := verifyAndCommitUpdatedInstallation(ctx, installDir, goos, tag, applied, managedService, deps); err != nil {
+		return err
+	}
+	filesUpdated := make([]string, 0, len(inv.Files))
+	for _, f := range inv.Files {
+		filesUpdated = append(filesUpdated, f.Name)
+	}
+	deps.progress.stop(selfUpdateProgressUpdateSucceeded)
+	return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "updated", PreviousVersion: currentVersion, UpdatedVersion: tag, Files: filesUpdated}, color)
+}
+
+func stopServiceForSelfUpdate(ctx context.Context, inv installstate.Inventory, deps selfUpdateDeps) (*installstate.Profile, error) {
+	var managedService *installstate.Profile
+	err := runSelfUpdateAction(deps.progress, "Checking that agent profiles are stopped", func() error {
+		var err error
+		managedService, err = findAndCheckActiveProfiles(inv.Profiles, func(dir string, lockErr error) error {
+			if errors.Is(lockErr, local.ErrBusy) {
+				return selfUpdateProfileLockError(lockErr)
+			}
+			return diagnostic.Wrap(fmt.Errorf("cannot verify whether agent profile directory %s is stopped: %w", dir, lockErr))
+		})
+		if errors.Is(err, errMultipleServiceProfiles) {
+			return errors.New("installation has multiple service profiles; self-update cannot select one safely")
+		}
+		return err
+	})
+	if err != nil || managedService == nil {
+		return managedService, err
+	}
+	if err := runSelfUpdateAction(deps.progress, "Stopping the managed agent service", func() error {
+		return deps.manage("stop", profileServiceConfig(*managedService))
+	}); err != nil {
+		return managedService, fmt.Errorf("stop installed service before update: %w", err)
+	}
+	if err := runSelfUpdateAction(deps.progress, "Waiting for the stopped agent to release its locks", func() error {
+		return waitForProfileStopped(ctx, *managedService)
+	}); err != nil {
+		return managedService, fmt.Errorf("wait for installed service to stop: %w", err)
+	}
+	return managedService, nil
+}
+
+func verifyAndCommitUpdatedInstallation(ctx context.Context, installDir, goos, tag string, applied appliedUpdate, managedService *installstate.Profile, deps selfUpdateDeps) error {
 	rollback, commit := applied.rollback, applied.commit
 	if managedService != nil {
 		profile := *managedService
@@ -307,12 +326,7 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	}); err != nil {
 		return fmt.Errorf("update succeeded but backup cleanup needs attention: %w", err)
 	}
-	filesUpdated := make([]string, 0, len(inv.Files))
-	for _, f := range inv.Files {
-		filesUpdated = append(filesUpdated, f.Name)
-	}
-	deps.progress.stop(selfUpdateProgressUpdateSucceeded)
-	return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "updated", PreviousVersion: currentVersion, UpdatedVersion: tag, Files: filesUpdated}, color)
+	return nil
 }
 
 func checkReleaseAndConfirmUpdate(ctx context.Context, out io.Writer, jsonOutput bool, currentVersion string, deps selfUpdateDeps) (string, bool, error) {
