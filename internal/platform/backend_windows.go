@@ -259,13 +259,13 @@ func windowsConfiguration(old *Desired, next Desired) (*driver.ConfigBuilder, er
 	return builder, nil
 }
 
-func windowsPreviousConfiguration(attempted, previous Desired) (driver.Interface, uint32, error) {
+func windowsPreviousConfiguration(attempted, previous Desired) (*driver.Interface, uint32, error) {
 	builder, err := windowsConfiguration(&attempted, previous)
 	if err != nil {
-		return driver.Interface{}, 0, err
+		return nil, 0, err
 	}
 	if builder == nil {
-		return driver.Interface{}, 0, errors.New("empty configuration")
+		return nil, 0, errors.New("empty configuration")
 	}
 	interfaze, size := builder.Interface()
 	return interfaze, size, nil
