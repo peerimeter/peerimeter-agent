@@ -837,15 +837,34 @@ func RegisterWithDirectories(dir, docDir, dataDir, lockDir string, allowInsecure
 	if previousInventoryErr != nil && !os.IsNotExist(previousInventoryErr) {
 		return fmt.Errorf("read previous installation inventory: %w", previousInventoryErr)
 	}
+	previousReference, previousReferenceErr := readPrivate(filepath.Join(dir, ReferenceFilename))
+	if previousReferenceErr != nil && !os.IsNotExist(previousReferenceErr) {
+		return fmt.Errorf("read previous installation reference: %w", previousReferenceErr)
+	}
 	if err := save(inv); err != nil {
 		return err
 	}
 	if err := updateInstallReference(dir, dataDir, allowInsecure); err != nil {
 		rollbackErr := rollbackInventoryFile(dataDir, previousInventoryName, previousInventory, previousInventoryErr, allowInsecure)
-		return errors.Join(fmt.Errorf("update installation reference: %w", err), rollbackErr)
+		referenceErr := restoreInstallReference(dir, previousReference, previousReferenceErr, allowInsecure)
+		return errors.Join(fmt.Errorf("update installation reference: %w", err), rollbackErr, referenceErr)
 	}
 	if legacyInventory && dataDir != dir {
 		cleanupLegacyInstallMetadata(dir, docDir, legacyNotice, legacyNoticeDigest)
+	}
+	return nil
+}
+
+func restoreInstallReference(dir string, previous []byte, previousErr error, allowInsecure bool) error {
+	path := filepath.Join(dir, ReferenceFilename)
+	if previousErr == nil {
+		return WritePrivateWithPolicy(path, previous, allowInsecure)
+	}
+	if !os.IsNotExist(previousErr) {
+		return previousErr
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }

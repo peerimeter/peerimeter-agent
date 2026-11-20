@@ -325,6 +325,48 @@ func TestRegistrationUpgradePreservesStoredInsecureDirectoryPolicy(t *testing.T)
 	}
 }
 
+func TestRegistrationFailureRestoresInstallReferenceAndInventory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink rejection behavior differs on Windows")
+	}
+	dir := fixtureInstall(t)
+	dataDir := t.TempDir()
+	lockDir := t.TempDir()
+	if err := RegisterWithDirectories(dir, dir, dataDir, lockDir, false); err != nil {
+		t.Fatal(err)
+	}
+	referencePath := filepath.Join(dir, ReferenceFilename)
+	previousReference, err := os.ReadFile(referencePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inventoryPath := filepath.Join(dataDir, Filename)
+	previousInventory, err := os.ReadFile(inventoryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(t.TempDir(), "target"), filepath.Join(dir, LegacyReferenceFilename)); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterWithDirectories(dir, dir, dataDir, lockDir, false); err == nil {
+		t.Fatal("registration succeeded despite an unsafe legacy reference")
+	}
+	restoredReference, err := os.ReadFile(referencePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(restoredReference) != string(previousReference) {
+		t.Fatal("failed registration left the install reference changed")
+	}
+	restoredInventory, err := os.ReadFile(inventoryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(restoredInventory) != string(previousInventory) {
+		t.Fatal("failed registration left the inventory changed")
+	}
+}
+
 func TestUpdateProgramHashesPreservesProfileAndDirectories(t *testing.T) {
 	dir := fixtureInstall(t)
 	p := fixtureProfile(t)
