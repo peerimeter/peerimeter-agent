@@ -68,6 +68,17 @@ type Inventory struct {
 	Files                   []File    `json:"files" yaml:"files"`
 	Profiles                []Profile `json:"profiles" yaml:"profiles"`
 }
+
+// HasFile reports whether the inventory owns a file with the given name.
+func (inv Inventory) HasFile(name string) bool {
+	for _, file := range inv.Files {
+		if file.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 type installReference struct {
 	DataDir string `json:"data_dir"`
 }

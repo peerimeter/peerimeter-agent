@@ -305,44 +305,52 @@ func linuxRegistrationUsesExecutable(data []byte, expectedExe string) (bool, err
 			owned = false
 			continue
 		}
-		command = strings.TrimLeft(command, "-+!:@")
-		var executable string
-		if strings.HasPrefix(command, `"`) {
-			end := 1
-			for ; end < len(command); end++ {
-				if command[end] == '\\' {
-					end++
-					continue
-				}
-				if command[end] == '"' {
-					break
-				}
-			}
-			if end >= len(command) {
-				return false, errors.New("cannot parse systemd executable registration")
-			}
-			value, err := strconv.Unquote(command[:end+1])
-			if err != nil {
-				return false, errors.New("cannot decode systemd executable registration")
-			}
-			executable = value
-		} else {
-			fields := strings.Fields(command)
-			if len(fields) > 0 && strings.ContainsAny(fields[0], "\\%$") {
-				return false, errors.New("unsupported escaped or dynamic unquoted systemd executable; program files were preserved")
-			}
-			if len(fields) == 0 {
-				return false, errors.New("systemd executable registration is missing")
-			}
-			executable = fields[0]
-		}
-		executable = strings.ReplaceAll(strings.ReplaceAll(executable, "$$", "$"), "%%", "%")
-		if !filepath.IsAbs(executable) {
-			return false, errors.New("cannot establish exact executable ownership for systemd registration")
+		executable, err := parseSystemdExecStartExecutable(command)
+		if err != nil {
+			return false, err
 		}
 		if equalServicePath(executable, expectedExe) {
 			owned = true
 		}
 	}
 	return owned, nil
+}
+
+func parseSystemdExecStartExecutable(command string) (string, error) {
+	command = strings.TrimLeft(command, "-+!:@")
+	var executable string
+	if strings.HasPrefix(command, `"`) {
+		end := 1
+		for ; end < len(command); end++ {
+			if command[end] == '\\' {
+				end++
+				continue
+			}
+			if command[end] == '"' {
+				break
+			}
+		}
+		if end >= len(command) {
+			return "", errors.New("cannot parse systemd executable registration")
+		}
+		value, err := strconv.Unquote(command[:end+1])
+		if err != nil {
+			return "", errors.New("cannot decode systemd executable registration")
+		}
+		executable = value
+	} else {
+		fields := strings.Fields(command)
+		if len(fields) > 0 && strings.ContainsAny(fields[0], "\\%$") {
+			return "", errors.New("unsupported escaped or dynamic unquoted systemd executable; program files were preserved")
+		}
+		if len(fields) == 0 {
+			return "", errors.New("systemd executable registration is missing")
+		}
+		executable = fields[0]
+	}
+	executable = strings.ReplaceAll(strings.ReplaceAll(executable, "$$", "$"), "%%", "%")
+	if !filepath.IsAbs(executable) {
+		return "", errors.New("cannot establish exact executable ownership for systemd registration")
+	}
+	return executable, nil
 }

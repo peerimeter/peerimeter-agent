@@ -28,47 +28,61 @@ func PrimaryUnderlay(ctx context.Context) (Underlay, error) {
 		return Underlay{}, errors.New("cannot enumerate network interfaces")
 	}
 	for _, target := range []string{"1.1.1.1:443", "[2606:4700:4700::1111]:443"} {
-		conn, err := (&net.Dialer{}).DialContext(ctx, "udp", target)
-		if err != nil {
+		source, ok := probeRouteSourceAddress(ctx, target)
+		if !ok {
 			continue
 		}
-		addr, _, err := net.SplitHostPort(conn.LocalAddr().String())
-		_ = conn.Close()
-		if err != nil {
-			continue
-		}
-		source, err := netip.ParseAddr(addr)
-		if err != nil {
-			continue
-		}
-		source = source.Unmap()
-		for _, iface := range interfaces {
-			if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 || len(iface.HardwareAddr) == 0 || virtualName(iface.Name) {
-				continue
-			}
-			addrs, err := iface.Addrs()
-			if err != nil {
-				continue
-			}
-			var result []string
-			containsSource := false
-			for _, raw := range addrs {
-				prefix, ok := interfacePrefix(raw)
-				if !ok || !usableUnderlayAddress(prefix.Addr()) {
-					continue
-				}
-				result = append(result, prefix.String())
-				if ownsSourceAddress(prefix, source) {
-					containsSource = true
-				}
-			}
-			if containsSource && len(result) > 0 {
-				sort.Strings(result)
-				return Underlay{Name: iface.Name, Addresses: result}, nil
-			}
+		if underlay, ok := findInterfaceOwningAddress(interfaces, source); ok {
+			return underlay, nil
 		}
 	}
 	return Underlay{}, fmt.Errorf("default route uses no eligible physical interface")
+}
+
+func probeRouteSourceAddress(ctx context.Context, target string) (netip.Addr, bool) {
+	conn, err := (&net.Dialer{}).DialContext(ctx, "udp", target)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	defer conn.Close()
+	host, _, err := net.SplitHostPort(conn.LocalAddr().String())
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	source, err := netip.ParseAddr(host)
+	return source.Unmap(), err == nil
+}
+
+func findInterfaceOwningAddress(interfaces []net.Interface, source netip.Addr) (Underlay, bool) {
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 || len(iface.HardwareAddr) == 0 || virtualName(iface.Name) {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		underlay, containsSource := underlayForInterface(iface, addrs, source)
+		if containsSource && len(underlay.Addresses) > 0 {
+			sort.Strings(underlay.Addresses)
+			return underlay, true
+		}
+	}
+	return Underlay{}, false
+}
+
+func underlayForInterface(iface net.Interface, addrs []net.Addr, source netip.Addr) (Underlay, bool) {
+	result := Underlay{Name: iface.Name}
+	containsSource := false
+	for _, raw := range addrs {
+		prefix, ok := interfacePrefix(raw)
+		if !ok || !usableUnderlayAddress(prefix.Addr()) {
+			continue
+		}
+		result.Addresses = append(result.Addresses, prefix.String())
+		containsSource = containsSource || ownsSourceAddress(prefix, source)
+	}
+	return result, containsSource
 }
 
 func ownsSourceAddress(prefix netip.Prefix, source netip.Addr) bool {

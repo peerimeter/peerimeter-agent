@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,11 +14,20 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/ifname"
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
+	"github.com/peerimeter/peerimeter-agent/internal/keycheck"
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/paths"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
 	"github.com/peerimeter/peerimeter-agent/internal/secret"
 )
+
+type reloadOptions struct {
+	path          string
+	override      string
+	interfaceName string
+	ownership     string
+	remote        func(context.Context) (config.Config, error)
+}
 
 func staticCommand(ctx context.Context, commandName, path, override string, layout paths.Layout, operator string, out io.Writer, backend platform.Backend) error {
 	return staticCommandWithRefresh(ctx, commandName, path, override, layout, operator, out, backend, nil, 0)
@@ -54,18 +62,9 @@ func staticCommandWithBackground(ctx context.Context, commandName, path, overrid
 			return err
 		}
 	}
-	private, err := secret.Load(cfg.Interface.PrivateKeyFile)
+	private, err := keycheck.LoadAndVerifyInterfaceKey(cfg)
 	if err != nil {
 		return err
-	}
-	public, err := secret.Public(private)
-	if err != nil {
-		return err
-	}
-	for _, p := range cfg.Peers {
-		if p.PublicKey == base64.StdEncoding.EncodeToString(public[:]) {
-			return errors.New("peer public key matches the local interface key")
-		}
 	}
 	name := ""
 	if runtime.GOOS == "linux" {
@@ -114,43 +113,7 @@ func staticCommandWithBackground(ctx context.Context, commandName, path, overrid
 		return err
 	}
 	desired := platform.Desired{Config: cfg, InterfaceName: name, PrivateKey: private, OwnershipToken: token}
-	reload := func(ctx context.Context) (platform.Desired, error) {
-		var next config.Config
-		var err error
-		if remoteReload != nil {
-			next, err = remoteReload(ctx)
-		} else {
-			next, err = config.Load(path)
-		}
-		if err != nil {
-			return platform.Desired{}, err
-		}
-		if override != "" {
-			next.Interface.Name = override
-		}
-		if err = config.Validate(next, runtime.GOOS); err != nil {
-			return platform.Desired{}, err
-		}
-		if runtime.GOOS == "linux" {
-			if next.Interface.Name != "" && next.Interface.Name != name {
-				return platform.Desired{}, errors.New("reload cannot rename a persisted local interface")
-			}
-		}
-		key, err := secret.Load(next.Interface.PrivateKeyFile)
-		if err != nil {
-			return platform.Desired{}, err
-		}
-		pub, err := secret.Public(key)
-		if err != nil {
-			return platform.Desired{}, err
-		}
-		for _, peer := range next.Peers {
-			if peer.PublicKey == base64.StdEncoding.EncodeToString(pub[:]) {
-				return platform.Desired{}, errors.New("peer public key matches the local interface key")
-			}
-		}
-		return platform.Desired{Config: next, InterfaceName: name, PrivateKey: key, OwnershipToken: token}, nil
-	}
+	reload := buildReloadFunc(reloadOptions{path: path, override: override, interfaceName: name, ownership: token, remote: remoteReload})
 	ready := func() error {
 		if err := startup.Check(); err != nil {
 			return err
@@ -173,4 +136,48 @@ func staticCommandWithBackground(ctx context.Context, commandName, path, overrid
 			return installstate.ReleaseRuntime(filepath.Dir(exe), layout.StateDir, layout.RuntimeDir)
 		}, RefreshInterval: refresh, ConfigPath: path, ReplaceConfig: replaceConfig, Background: background,
 	})
+}
+
+func buildReloadFunc(options reloadOptions) func(context.Context) (platform.Desired, error) {
+	return func(ctx context.Context) (platform.Desired, error) {
+		next, err := loadReloadConfig(ctx, options)
+		if err != nil {
+			return platform.Desired{}, err
+		}
+		if err := validateReloadInterface(next, options.interfaceName); err != nil {
+			return platform.Desired{}, err
+		}
+		key, err := keycheck.LoadAndVerifyInterfaceKey(next)
+		if err != nil {
+			return platform.Desired{}, err
+		}
+		return platform.Desired{Config: next, InterfaceName: options.interfaceName, PrivateKey: key, OwnershipToken: options.ownership}, nil
+	}
+}
+
+func loadReloadConfig(ctx context.Context, options reloadOptions) (config.Config, error) {
+	var next config.Config
+	var err error
+	if options.remote != nil {
+		next, err = options.remote(ctx)
+	} else {
+		next, err = config.Load(options.path)
+	}
+	if err != nil {
+		return config.Config{}, err
+	}
+	if options.override != "" {
+		next.Interface.Name = options.override
+	}
+	if err := config.Validate(next, runtime.GOOS); err != nil {
+		return config.Config{}, err
+	}
+	return next, nil
+}
+
+func validateReloadInterface(cfg config.Config, currentName string) error {
+	if runtime.GOOS == "linux" && cfg.Interface.Name != "" && cfg.Interface.Name != currentName {
+		return errors.New("reload cannot rename a persisted local interface")
+	}
+	return nil
 }

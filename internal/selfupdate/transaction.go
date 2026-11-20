@@ -91,7 +91,7 @@ func Apply(inv installstate.Inventory, packageFiles map[string][]byte) (map[stri
 		return nil, nil, nil, errors.New("release package does not match the installed program file inventory")
 	}
 	for name := range packageFiles {
-		if !knownInventoryFile(inv, name) {
+		if !inv.HasFile(name) {
 			return nil, nil, nil, fmt.Errorf("release package contains unowned file %q", name)
 		}
 	}
@@ -112,43 +112,15 @@ func Apply(inv installstate.Inventory, packageFiles map[string][]byte) (map[stri
 		}
 	}
 	for _, owned := range inv.Files {
-		path := installstate.ResourcePath(inv, owned)
-		if err := installstate.CheckDirectory(filepath.Dir(path)); err != nil {
-			cleanupStages()
-			return nil, nil, nil, fmt.Errorf("inspect installed %s directory: %w", owned.Name, err)
-		}
-		if err := installstate.CheckFile(path); err != nil {
-			cleanupStages()
-			return nil, nil, nil, fmt.Errorf("inspect installed %s: %w", owned.Name, err)
-		}
-		oldHash, err := installstate.Hash(path)
+		file, err := stageAndBackupProgramFile(inv, owned, packageFiles[owned.Name])
 		if err != nil {
-			cleanupStages()
-			return nil, nil, nil, err
-		}
-		if oldHash != owned.SHA256 {
-			cleanupStages()
-			return nil, nil, nil, fmt.Errorf("installed %s was modified; refusing to overwrite it", owned.Name)
-		}
-		info, err := os.Stat(path)
-		if err != nil {
-			cleanupStages()
-			return nil, nil, nil, err
-		}
-		stagePath, err := stageUpdateFile(path, info, packageFiles[owned.Name])
-		if err != nil {
-			cleanupStages()
-			return nil, nil, nil, err
-		}
-		backupPath, err := createBackup(path, info, oldHash)
-		if err != nil {
-			os.Remove(stagePath)
 			cleanupStages()
 			return nil, nil, nil, err
 		}
 		sum := sha256.Sum256(packageFiles[owned.Name])
 		hashes[owned.Name] = hex.EncodeToString(sum[:])
-		j.Files = append(j.Files, journalFile{Name: owned.Name, Path: path, Stage: stagePath, Backup: backupPath, OldHash: oldHash, NewHash: hashes[owned.Name]})
+		file.NewHash = hashes[owned.Name]
+		j.Files = append(j.Files, file)
 	}
 	if err := writeJournal(journalPath, j); err != nil {
 		cleanupStages()
@@ -179,91 +151,74 @@ func Apply(inv installstate.Inventory, packageFiles map[string][]byte) (map[stri
 		if err := syncDirectory(inv.LockDir); err != nil {
 			return err
 		}
-		if err := cleanupJournalFiles(j); err != nil {
-			return err
-		}
-		for _, f := range j.Files {
-			if err := syncDirectory(filepath.Dir(f.Path)); err != nil {
-				return err
-			}
-		}
-		if err := os.Remove(journalPath); err != nil {
-			return err
-		}
-		return syncDirectory(inv.LockDir)
+		return finalizeCommittedJournal(inv, journalPath, j)
 	}
 	return hashes, rollback, commit, nil
 }
 
-func stageUpdateFile(targetPath string, info os.FileInfo, data []byte) (string, error) {
-	stage, err := os.CreateTemp(filepath.Dir(targetPath), ".peerimeter-update-stage-*")
+func stageAndBackupProgramFile(inv installstate.Inventory, owned installstate.File, data []byte) (journalFile, error) {
+	path := installstate.ResourcePath(inv, owned)
+	if err := installstate.CheckDirectory(filepath.Dir(path)); err != nil {
+		return journalFile{}, fmt.Errorf("inspect installed %s directory: %w", owned.Name, err)
+	}
+	if err := installstate.CheckFile(path); err != nil {
+		return journalFile{}, fmt.Errorf("inspect installed %s: %w", owned.Name, err)
+	}
+	oldHash, err := installstate.Hash(path)
 	if err != nil {
-		return "", err
+		return journalFile{}, err
 	}
-	stagePath := stage.Name()
-	fail := func(cause error) (string, error) {
-		_ = stage.Close()
+	if oldHash != owned.SHA256 {
+		return journalFile{}, fmt.Errorf("installed %s was modified; refusing to overwrite it", owned.Name)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return journalFile{}, err
+	}
+	stagePath, err := stageUpdateFile(path, info, data)
+	if err != nil {
+		return journalFile{}, err
+	}
+	backupPath, err := createBackup(path, info, oldHash)
+	if err != nil {
 		_ = os.Remove(stagePath)
-		return "", cause
+		return journalFile{}, err
 	}
-	if err := stage.Chmod(info.Mode().Perm()); err != nil {
-		return fail(err)
+	return journalFile{Name: owned.Name, Path: path, Stage: stagePath, Backup: backupPath, OldHash: oldHash}, nil
+}
+
+func finalizeCommittedJournal(inv installstate.Inventory, journalPath string, j journal) error {
+	if err := cleanupJournalFiles(j); err != nil {
+		return err
 	}
-	if err := setFileOwner(stage, info); err != nil {
-		return fail(err)
+	for _, file := range j.Files {
+		if err := syncDirectory(filepath.Dir(file.Path)); err != nil {
+			return err
+		}
 	}
-	if _, err := stage.Write(data); err != nil {
-		return fail(err)
+	if err := os.Remove(journalPath); err != nil {
+		return err
 	}
-	if err := stage.Sync(); err != nil {
-		return fail(err)
-	}
-	if err := stage.Close(); err != nil {
-		_ = os.Remove(stagePath)
-		return "", err
-	}
-	if err := installstate.CheckFile(stagePath); err != nil {
-		_ = os.Remove(stagePath)
-		return "", err
-	}
-	return stagePath, nil
+	return syncDirectory(inv.LockDir)
+}
+
+func stageUpdateFile(targetPath string, info os.FileInfo, data []byte) (string, error) {
+	return writeTempSiblingFile(targetPath, ".peerimeter-update-stage-*", info, func(writer io.Writer) error {
+		_, err := writer.Write(data)
+		return err
+	})
 }
 
 func createBackup(path string, info os.FileInfo, expectedHash string) (string, error) {
-	backup, err := os.CreateTemp(filepath.Dir(path), ".peerimeter-update-backup-*")
+	backupPath, err := writeTempSiblingFile(path, ".peerimeter-update-backup-*", info, func(writer io.Writer) error {
+		source, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(writer, source)
+		return errors.Join(copyErr, source.Close())
+	})
 	if err != nil {
-		return "", err
-	}
-	backupPath := backup.Name()
-	fail := func(cause error) (string, error) {
-		_ = backup.Close()
-		_ = os.Remove(backupPath)
-		return "", cause
-	}
-	if err := backup.Chmod(info.Mode().Perm()); err != nil {
-		return fail(err)
-	}
-	if err := setFileOwner(backup, info); err != nil {
-		return fail(err)
-	}
-	source, err := os.Open(path)
-	if err != nil {
-		return fail(err)
-	}
-	_, copyErr := io.Copy(backup, source)
-	closeErr := source.Close()
-	if err := errors.Join(copyErr, closeErr); err != nil {
-		return fail(err)
-	}
-	if err := backup.Sync(); err != nil {
-		return fail(err)
-	}
-	if err := backup.Close(); err != nil {
-		_ = os.Remove(backupPath)
-		return "", err
-	}
-	if err := installstate.CheckFile(backupPath); err != nil {
-		_ = os.Remove(backupPath)
 		return "", err
 	}
 	digest, err := installstate.Hash(backupPath)
@@ -275,6 +230,40 @@ func createBackup(path string, info os.FileInfo, expectedHash string) (string, e
 		return "", errors.New("installed program changed while preparing its update backup")
 	}
 	return backupPath, nil
+}
+
+func writeTempSiblingFile(targetPath, prefix string, info os.FileInfo, writeFn func(io.Writer) error) (string, error) {
+	file, err := os.CreateTemp(filepath.Dir(targetPath), prefix)
+	if err != nil {
+		return "", err
+	}
+	tempPath := file.Name()
+	cleanup := func(cause error) (string, error) {
+		_ = file.Close()
+		_ = os.Remove(tempPath)
+		return "", cause
+	}
+	if err := file.Chmod(info.Mode().Perm()); err != nil {
+		return cleanup(err)
+	}
+	if err := setFileOwner(file, info); err != nil {
+		return cleanup(err)
+	}
+	if err := writeFn(file); err != nil {
+		return cleanup(err)
+	}
+	if err := file.Sync(); err != nil {
+		return cleanup(err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tempPath)
+		return "", err
+	}
+	if err := installstate.CheckFile(tempPath); err != nil {
+		_ = os.Remove(tempPath)
+		return "", err
+	}
+	return tempPath, nil
 }
 
 // RecoverLocked completes cleanup after a committed update or restores the
@@ -304,18 +293,7 @@ func RecoverLocked(inv installstate.Inventory) error {
 		return err
 	}
 	if j.State == "committed" {
-		if err := cleanupJournalFiles(j); err != nil {
-			return err
-		}
-		for _, f := range j.Files {
-			if err := syncDirectory(filepath.Dir(f.Path)); err != nil {
-				return err
-			}
-		}
-		if err := os.Remove(path); err != nil {
-			return err
-		}
-		return syncDirectory(inv.LockDir)
+		return finalizeCommittedJournal(inv, path, j)
 	}
 	if err := recoverJournal(inv, path, &j); err != nil {
 		return err
@@ -436,12 +414,3 @@ func validDigest(s string) bool {
 	return err == nil && len(b) == sha256.Size
 }
 func hasPrefix(s, prefix string) bool { return len(s) >= len(prefix) && s[:len(prefix)] == prefix }
-
-func knownInventoryFile(inv installstate.Inventory, name string) bool {
-	for _, file := range inv.Files {
-		if file.Name == name {
-			return true
-		}
-	}
-	return false
-}
