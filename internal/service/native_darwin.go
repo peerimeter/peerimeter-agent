@@ -230,6 +230,9 @@ func decodeDarwinLaunchdDictionary(decoder *xml.Decoder, dictionary xml.StartEle
 	seen := make(map[string]bool)
 	for {
 		keyStart, err := nextLaunchdElement(decoder, dictionary.Name)
+		if errors.Is(err, io.EOF) {
+			return plist, nil
+		}
 		if err != nil {
 			return darwinLaunchdPlist{}, err
 		}
