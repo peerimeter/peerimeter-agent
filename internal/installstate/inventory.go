@@ -1137,13 +1137,9 @@ func MigrateProfile(dir string, oldProfile, next Profile) error {
 	if err != nil {
 		return err
 	}
-	for _, v := range []*string{&oldProfile.ConfigDir, &oldProfile.StateDir, &oldProfile.RuntimeDir, &next.ConfigDir, &next.StateDir, &next.RuntimeDir} {
-		if *v != "" {
-			*v, err = Canonical(*v)
-			if err != nil {
-				return err
-			}
-		}
+	oldProfile, next, err = canonicalizeMigrationPaths(oldProfile, next)
+	if err != nil {
+		return err
 	}
 	if oldProfile.StateDir != next.StateDir {
 		return errors.New("profile migration cannot change persistent identity directory")
@@ -1168,17 +1164,39 @@ func MigrateProfile(dir string, oldProfile, next Profile) error {
 	if index < 0 {
 		return errors.New("profile changed during migration")
 	}
-	existing := inv.Profiles[index]
+	next, err = prepareMigratedProfile(inv, oldProfile, next, inv.Profiles[index])
+	if err != nil {
+		return err
+	}
+	inv.Profiles[index] = next
+	return save(inv)
+}
+
+func canonicalizeMigrationPaths(oldProfile, next Profile) (Profile, Profile, error) {
+	for _, path := range []*string{&oldProfile.ConfigDir, &oldProfile.StateDir, &oldProfile.RuntimeDir, &next.ConfigDir, &next.StateDir, &next.RuntimeDir} {
+		if *path == "" {
+			continue
+		}
+		canonical, err := Canonical(*path)
+		if err != nil {
+			return Profile{}, Profile{}, err
+		}
+		*path = canonical
+	}
+	return oldProfile, next, nil
+}
+
+func prepareMigratedProfile(inv Inventory, oldProfile, next, existing Profile) (Profile, error) {
 	if existing.ConfigDir != oldProfile.ConfigDir || existing.RuntimeDir != oldProfile.RuntimeDir {
-		return errors.New("inventory does not match the expected legacy profile layout")
+		return Profile{}, errors.New("inventory does not match the expected legacy profile layout")
 	}
 	if err := VerifyProfile(inv, existing); err != nil {
-		return err
+		return Profile{}, err
 	}
 	for _, path := range []string{next.ConfigDir, next.StateDir, next.RuntimeDir} {
 		if path != "" {
 			if err := CheckDirectoryWithPolicy(path, inv.AllowInsecureInstallDir); err != nil {
-				return err
+				return Profile{}, err
 			}
 		}
 	}
@@ -1193,15 +1211,14 @@ func MigrateProfile(dir string, oldProfile, next Profile) error {
 	next.Service = next.Service || existing.Service
 	if next.ClaimConfig {
 		if err := claimConfig(inv, next); err != nil {
-			return err
+			return Profile{}, err
 		}
 		next.ConfigOwned = true
 	} else {
 		next.ConfigOwned = next.ConfigDir == existing.ConfigDir && existing.ConfigOwned
 	}
 	next.RuntimeOwned = next.RuntimeDir == existing.RuntimeDir && existing.RuntimeOwned
-	inv.Profiles[index] = next
-	return save(inv)
+	return next, nil
 }
 
 func findProfileByStateDir(profiles []Profile, stateDir string) int {
