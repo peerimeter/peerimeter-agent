@@ -439,73 +439,70 @@ func darwinPublicState(raw string) ([]PeerState, error) {
 		if !ok {
 			continue
 		}
-		switch key {
-		case "public_key":
+		if key == "public_key" {
 			data, err := hex.DecodeString(value)
 			if err != nil || len(data) != 32 {
 				return nil, errors.New("invalid public WireGuard state")
 			}
 			peers = append(peers, PeerState{PublicKey: base64.StdEncoding.EncodeToString(data)})
 			peer = &peers[len(peers)-1]
-		case "allowed_ip":
-			if peer != nil {
-				prefix, err := netip.ParsePrefix(value)
-				if err != nil {
-					return nil, errors.New("invalid public WireGuard route state")
-				}
-				peer.AllowedIPs = append(peer.AllowedIPs, prefix.String())
-			}
-		case "persistent_keepalive_interval":
-			if peer != nil {
-				seconds, err := strconv.ParseUint(value, 10, 16)
-				if err != nil {
-					return nil, errors.New("invalid public WireGuard keepalive state")
-				}
-				peer.PersistentKeepaliveSeconds = int(seconds)
-			}
-		case "endpoint":
-			if peer != nil {
-				if _, err := netip.ParseAddrPort(value); err != nil {
-					return nil, errors.New("invalid public WireGuard endpoint state")
-				}
-				peer.Endpoint = value
-			}
-		case "rx_bytes", "tx_bytes":
-			if peer != nil {
-				n, err := strconv.ParseUint(value, 10, 64)
-				if err != nil {
-					return nil, errors.New("invalid WireGuard traffic counter")
-				}
-				if key == "rx_bytes" {
-					peer.ReceivedBytes = n
-				} else {
-					peer.SentBytes = n
-				}
-			}
-		case "last_handshake_time_sec":
-			if peer != nil {
-				n, err := strconv.ParseInt(value, 10, 64)
-				if err != nil || n < 0 {
-					return nil, errors.New("invalid WireGuard handshake timestamp")
-				}
-				if n != 0 {
-					peer.LastHandshake = time.Unix(n, 0)
-				}
-			}
-		case "last_handshake_time_nsec":
-			if peer != nil {
-				n, err := strconv.ParseInt(value, 10, 64)
-				if err != nil || n < 0 || n >= int64(time.Second) {
-					return nil, errors.New("invalid WireGuard handshake timestamp")
-				}
-				if !peer.LastHandshake.IsZero() {
-					peer.LastHandshake = peer.LastHandshake.Add(time.Duration(n))
-				}
+		} else if peer != nil {
+			if err := applyDarwinPeerField(peer, key, value); err != nil {
+				return nil, err
 			}
 		}
 	}
 	sort.Slice(peers, func(i, j int) bool { return peers[i].PublicKey < peers[j].PublicKey })
 	return peers, nil
+}
+
+func applyDarwinPeerField(peer *PeerState, key, value string) error {
+	switch key {
+	case "allowed_ip":
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return errors.New("invalid public WireGuard route state")
+		}
+		peer.AllowedIPs = append(peer.AllowedIPs, prefix.String())
+	case "persistent_keepalive_interval":
+		seconds, err := strconv.ParseUint(value, 10, 16)
+		if err != nil {
+			return errors.New("invalid public WireGuard keepalive state")
+		}
+		peer.PersistentKeepaliveSeconds = int(seconds)
+	case "endpoint":
+		if _, err := netip.ParseAddrPort(value); err != nil {
+			return errors.New("invalid public WireGuard endpoint state")
+		}
+		peer.Endpoint = value
+	case "rx_bytes", "tx_bytes":
+		count, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return errors.New("invalid WireGuard traffic counter")
+		}
+		if key == "rx_bytes" {
+			peer.ReceivedBytes = count
+		} else {
+			peer.SentBytes = count
+		}
+	case "last_handshake_time_sec":
+		seconds, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || seconds < 0 {
+			return errors.New("invalid WireGuard handshake timestamp")
+		}
+		if seconds != 0 {
+			peer.LastHandshake = time.Unix(seconds, 0)
+		}
+	case "last_handshake_time_nsec":
+		nanoseconds, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || nanoseconds < 0 || nanoseconds >= int64(time.Second) {
+			return errors.New("invalid WireGuard handshake timestamp")
+		}
+		if !peer.LastHandshake.IsZero() {
+			peer.LastHandshake = peer.LastHandshake.Add(time.Duration(nanoseconds))
+		}
+	}
+	return nil
 }
 func darwinRoutes() ([]darwinRoute, error) {
 	rib, err := route.FetchRIB(syscall.AF_UNSPEC, route.RIBTypeRoute, 0)

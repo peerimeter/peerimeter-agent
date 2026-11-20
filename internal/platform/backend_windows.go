@@ -185,54 +185,16 @@ func windowsConfiguration(old *Desired, next Desired) (*driver.ConfigBuilder, er
 			previous[peer.PublicKey] = peer
 		}
 	}
-	type entry struct {
-		peer driver.Peer
-		ips  []driver.AllowedIP
-	}
-	var entries []entry
+	var entries []windowsPeerEntry
 	for _, peer := range next.Config.Peers {
 		before, exists := previous[peer.PublicKey]
 		delete(previous, peer.PublicKey)
 		if exists && reflect.DeepEqual(before, peer) {
 			continue
 		}
-		var item entry
-		item.peer.Flags = driver.PeerHasPublicKey
-		key, err := base64.StdEncoding.Strict().DecodeString(peer.PublicKey)
-		if err != nil || len(key) != 32 {
-			return nil, errors.New("invalid peer public key")
-		}
-		copy(item.peer.PublicKey[:], key)
-		if !exists || before.PersistentKeepaliveSeconds != peer.PersistentKeepaliveSeconds {
-			item.peer.Flags |= driver.PeerHasPersistentKeepalive
-			item.peer.PersistentKeepalive = uint16(peer.PersistentKeepaliveSeconds)
-		}
-		if !exists || before.Endpoint != peer.Endpoint {
-			item.peer.Flags |= driver.PeerHasEndpoint
-			endpoint, err := netip.ParseAddrPort(peer.Endpoint)
-			if err != nil || item.peer.Endpoint.SetAddrPort(endpoint) != nil {
-				return nil, errors.New("invalid Windows WireGuard endpoint")
-			}
-		}
-		if !exists || !reflect.DeepEqual(before.AllowedIPs, peer.AllowedIPs) {
-			item.peer.Flags |= driver.PeerReplaceAllowedIPs
-			for _, raw := range peer.AllowedIPs {
-				prefix, err := netip.ParsePrefix(raw)
-				if err != nil {
-					return nil, errors.New("invalid Windows WireGuard allowed IP")
-				}
-				ip := driver.AllowedIP{Cidr: uint8(prefix.Bits())}
-				if prefix.Addr().Is4() {
-					ip.AddressFamily = windows.AF_INET
-					addr := prefix.Addr().As4()
-					copy(ip.Address[:], addr[:])
-				} else {
-					ip.AddressFamily = windows.AF_INET6
-					ip.Address = prefix.Addr().As16()
-				}
-				item.ips = append(item.ips, ip)
-			}
-			item.peer.AllowedIPsCount = uint32(len(item.ips))
+		item, err := buildWindowsPeerEntry(before, exists, peer)
+		if err != nil {
+			return nil, err
 		}
 		entries = append(entries, item)
 	}
@@ -241,7 +203,7 @@ func windowsConfiguration(old *Desired, next Desired) (*driver.ConfigBuilder, er
 		for _, peer := range old.Config.Peers {
 			if _, removed := previous[peer.PublicKey]; removed {
 				key, _ := base64.StdEncoding.DecodeString(peer.PublicKey)
-				item := entry{peer: driver.Peer{Flags: driver.PeerHasPublicKey | driver.PeerRemove}}
+				item := windowsPeerEntry{peer: driver.Peer{Flags: driver.PeerHasPublicKey | driver.PeerRemove}}
 				copy(item.peer.PublicKey[:], key)
 				entries = append(entries, item)
 			}
@@ -257,6 +219,61 @@ func windowsConfiguration(old *Desired, next Desired) (*driver.ConfigBuilder, er
 		}
 	}
 	return builder, nil
+}
+
+type windowsPeerEntry struct {
+	peer driver.Peer
+	ips  []driver.AllowedIP
+}
+
+func buildWindowsPeerEntry(before config.Peer, exists bool, peer config.Peer) (windowsPeerEntry, error) {
+	var item windowsPeerEntry
+	item.peer.Flags = driver.PeerHasPublicKey
+	key, err := base64.StdEncoding.Strict().DecodeString(peer.PublicKey)
+	if err != nil || len(key) != 32 {
+		return windowsPeerEntry{}, errors.New("invalid peer public key")
+	}
+	copy(item.peer.PublicKey[:], key)
+	if !exists || before.PersistentKeepaliveSeconds != peer.PersistentKeepaliveSeconds {
+		item.peer.Flags |= driver.PeerHasPersistentKeepalive
+		item.peer.PersistentKeepalive = uint16(peer.PersistentKeepaliveSeconds)
+	}
+	if !exists || before.Endpoint != peer.Endpoint {
+		item.peer.Flags |= driver.PeerHasEndpoint
+		endpoint, err := netip.ParseAddrPort(peer.Endpoint)
+		if err != nil || item.peer.Endpoint.SetAddrPort(endpoint) != nil {
+			return windowsPeerEntry{}, errors.New("invalid Windows WireGuard endpoint")
+		}
+	}
+	if !exists || !reflect.DeepEqual(before.AllowedIPs, peer.AllowedIPs) {
+		item.peer.Flags |= driver.PeerReplaceAllowedIPs
+		for _, raw := range peer.AllowedIPs {
+			ip, err := parseWindowsAllowedIP(raw)
+			if err != nil {
+				return windowsPeerEntry{}, err
+			}
+			item.ips = append(item.ips, ip)
+		}
+		item.peer.AllowedIPsCount = uint32(len(item.ips))
+	}
+	return item, nil
+}
+
+func parseWindowsAllowedIP(raw string) (driver.AllowedIP, error) {
+	prefix, err := netip.ParsePrefix(raw)
+	if err != nil {
+		return driver.AllowedIP{}, errors.New("invalid Windows WireGuard allowed IP")
+	}
+	ip := driver.AllowedIP{Cidr: uint8(prefix.Bits())}
+	if prefix.Addr().Is4() {
+		ip.AddressFamily = windows.AF_INET
+		address := prefix.Addr().As4()
+		copy(ip.Address[:], address[:])
+		return ip, nil
+	}
+	ip.AddressFamily = windows.AF_INET6
+	ip.Address = prefix.Addr().As16()
+	return ip, nil
 }
 
 func windowsPreviousConfiguration(attempted, previous Desired) (*driver.Interface, uint32, error) {
