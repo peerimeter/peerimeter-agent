@@ -21,6 +21,7 @@ import (
 type serviceConfigOptions struct {
 	networkID, nodeID, apiURL string
 	allowInsecureHTTP         bool
+	debug                     bool
 }
 
 func managedNetworkIDs(stateDir string) ([]string, error) {
@@ -107,7 +108,7 @@ func managedServiceClient(options serviceConfigOptions, layout paths.Layout) (*s
 	if needsMigration {
 		metadata = managedNetworkMetadata{Version: 1, APIURL: validated.APIURL, NetworkID: options.networkID, NodeID: options.nodeID, AllowInsecureHTTP: allowInsecureHTTP}
 	}
-	return serviceapi.New(validated), func() error {
+	return serviceapi.NewWithDebug(validated, options.debug), func() error {
 		if !needsMigration {
 			return nil
 		}

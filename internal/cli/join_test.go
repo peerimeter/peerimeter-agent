@@ -2,10 +2,14 @@ package cli
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -24,6 +28,39 @@ func TestEligiblePeerEntriesExcludePeersWithoutUsableEndpoint(t *testing.T) {
 	}
 	if !reflect.DeepEqual(routes, []string{"10.90.0.2/32"}) {
 		t.Fatalf("routes = %#v, want only configured peer route", routes)
+	}
+}
+
+func TestJoinDebugIncludesServiceErrorResponse(t *testing.T) {
+	const responseBody = `{"error":"node ID is registered with another public key"}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(responseBody))
+	}))
+	defer server.Close()
+	bundle, err := json.Marshal(struct {
+		Version         int    `json:"version"`
+		APIURL          string `json:"api_url"`
+		NetworkID       string `json:"network_id"`
+		EnrollmentToken string `json:"enrollment_token"`
+	}{Version: 1, APIURL: server.URL, NetworkID: "network-a", EnrollmentToken: "join-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := base64.RawURLEncoding.EncodeToString(bundle)
+	directories := []string{"--config-dir", filepath.Join(t.TempDir(), "config"), "--state-dir", filepath.Join(t.TempDir(), "state"), "--runtime-dir", filepath.Join(t.TempDir(), "runtime")}
+
+	args := append([]string{"join", "--token", token}, directories...)
+	code, _, stderr := invoke(t, args...)
+	if code == 0 || !strings.Contains(stderr, "service API returned HTTP 409") || strings.Contains(stderr, "node ID is registered") {
+		t.Fatalf("join without debug = %d, %q; want sanitized HTTP 409", code, stderr)
+	}
+
+	args = append(args, "--debug")
+	code, _, stderr = invoke(t, args...)
+	if code == 0 || !strings.Contains(stderr, responseBody) || strings.Contains(stderr, "join-secret") {
+		t.Fatalf("join with debug = %d, %q; want response JSON without request token", code, stderr)
 	}
 }
 

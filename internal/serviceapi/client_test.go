@@ -224,6 +224,40 @@ func TestResponseAndRequestErrorsDoNotLeakToken(t *testing.T) {
 	}
 }
 
+func TestHTTPErrorResponseDetailsRequireDebug(t *testing.T) {
+	const token = "private-enrollment-token"
+	responseBody := `{"error":"node ID is registered with another public key","authorization":"private-enrollment-token"}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = io.WriteString(w, responseBody)
+	}))
+	defer server.Close()
+
+	for _, test := range []struct {
+		name     string
+		debug    bool
+		wantBody string
+	}{
+		{name: "normal", wantBody: "service API returned HTTP 409"},
+		{name: "debug", debug: true, wantBody: `{"error":"node ID is registered with another public key","authorization":"[REDACTED]"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := newClientWithDebug(JoinBundle{APIURL: server.URL, EnrollmentToken: token}, server.Client(), test.debug)
+			_, err := client.PullPeers(context.Background(), "net-a", "node-a")
+			if err == nil || !strings.Contains(err.Error(), test.wantBody) {
+				t.Fatalf("error = %v, want %q", err, test.wantBody)
+			}
+			if strings.Contains(err.Error(), token) {
+				t.Fatalf("error leaked the enrollment token: %v", err)
+			}
+			if !test.debug && strings.Contains(err.Error(), "node ID is registered") {
+				t.Fatalf("normal error exposed response details: %v", err)
+			}
+		})
+	}
+}
+
 func TestAPIClientDoesNotFollowRedirectsWithBearerToken(t *testing.T) {
 	var redirectedCalls int
 	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
