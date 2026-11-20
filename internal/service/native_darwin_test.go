@@ -91,3 +91,25 @@ func TestDarwinReadOnlyProbeHonorsProgramOverCustomArgvZero(t *testing.T) {
 		t.Fatal("duplicate executable definitions did not fail closed")
 	}
 }
+
+func TestDarwinRemovalVerifiesEffectiveProgram(t *testing.T) {
+	executable := "/opt/Peerimeter Agent/peerimeter-agent"
+	cfg := Config{ConfigPath: "/etc/peerimeter/service.yaml", StateDirectory: "/Library/Application Support/Peerimeter", RuntimeDirectory: "/var/run/peerimeter-agent"}
+	data, err := darwinPlist(executable, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plist, err := parseDarwinLaunchdPlist(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plist.Program = "/opt/Other Agent/other-agent"
+	if err := verifyDarwinServiceOwnership(plist, executable, cfg); err == nil {
+		t.Fatal("foreign Program was accepted because ProgramArguments matched")
+	}
+	plist.Program = executable
+	plist.ProgramArguments[0] = "custom-argv-zero"
+	if err := verifyDarwinServiceOwnership(plist, executable, cfg); err != nil {
+		t.Fatalf("matching Program was rejected when argv[0] was customized: %v", err)
+	}
+}

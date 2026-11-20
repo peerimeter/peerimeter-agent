@@ -157,16 +157,34 @@ func RemoveOwned(ctx context.Context, expectedExe string, cfg Config) error {
 	if err != nil {
 		return errors.New("cannot verify launchd service ownership")
 	}
-	if plist.Label != darwinServiceLabel {
-		return errors.New("launchd label belongs to another installation")
-	}
-	if err := verifyServiceArguments(plist.ProgramArguments, expectedExe, cfg); err != nil {
+	if err := verifyDarwinServiceOwnership(plist, expectedExe, cfg); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return nativeManage("uninstall", cfg)
+}
+
+func verifyDarwinServiceOwnership(plist darwinLaunchdPlist, expectedExe string, cfg Config) error {
+	if plist.Label != darwinServiceLabel {
+		return errors.New("launchd label belongs to another installation")
+	}
+	executable := plist.Program
+	arguments := append([]string(nil), plist.ProgramArguments...)
+	if executable == "" {
+		if len(arguments) == 0 {
+			return errors.New("launchd registration does not expose an executable")
+		}
+		executable = arguments[0]
+	} else if len(arguments) > 0 {
+		// Program determines the executable even when argv[0] is customized.
+		arguments[0] = expectedExe
+	}
+	if !filepath.IsAbs(executable) || !equalServicePath(executable, expectedExe) {
+		return errors.New("launchd executable belongs to another installation")
+	}
+	return verifyServiceArguments(arguments, expectedExe, cfg)
 }
 
 func HasOwnedRegistration(ctx context.Context, expectedExe string) (bool, error) {
