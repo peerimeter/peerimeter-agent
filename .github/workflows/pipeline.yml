@@ -25,7 +25,7 @@ jobs:
         include:
           - runner: ubuntu-24.04
             os: linux
-          - runner: macos-15-intel
+          - runner: macos-15
             os: darwin
           - runner: windows-2022
             os: windows
@@ -45,35 +45,24 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
-      - name: Format, vet, tests and build
+      - name: Format, vet and tests
         id: tests
         run: |
           test "$(go env GOVERSION | tr -d '\r')" = go1.27.4
-          unformatted=$(gofmt -l cmd internal)
-          if [ -n "$unformatted" ]; then
-            printf '%s\n' "$unformatted"
-            exit 1
+          if [ "${{ matrix.os }}" = linux ]; then
+            unformatted=$(gofmt -l cmd internal)
+            if [ -n "$unformatted" ]; then
+              printf '%s\n' "$unformatted"
+              exit 1
+            fi
+            go vet ./...
           fi
-          go vet ./...
           go test -race ./...
-          go build -o "bin/$AGENT_EXE" ./cmd/peerimeter-agent
       - name: Self-update installed-binary E2E
         env:
           PEERIMETER_SELF_UPDATE_E2E: '1'
         run: go test ./internal/cli -run '^TestSelfUpdateBinaryEndToEnd$' -count=1
-      - name: Offline CLI smoke tests
-        id: smoke
-        run: |
-          ./bin/$AGENT_EXE version
-          ./bin/$AGENT_EXE version --json
-          ./bin/$AGENT_EXE --help
-          ./bin/$AGENT_EXE run --help
-          ./bin/$AGENT_EXE service install --help
-          ./bin/$AGENT_EXE completion bash > "$RUNNER_TEMP/peerimeter-completion.bash"
-          ./bin/$AGENT_EXE generate-example --directory "$RUNNER_TEMP/peerimeter-example"
-          ./bin/$AGENT_EXE validate-config --config "$RUNNER_TEMP/peerimeter-example/peer-a.yaml"
-          ./bin/$AGENT_EXE validate-config --config "$RUNNER_TEMP/peerimeter-example/peer-b.yaml"
-      - name: Build static agent and reference peer for integration
+      - name: Build static agent and reference peer
         env:
           CGO_ENABLED: '0'
         run: |
@@ -81,6 +70,18 @@ jobs:
           if [ "$RUNNER_OS" != Linux ]; then
             go build -C tests/backendprobe -mod=readonly -o "$RUNNER_TEMP/$PROBE_EXE" .
           fi
+      - name: Offline CLI smoke tests
+        id: smoke
+        run: |
+          "$RUNNER_TEMP/$AGENT_EXE" version
+          "$RUNNER_TEMP/$AGENT_EXE" version --json
+          "$RUNNER_TEMP/$AGENT_EXE" --help
+          "$RUNNER_TEMP/$AGENT_EXE" run --help
+          "$RUNNER_TEMP/$AGENT_EXE" service install --help
+          "$RUNNER_TEMP/$AGENT_EXE" completion bash > "$RUNNER_TEMP/peerimeter-completion.bash"
+          "$RUNNER_TEMP/$AGENT_EXE" generate-example --directory "$RUNNER_TEMP/peerimeter-example"
+          "$RUNNER_TEMP/$AGENT_EXE" validate-config --config "$RUNNER_TEMP/peerimeter-example/peer-a.yaml"
+          "$RUNNER_TEMP/$AGENT_EXE" validate-config --config "$RUNNER_TEMP/peerimeter-example/peer-b.yaml"
       - name: Install YAML parser for Linux integration assertions
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y python3-yaml
