@@ -17,17 +17,25 @@ concurrency:
   # Do not interrupt a release once main starts publishing it.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
-  test:
-    name: Build and tests / ${{ matrix.os }}
+  native:
+    name: Test, integration & package / ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15-intel, windows-2022]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+        include:
+          - runner: ubuntu-24.04
+            os: linux
+          - runner: macos-15-intel
+            os: darwin
+          - runner: windows-2022
+            os: windows
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     env:
       GOTOOLCHAIN: local
-      AGENT_EXE: bin/peerimeter-agent${{ matrix.os == 'windows-2022' && '.exe' || '' }}
+      RELEASE_VERSION: ${{ inputs.version || 'v0.1.0-dev' }}
+      AGENT_EXE: bin/peerimeter-agent${{ matrix.os == 'windows' && '.exe' || '' }}
+      PROBE_EXE: pmprobe${{ matrix.os == 'windows' && '.exe' || '' }}
     defaults:
       run:
         shell: bash
@@ -65,30 +73,10 @@ jobs:
           ./$AGENT_EXE generate-example --directory "$RUNNER_TEMP/peerimeter-example"
           ./$AGENT_EXE validate-config --config "$RUNNER_TEMP/peerimeter-example/peer-a.yaml"
           ./$AGENT_EXE validate-config --config "$RUNNER_TEMP/peerimeter-example/peer-b.yaml"
-
-  integration:
-    name: WireGuard integration / ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-15-intel, windows-2022]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    env:
-      GOTOOLCHAIN: local
-      CGO_ENABLED: '0'
-      AGENT_EXE: peerimeter-agent${{ matrix.os == 'windows-2022' && '.exe' || '' }}
-      PROBE_EXE: pmprobe${{ matrix.os == 'windows-2022' && '.exe' || '' }}
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-go@v7.0.0
-        with:
-          go-version-file: go.mod
-          cache-dependency-path: go.sum
-      - name: Build actual agent and reference peer
-        shell: bash
+      - name: Build static agent and reference peer for integration
+        env:
+          CGO_ENABLED: '0'
         run: |
-          test "$(go env GOVERSION | tr -d '\r')" = go1.27.4
           go build -mod=readonly -o "$RUNNER_TEMP/$AGENT_EXE" ./cmd/peerimeter-agent
           if [ "$RUNNER_OS" != Linux ]; then
             go build -C tests/backendprobe -mod=readonly -o "$RUNNER_TEMP/$PROBE_EXE" .
@@ -103,12 +91,10 @@ jobs:
       - name: Two Linux agents and systemd lifecycle
         if: runner.os == 'Linux'
         id: linux
-        shell: bash
         run: sudo bash scripts/ci/linux-agent.sh "$RUNNER_TEMP/$AGENT_EXE"
       - name: macOS agent traffic and launchd lifecycle
         if: runner.os == 'macOS'
         id: macos
-        shell: bash
         run: sudo bash scripts/ci/macos-agent.sh "$RUNNER_TEMP/$AGENT_EXE" "$RUNNER_TEMP/$PROBE_EXE"
       - name: Windows agent traffic and SCM lifecycle
         if: runner.os == 'Windows'
@@ -117,7 +103,6 @@ jobs:
         run: ./scripts/ci/windows-agent.ps1 -Agent "$env:RUNNER_TEMP/$env:AGENT_EXE" -Helper "$env:RUNNER_TEMP/$env:PROBE_EXE"
       - name: Record native agent evidence
         if: always()
-        shell: bash
         env:
           PROBE_KIND: native-agent-integration-v1
           PROBE_OUTCOME: ${{ steps.linux.outcome == 'success' || steps.macos.outcome == 'success' || steps.windows.outcome == 'success' }}
@@ -127,43 +112,40 @@ jobs:
       - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
-          name: agent-result-${{ matrix.os }}
+          name: agent-result-${{ matrix.runner }}
           path: ${{ runner.temp }}/peerimeter-result.json
           if-no-files-found: error
           retention-days: 14
+      - name: Build package with licenses and bundled Windows driver
+        env:
+          CGO_ENABLED: '0'
+        run: python scripts/package.py --os '${{ matrix.os }}' --arch amd64 --version "$RELEASE_VERSION"
+      - name: Unix installer latest/pin/offline/custom-path tests
+        if: runner.os != 'Windows'
+        run: |
+          bash scripts/ci/unix-installer.sh
+          asset="peerimeter-agent-${{ matrix.os }}-x86_64"
+          digest=$(awk -v name="$asset" '$2 == name {print $1}' dist/SHA256SUMS)
+          notices="$asset.NOTICES.txt"
+          notices_digest=$(awk -v name="$notices" '$2 == name {print $1}' dist/SHA256SUMS)
+          sh docs/install.sh --binary "dist/$asset" --sha256 "$digest" --notices "dist/$notices" --notices-sha256 "$notices_digest" --install-dir "$RUNNER_TEMP/real package install/bin"
+          "$RUNNER_TEMP/real package install/bin/peerimeter-agent" version --json > "$RUNNER_TEMP/installed-version.json"
+          python -c 'import json,os; p=json.load(open(os.environ["RUNNER_TEMP"]+"/installed-version.json")); assert p["version"]==os.environ["RELEASE_VERSION"] and p["go_version"]=="go1.27.4"'
+      - name: Windows installer latest/pin/offline/custom-path tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/ci/windows-installer.ps1 -PackageDirectory ./dist
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: package-${{ matrix.os }}-amd64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
 
-  package:
-    name: Package / ${{ matrix.os }} / ${{ matrix.arch }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            os: linux
-            arch: amd64
-            native_test: true
-          - runner: ubuntu-24.04
-            os: linux
-            arch: arm64
-            native_test: false
-          - runner: ubuntu-24.04
-            os: darwin
-            arch: arm64
-            native_test: false
-          - runner: macos-15-intel
-            os: darwin
-            arch: amd64
-            native_test: true
-          - runner: windows-2022
-            os: windows
-            arch: amd64
-            native_test: true
-          - runner: windows-2022
-            os: windows
-            arch: arm64
-            native_test: false
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 25
+  package-cross:
+    name: Package / arm64 cross-compile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     env:
       RELEASE_VERSION: ${{ inputs.version || 'v0.1.0-dev' }}
       GOTOOLCHAIN: local
@@ -174,34 +156,22 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
-      - name: Build package with licenses and bundled Windows driver
-        shell: bash
-        run: python scripts/package.py --os '${{ matrix.os }}' --arch '${{ matrix.arch }}' --version "$RELEASE_VERSION"
-      - name: Unix installer latest/pin/offline/custom-path tests
-        if: matrix.native_test && runner.os != 'Windows'
-        shell: bash
+      - name: Build arm64 packages
         run: |
-          bash scripts/ci/unix-installer.sh
-          asset="peerimeter-agent-${{ matrix.os }}-${{ matrix.arch == 'amd64' && 'x86_64' || 'aarch64' }}"
-          digest=$(awk -v name="$asset" '$2 == name {print $1}' dist/SHA256SUMS)
-          notices="$asset.NOTICES.txt"
-          notices_digest=$(awk -v name="$notices" '$2 == name {print $1}' dist/SHA256SUMS)
-          sh docs/install.sh --binary "dist/$asset" --sha256 "$digest" --notices "dist/$notices" --notices-sha256 "$notices_digest" --install-dir "$RUNNER_TEMP/real package install/bin"
-          "$RUNNER_TEMP/real package install/bin/peerimeter-agent" version --json > "$RUNNER_TEMP/installed-version.json"
-          python -c 'import json,os; p=json.load(open(os.environ["RUNNER_TEMP"]+"/installed-version.json")); assert p["version"]==os.environ["RELEASE_VERSION"] and p["go_version"]=="go1.27.4"'
-      - name: Windows installer latest/pin/offline/custom-path tests
-        if: matrix.native_test && runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/ci/windows-installer.ps1 -PackageDirectory ./dist
+          for os in linux darwin windows; do
+            python scripts/package.py --os "$os" --arch arm64 --version "$RELEASE_VERSION"
+          done
       - uses: actions/upload-artifact@v7.0.2
         with:
-          name: package-${{ matrix.os }}-${{ matrix.arch }}
+          name: package-cross-arm64
           path: dist/*
           if-no-files-found: error
           retention-days: 14
 
-  action-lock:
-    name: Verify workflow action lock
+  check:
+    name: check
+    if: always()
+    needs: [native, package-cross]
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
@@ -211,31 +181,24 @@ jobs:
         run: gh extension install github/gh-actions-lock
       - name: Verify locked action dependencies
         run: gh actions-lock --verify
-
-  check:
-    name: check
-    if: always()
-    needs: [test, integration, package, action-lock]
-    runs-on: ubuntu-24.04
-    steps:
       - name: Require every PR gate to pass
         env:
-          TEST_RESULT: ${{ needs.test.result }}
-          INTEGRATION_RESULT: ${{ needs.integration.result }}
-          PACKAGE_RESULT: ${{ needs.package.result }}
-          ACTION_LOCK_RESULT: ${{ needs.action-lock.result }}
+          NATIVE_RESULT: ${{ needs.native.result }}
+          PACKAGE_CROSS_RESULT: ${{ needs.package-cross.result }}
         run: |
-          test "$TEST_RESULT" = success
-          test "$INTEGRATION_RESULT" = success
-          test "$PACKAGE_RESULT" = success
-          test "$ACTION_LOCK_RESULT" = success
+          test "$NATIVE_RESULT" = success
+          test "$PACKAGE_CROSS_RESULT" = success
 
-  version:
+  release:
+    name: release
+    needs: [check]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    outputs:
-      tag: ${{ steps.semver.outputs.next }}
-      bump: ${{ steps.semver.outputs.bump }}
+    permissions:
+      contents: write
+    timeout-minutes: 30
+    env:
+      GOTOOLCHAIN: local
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -249,29 +212,16 @@ jobs:
           fallbackTag: v0.0.0
           noNewCommitBehavior: current
           noVersionBumpBehavior: current
-
-  release:
-    name: release
-    needs: [check, version]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.version.outputs.bump != 'none'
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    timeout-minutes: 30
-    env:
-      RELEASE_TAG: ${{ needs.version.outputs.tag }}
-      GOTOOLCHAIN: local
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          fetch-depth: 0
       - uses: actions/setup-go@v7.0.0
+        if: steps.semver.outputs.bump != 'none'
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
       - name: Create local release tag for GoReleaser
-        run: git tag "$RELEASE_TAG" "$GITHUB_SHA"
+        if: steps.semver.outputs.bump != 'none'
+        run: git tag "${{ steps.semver.outputs.next }}" "$GITHUB_SHA"
       - name: Build and publish with GoReleaser
+        if: steps.semver.outputs.bump != 'none'
         uses: goreleaser/goreleaser-action@v7.3.0
         with:
           version: v2.20.1
