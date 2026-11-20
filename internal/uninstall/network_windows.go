@@ -160,6 +160,9 @@ function Remove-Leaf([string]$Path) {
     }
 }
 function Is-ApprovedPurgePath([string]$Root,[string]$Candidate) {
+    foreach ($preserved in @($p.purge_preserve)) {
+        if ([String]::Equals([string]$preserved,$Candidate,[StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
     $property = @($p.purge_contents.PSObject.Properties | Where-Object { [String]::Equals($_.Name,$Root,[StringComparison]::OrdinalIgnoreCase) } | Select-Object -First 1)
     if ($property.Count -eq 0) { return $false }
     foreach ($approved in @($property[0].Value)) {
@@ -172,7 +175,8 @@ function Purge-Directory([string]$Path,[bool]$Top,[string]$Root) {
     No-Reparse $Path
     foreach ($item in Get-ChildItem -LiteralPath $Path -Force) {
         $scheduledMarker = @($p.files | Where-Object { $_.marker -and $_.path -ieq $item.FullName }).Count -gt 0
-        if ($Top -and $scheduledMarker) { continue }
+        $scheduledPreserve = $Top -and @($p.purge_preserve | Where-Object { $_ -ieq $item.FullName }).Count -gt 0
+        if ($Top -and ($scheduledMarker -or $scheduledPreserve)) { continue }
         if (-not (Is-ApprovedPurgePath $Root $item.FullName)) { Add-RefusedPath $item.FullName; continue }
         No-Reparse $item.FullName
         if ($item.PSIsContainer) {

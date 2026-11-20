@@ -423,7 +423,7 @@ func TestPurgePreservesOnlyScheduledMarkersUntilMarkerPhase(t *testing.T) {
 		}
 	}
 	planned := []removalFile{{Path: filepath.Join(root, installstate.MarkerFilename), Marker: true}, {Path: filepath.Join(root, installstate.LegacyMarkerFilename), Marker: true}}
-	if _, err := removeDirectoryContents(root, plannedMarkersForRoot(root, planned)); err != nil {
+	if _, err := removeDirectoryContents(root, plannedMarkersForRoot(root, removalPlan{Files: planned})); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range markers {
@@ -497,6 +497,84 @@ func TestPurgeRejectsRootsContainingInstallationMetadata(t *testing.T) {
 		protectedPath := map[string]string{"install": inv.InstallDir, "data": inv.DataDir, "locks": inv.LockDir}[protected]
 		if err == nil || !strings.Contains(err.Error(), protectedPath) {
 			t.Fatalf("purge root was not rejected for nested %s directory: %v", protected, err)
+		}
+	}
+}
+
+func TestPurgeAllowsExactInstallationDataAndLockDirectories(t *testing.T) {
+	root := filepath.Join(string(filepath.Separator), "tmp", "peerimeter-purge-test")
+	for _, protected := range []string{"data", "locks"} {
+		inv := installstate.Inventory{InstallDir: filepath.Join(root, "install"), DataDir: filepath.Join(root, "data"), LockDir: filepath.Join(root, "locks")}
+		protectedPath := map[string]string{"data": inv.DataDir, "locks": inv.LockDir}[protected]
+		if err := validatePurgeRoots(inv, removalPlan{PurgeDirs: []string{protectedPath}}); err != nil {
+			t.Fatalf("purge rejected exact %s directory: %v", protected, err)
+		}
+	}
+}
+
+func TestPurgeRemovesManagedJoinFilesWhenStateIsInstallationData(t *testing.T) {
+	base, err := os.MkdirTemp("/tmp", "pm-uninstall-shared-state-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
+	installDir := filepath.Join(base, "install")
+	docDir := filepath.Join(base, "doc")
+	dataDir := filepath.Join(base, "state")
+	configDir := filepath.Join(base, "config")
+	runtimeDir := filepath.Join(base, "runtime")
+	for _, dir := range []string{installDir, docDir, dataDir, configDir, runtimeDir} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range installstate.ProgramNames() {
+		programDir := installDir
+		if name == "peerimeter-agent.NOTICES.txt" {
+			programDir = docDir
+		}
+		if err := os.WriteFile(filepath.Join(programDir, name), []byte(name), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := installstate.RegisterWithDirectories(installDir, docDir, dataDir, dataDir, false); err != nil {
+		t.Fatal(err)
+	}
+	profile := installstate.Profile{ConfigDir: configDir, StateDir: dataDir, RuntimeDir: runtimeDir}
+	for _, path := range []string{filepath.Join(configDir, "service.yaml"), filepath.Join(configDir, "service.key")} {
+		if err := os.WriteFile(path, []byte("fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	managedDir := filepath.Join(dataDir, "managed")
+	if err := os.Mkdir(managedDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		filepath.Join(managedDir, "network-a.token"),
+		filepath.Join(managedDir, "network-a.yaml"),
+		filepath.Join(configDir, "network-a.yaml"),
+		filepath.Join(configDir, "network-a.key"),
+	} {
+		if err := os.WriteFile(path, []byte("fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := installstate.RegisterProfile(installDir, profile); err != nil {
+		t.Fatal(err)
+	}
+	profile.ClaimConfig = true
+	if err := installstate.RegisterProfile(installDir, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	if err := Execute(context.Background(), Options{InstallDir: installDir, Purge: true, Yes: true}, &output); err != nil {
+		t.Fatalf("purge uninstall failed: %v", err)
+	}
+	for _, path := range []string{installDir, dataDir, configDir} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("purge retained %s: %v", path, err)
 		}
 	}
 }
