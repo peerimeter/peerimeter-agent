@@ -263,15 +263,19 @@ the default-route physical interface's addresses, then receives a tunnel IPv4
 address from the network's API-configured CIDR. It selects a peer's LAN address
 when the reported CIDRs overlap; otherwise it uses that peer's STUN-observed
 public UDP mapping. It saves the managed configuration as
-`<config-dir>/<network-id>.yaml` and the service credential, then exits without
+`<config-dir>/<network-id>.yaml`, the peer's WireGuard private key as
+`<config-dir>/<network-id>.key`, and the enrollment token as
+`<state-dir>/managed/<network-id>.token`, then exits without
 starting a tunnel. To start every registered network, run
 `sudo peerimeter-agent daemon --config-dir /etc/peerimeter` on Linux or macOS.
 Starting the tunnels requires administrator/root privileges. An installed
 service continues using its `service.yaml` snapshot and does not load these
 per-network files. Install or update the native service to run the daemon,
 which syncs each active joined network every five minutes by default.
-The key, config, and shared service credential are stored in protected local
-files. To refresh registration, repeat the same token and any original
+The `.key` file is the peer's long-lived WireGuard private key; the `.token`
+file is the network-scoped credential used to authenticate sync requests. The
+YAML file records the network and points to the private key. To refresh
+registration, repeat the same token and any original
 `--node-id` and `--listen-port` values.
 Without `--node-id`, the node ID defaults to the machine hostname; without
 `--listen-port`, the first network gets port 51820 and later networks get the
@@ -489,7 +493,8 @@ sudo peerimeter-agent uninstall --install-dir '/opt/Peerimeter Agent'
 ```
 
 Use `--purge` instead of the standard uninstall when you also want to remove
-all contents of the tracked state, config and runtime directories.
+all contents of the profile's config, state (including `managed/`), and runtime
+directories. The confirmation list includes the files that will be removed.
 
 Installers write a protected installation inventory. Full removal refuses
 arbitrary untracked paths, preserves unrelated files and original source
