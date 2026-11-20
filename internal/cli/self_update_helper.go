@@ -23,6 +23,8 @@ import (
 const updateManifestName = ".update.json"
 const updateResultSuffix = ".result.json"
 
+var errWindowsHelperReplacementFailed = errors.New("Windows update helper could not replace installed files")
+
 type windowsUpdateResult struct {
 	State          string `json:"state"`
 	HelperReady    bool   `json:"helper_ready,omitempty"`
@@ -330,72 +332,13 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) (resultErr error
 	}
 	updatedVersion = manifest.Version
 	profile = manifestProfile
-	var newHashes map[string]string
-	var rollback func() error
-	var commit func() error
-	lock, err := installstate.Lock(installDir)
+	_, rollback, commit, lock, err := applyHelperUpdateWithRetry(ctx, installDir, manifest, files)
 	if err != nil {
-		return err
-	}
-	inv, err = installstate.Load(installDir)
-	if err != nil {
-		_ = lock.Close()
-		return err
-	}
-	if inv.Removing {
-		_ = lock.Close()
-		return errors.New("installation is being removed")
-	}
-	if err := ensureNoActiveUpdateProfiles(inv); err != nil {
-		_ = lock.Close()
-		return fmt.Errorf("stop active agent profiles before update recovery: %w", err)
-	}
-	if err := selfupdate.RecoverLocked(inv); err != nil {
-		_ = lock.Close()
-		return err
-	}
-	inv, err = installstate.Load(installDir)
-	if err != nil {
-		_ = lock.Close()
-		return err
-	}
-	if !manifest.Snapshot.matches(inv) {
-		_ = lock.Close()
-		return errors.New("installation profiles or files changed while the release was being fetched; retry self-update")
-	}
-	var lastErr error
-	deadline := time.Now().Add(45 * time.Second)
-	for time.Now().Before(deadline) {
-		newHashes, rollback, commit, lastErr = selfupdate.Apply(inv, files)
-		if lastErr == nil {
-			if err := installstate.UpdateProgramHashesLocked(inv, newHashes); err != nil {
-				restoreErr := rollback()
-				_ = lock.Close()
-				return errors.Join(fmt.Errorf("record updated program hashes: %w", err), restoreErr)
-			}
-			break
-		}
-		if recoverErr := ensureNoActiveUpdateProfiles(inv); recoverErr != nil {
-			_ = lock.Close()
-			return errors.Join(lastErr, fmt.Errorf("stop active agent profiles before update recovery: %w", recoverErr))
-		}
-		if recoverErr := selfupdate.RecoverLocked(inv); recoverErr != nil {
-			_ = lock.Close()
-			return errors.Join(lastErr, recoverErr)
-		}
-		if verifyErr := verifyInstalledFiles(inv); verifyErr != nil {
-			_ = lock.Close()
-			return errors.Join(lastErr, verifyErr)
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	if lastErr != nil {
-		_ = lock.Close()
-		if profile != nil {
+		if errors.Is(err, errWindowsHelperReplacementFailed) && profile != nil {
 			serviceRestartAttempted = true
 			_ = startManagedService(*profile)
 		}
-		return fmt.Errorf("Windows update helper could not replace installed files: %w", lastErr)
+		return err
 	}
 	if err := lock.Close(); err != nil {
 		return helperRollback(installDir, rollback, profileValue(profile), err)
@@ -425,6 +368,67 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) (resultErr error
 	}
 	resultErr = nil
 	return nil
+}
+
+func applyHelperUpdateWithRetry(ctx context.Context, installDir string, manifest helperManifest, files map[string][]byte) (map[string]string, func() error, func() error, io.Closer, error) {
+	lock, err := installstate.Lock(installDir)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	fail := func(cause error) (map[string]string, func() error, func() error, io.Closer, error) {
+		_ = lock.Close()
+		return nil, nil, nil, nil, cause
+	}
+	inv, err := installstate.Load(installDir)
+	if err != nil {
+		return fail(err)
+	}
+	if inv.Removing {
+		return fail(errors.New("installation is being removed"))
+	}
+	if err := ensureNoActiveUpdateProfiles(inv); err != nil {
+		return fail(fmt.Errorf("stop active agent profiles before update recovery: %w", err))
+	}
+	if err := selfupdate.RecoverLocked(inv); err != nil {
+		return fail(err)
+	}
+	inv, err = installstate.Load(installDir)
+	if err != nil {
+		return fail(err)
+	}
+	if !manifest.Snapshot.matches(inv) {
+		return fail(errors.New("installation profiles or files changed while the release was being fetched; retry self-update"))
+	}
+	var newHashes map[string]string
+	var rollback func() error
+	var commit func() error
+	var lastErr error
+	deadline := time.Now().Add(45 * time.Second)
+	for time.Now().Before(deadline) {
+		newHashes, rollback, commit, lastErr = selfupdate.Apply(inv, files)
+		if lastErr == nil {
+			if err := installstate.UpdateProgramHashesLocked(inv, newHashes); err != nil {
+				restoreErr := rollback()
+				return fail(errors.Join(fmt.Errorf("record updated program hashes: %w", err), restoreErr))
+			}
+			return newHashes, rollback, commit, lock, nil
+		}
+		if recoverErr := ensureNoActiveUpdateProfiles(inv); recoverErr != nil {
+			return fail(errors.Join(lastErr, fmt.Errorf("stop active agent profiles before update recovery: %w", recoverErr)))
+		}
+		if recoverErr := selfupdate.RecoverLocked(inv); recoverErr != nil {
+			return fail(errors.Join(lastErr, recoverErr))
+		}
+		if verifyErr := verifyInstalledFiles(inv); verifyErr != nil {
+			return fail(errors.Join(lastErr, verifyErr))
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if lastErr != nil {
+		_ = lock.Close()
+		return nil, nil, nil, nil, fmt.Errorf("%w: %w", errWindowsHelperReplacementFailed, lastErr)
+	}
+	return fail(errors.New("Windows update helper update retry deadline elapsed"))
 }
 
 func loadAndVerifyHelperManifest(transactionDir string, inv installstate.Inventory) (helperManifest, map[string][]byte, *installstate.Profile, error) {
