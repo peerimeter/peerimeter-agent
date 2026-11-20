@@ -261,6 +261,8 @@ func makePlan(inv installstate.Inventory, purge bool) removalPlan {
 		dirs[filepath.Dir(filepath.Dir(root))] = true
 	}
 	for _, profile := range inv.Profiles {
+		managedDir := filepath.Join(profile.StateDir, "managed")
+		dirs[managedDir] = true
 		for _, f := range resources(profile) {
 			if !seen[f.Path] {
 				p.Files = append(p.Files, f)
@@ -273,6 +275,12 @@ func makePlan(inv installstate.Inventory, purge bool) removalPlan {
 			}
 		}
 		if purge {
+			if profile.ConfigDir != "" && !contains(p.PurgeDirs, profile.ConfigDir) {
+				p.PurgeDirs = append(p.PurgeDirs, profile.ConfigDir)
+			}
+			if managedDir != "" && !contains(p.PurgeDirs, managedDir) {
+				p.PurgeDirs = append(p.PurgeDirs, managedDir)
+			}
 			for _, d := range ownedProfileDirs(profile) {
 				if d != "" && !contains(p.PurgeDirs, d) {
 					p.PurgeDirs = append(p.PurgeDirs, d)
