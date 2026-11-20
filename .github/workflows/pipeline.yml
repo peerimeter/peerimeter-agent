@@ -34,7 +34,7 @@ jobs:
     env:
       GOTOOLCHAIN: local
       RELEASE_VERSION: ${{ inputs.version || 'v0.1.0-dev' }}
-      AGENT_EXE: bin/peerimeter-agent${{ matrix.os == 'windows' && '.exe' || '' }}
+      AGENT_EXE: peerimeter-agent${{ matrix.os == 'windows' && '.exe' || '' }}
       PROBE_EXE: pmprobe${{ matrix.os == 'windows' && '.exe' || '' }}
     defaults:
       run:
@@ -56,7 +56,7 @@ jobs:
           fi
           go vet ./...
           go test -race ./...
-          go build -o "$AGENT_EXE" ./cmd/peerimeter-agent
+          go build -o "bin/$AGENT_EXE" ./cmd/peerimeter-agent
       - name: Self-update installed-binary E2E
         env:
           PEERIMETER_SELF_UPDATE_E2E: '1'
@@ -64,15 +64,15 @@ jobs:
       - name: Offline CLI smoke tests
         id: smoke
         run: |
-          ./$AGENT_EXE version
-          ./$AGENT_EXE version --json
-          ./$AGENT_EXE --help
-          ./$AGENT_EXE run --help
-          ./$AGENT_EXE service install --help
-          ./$AGENT_EXE completion bash > "$RUNNER_TEMP/peerimeter-completion.bash"
-          ./$AGENT_EXE generate-example --directory "$RUNNER_TEMP/peerimeter-example"
-          ./$AGENT_EXE validate-config --config "$RUNNER_TEMP/peerimeter-example/peer-a.yaml"
-          ./$AGENT_EXE validate-config --config "$RUNNER_TEMP/peerimeter-example/peer-b.yaml"
+          ./bin/$AGENT_EXE version
+          ./bin/$AGENT_EXE version --json
+          ./bin/$AGENT_EXE --help
+          ./bin/$AGENT_EXE run --help
+          ./bin/$AGENT_EXE service install --help
+          ./bin/$AGENT_EXE completion bash > "$RUNNER_TEMP/peerimeter-completion.bash"
+          ./bin/$AGENT_EXE generate-example --directory "$RUNNER_TEMP/peerimeter-example"
+          ./bin/$AGENT_EXE validate-config --config "$RUNNER_TEMP/peerimeter-example/peer-a.yaml"
+          ./bin/$AGENT_EXE validate-config --config "$RUNNER_TEMP/peerimeter-example/peer-b.yaml"
       - name: Build static agent and reference peer for integration
         env:
           CGO_ENABLED: '0'
