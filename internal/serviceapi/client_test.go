@@ -316,6 +316,23 @@ func TestDebugTransportErrorRedactsTokenFromMalformedStatusLine(t *testing.T) {
 	}
 }
 
+func TestHTTPErrorResponseDetailsRedactNumericToken(t *testing.T) {
+	const token = "1234567890123456"
+	responseBody := fmt.Sprintf(`{"token":%s}`, token)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = io.WriteString(w, responseBody)
+	}))
+	defer server.Close()
+
+	client := newClientWithDebug(JoinBundle{APIURL: server.URL, EnrollmentToken: token}, server.Client(), true)
+	_, err := client.PullPeers(context.Background(), "net-a", "node-a")
+	if err == nil || strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), `"token":"[REDACTED]"`) {
+		t.Fatalf("debug error = %v; want numeric token redacted in valid JSON", err)
+	}
+}
+
 func TestAPIClientDoesNotFollowRedirectsWithBearerToken(t *testing.T) {
 	var redirectedCalls int
 	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
