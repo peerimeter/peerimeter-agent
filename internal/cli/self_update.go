@@ -205,48 +205,9 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	}); err != nil {
 		return err
 	}
-	latestTag, err := runSelfUpdateStep(deps.progress, "Checking the latest stable release", func() (string, error) {
-		return deps.latest(ctx)
-	})
-	if err != nil {
+	latestTag, done, err := checkReleaseAndConfirmUpdate(ctx, out, jsonOutput, currentVersion, deps)
+	if err != nil || done {
 		return err
-	}
-	latest, ok := parseReleaseVersion(latestTag)
-	current, currentOK := parseReleaseVersion(currentVersion)
-	if !ok || !currentOK {
-		deps.progress.stop()
-		return fmt.Errorf("cannot compare agent version %q with release %q", currentVersion, latestTag)
-	}
-	upToDate := compareVersion(latest, current) <= 0
-	if upToDate {
-		deps.progress.stop(selfUpdateProgressUpToDate)
-	} else {
-		deps.progress.stop(selfUpdateProgressUpdateAvailable)
-	}
-	if !jsonOutput {
-		versions := fmt.Sprintf(
-			"Current version: %s\nLatest version: %s\n",
-			selfUpdateYellow(currentVersion, color),
-			selfUpdateGreen(latestTag, color),
-		)
-		if _, err := fmt.Fprint(out, versions); err != nil {
-			return err
-		}
-	}
-	if upToDate {
-		return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "up_to_date", PreviousVersion: currentVersion, UpdatedVersion: latestTag}, color)
-	}
-	if !deps.yes {
-		if deps.confirm == nil {
-			return errors.New("self-update confirmation is unavailable; rerun with --yes")
-		}
-		confirmed, err := deps.confirm(currentVersion, latestTag)
-		if err != nil {
-			return err
-		}
-		if !confirmed {
-			return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "cancelled", PreviousVersion: currentVersion, UpdatedVersion: latestTag}, color)
-		}
 	}
 	updateSnapshot := inv
 	updateSnapshot.Files = slices.Clone(inv.Files)
@@ -352,6 +313,50 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	}
 	deps.progress.stop(selfUpdateProgressUpdateSucceeded)
 	return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "updated", PreviousVersion: currentVersion, UpdatedVersion: tag, Files: filesUpdated}, color)
+}
+
+func checkReleaseAndConfirmUpdate(ctx context.Context, out io.Writer, jsonOutput bool, currentVersion string, deps selfUpdateDeps) (string, bool, error) {
+	latestTag, err := runSelfUpdateStep(deps.progress, "Checking the latest stable release", func() (string, error) {
+		return deps.latest(ctx)
+	})
+	if err != nil {
+		return "", false, err
+	}
+	latest, latestOK := parseReleaseVersion(latestTag)
+	current, currentOK := parseReleaseVersion(currentVersion)
+	if !latestOK || !currentOK {
+		deps.progress.stop()
+		return "", false, fmt.Errorf("cannot compare agent version %q with release %q", currentVersion, latestTag)
+	}
+	color := deps.resultColor
+	upToDate := compareVersion(latest, current) <= 0
+	if upToDate {
+		deps.progress.stop(selfUpdateProgressUpToDate)
+	} else {
+		deps.progress.stop(selfUpdateProgressUpdateAvailable)
+	}
+	if !jsonOutput {
+		versions := fmt.Sprintf("Current version: %s\nLatest version: %s\n", selfUpdateYellow(currentVersion, color), selfUpdateGreen(latestTag, color))
+		if _, err := fmt.Fprint(out, versions); err != nil {
+			return "", false, err
+		}
+	}
+	if upToDate {
+		return "", true, writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "up_to_date", PreviousVersion: currentVersion, UpdatedVersion: latestTag}, color)
+	}
+	if !deps.yes {
+		if deps.confirm == nil {
+			return "", false, errors.New("self-update confirmation is unavailable; rerun with --yes")
+		}
+		confirmed, err := deps.confirm(currentVersion, latestTag)
+		if err != nil {
+			return "", false, err
+		}
+		if !confirmed {
+			return "", true, writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "cancelled", PreviousVersion: currentVersion, UpdatedVersion: latestTag}, color)
+		}
+	}
+	return latestTag, false, nil
 }
 
 func prepareReleaseFiles(inv installstate.Inventory, files map[string][]byte, goos string) error {
