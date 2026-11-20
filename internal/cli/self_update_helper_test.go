@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"testing"
 
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
@@ -57,5 +59,25 @@ func TestRecoveryPendingSuppressesWindowsServiceRestart(t *testing.T) {
 	})
 	if !attempted || called || !errors.Is(got, errWindowsHelperRecoveryPending) || !errors.Is(got, cause) {
 		t.Fatalf("pending recovery result = %v, attempted %t, service start called %t", got, attempted, called)
+	}
+}
+
+func TestReadWindowsUpdateResultRetainsStoppedProfile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "update.result.json")
+	profile := &installstate.Profile{ID: "stopped-profile", Service: true, ConfigDir: filepath.Join(dir, "config"), StateDir: filepath.Join(dir, "state"), RuntimeDir: filepath.Join(dir, "runtime")}
+	data, err := json.Marshal(windowsUpdateResult{State: "pending", StoppedProfile: profile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := installstate.WritePrivate(path, append(data, '\n')); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readWindowsUpdateResult(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StoppedProfile == nil || got.StoppedProfile.ID != profile.ID || got.StoppedProfile.RuntimeDir != profile.RuntimeDir {
+		t.Fatalf("readWindowsUpdateResult() stopped profile = %+v, want %+v", got.StoppedProfile, profile)
 	}
 }
