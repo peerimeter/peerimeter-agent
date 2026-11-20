@@ -48,19 +48,20 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
-      - name: Format, vet and tests
-        id: tests
+      - name: Check Go version
+        run: test "$(go env GOVERSION | tr -d '\r')" = go1.27.4
+      - name: Format & vet
+        if: matrix.os == 'linux'
         run: |
-          test "$(go env GOVERSION | tr -d '\r')" = go1.27.4
-          if [ "${{ matrix.os }}" = linux ]; then
-            unformatted=$(gofmt -l cmd internal)
-            if [ -n "$unformatted" ]; then
-              printf '%s\n' "$unformatted"
-              exit 1
-            fi
-            go vet ./...
+          unformatted=$(gofmt -l cmd internal)
+          if [ -n "$unformatted" ]; then
+            printf '%s\n' "$unformatted"
+            exit 1
           fi
-          go test -race ./...
+          go vet ./...
+      - name: Unit tests (-race)
+        id: tests
+        run: go test -race ./...
       - name: Self-update installed-binary E2E
         env:
           PEERIMETER_SELF_UPDATE_E2E: '1'
