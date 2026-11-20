@@ -275,8 +275,11 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	}
 	if err := runSelfUpdateAction(deps.progress, "Checking that agent profiles are stopped", func() error {
 		var err error
-		managedService, err = findAndCheckActiveProfiles(inv.Profiles, func(_ string, err error) error {
-			return selfUpdateProfileLockError(err)
+		managedService, err = findAndCheckActiveProfiles(inv.Profiles, func(dir string, lockErr error) error {
+			if errors.Is(lockErr, local.ErrBusy) {
+				return selfUpdateProfileLockError(lockErr)
+			}
+			return diagnostic.Wrap(fmt.Errorf("cannot verify whether agent profile directory %s is stopped: %w", dir, lockErr))
 		})
 		if errors.Is(err, errMultipleServiceProfiles) {
 			return errors.New("installation has multiple service profiles; self-update cannot select one safely")

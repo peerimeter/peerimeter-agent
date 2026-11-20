@@ -24,6 +24,7 @@ const updateManifestName = ".update.json"
 const updateResultSuffix = ".result.json"
 
 var errWindowsHelperReplacementFailed = errors.New("Windows update helper could not replace installed files")
+var errWindowsHelperRecoveryPending = errors.New("Windows update recovery is pending; run update recovery")
 
 type windowsUpdateResult struct {
 	State          string `json:"state"`
@@ -281,13 +282,11 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) (resultErr error
 	resultPath := transactionDir + updateResultSuffix
 	updatedVersion := ""
 	defer func() {
-		state := "updated"
 		message := ""
 		if resultErr != nil {
-			state = "failed"
 			message = resultErr.Error()
 		}
-		data, marshalErr := json.Marshal(windowsUpdateResult{State: state, UpdatedVersion: updatedVersion, Message: message})
+		data, marshalErr := json.Marshal(windowsUpdateResult{State: windowsUpdateResultState(resultErr), UpdatedVersion: updatedVersion, Message: message})
 		if marshalErr == nil {
 			resultErr = errors.Join(resultErr, installstate.WritePrivate(resultPath, append(data, '\n')))
 		}
@@ -334,13 +333,11 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) (resultErr error
 	profile = manifestProfile
 	_, rollback, commit, lock, err := applyHelperUpdateWithRetry(ctx, installDir, manifest, files)
 	if err != nil {
-		if errors.Is(err, errWindowsHelperReplacementFailed) && profile != nil {
-			serviceRestartAttempted = true
-			_ = startManagedService(*profile)
-		}
+		err, serviceRestartAttempted = restartAfterWindowsReplacementFailure(err, profile, startManagedService)
 		return err
 	}
 	if err := lock.Close(); err != nil {
+		serviceRestartAttempted = profile != nil
 		return helperRollback(installDir, rollback, profileValue(profile), err)
 	}
 	if profile != nil {
@@ -390,7 +387,7 @@ func applyHelperUpdateWithRetry(ctx context.Context, installDir string, manifest
 		return fail(fmt.Errorf("stop active agent profiles before update recovery: %w", err))
 	}
 	if err := selfupdate.RecoverLocked(inv); err != nil {
-		return fail(err)
+		return fail(windowsHelperRecoveryPending(err))
 	}
 	inv, err = installstate.Load(installDir)
 	if err != nil {
@@ -409,18 +406,23 @@ func applyHelperUpdateWithRetry(ctx context.Context, installDir string, manifest
 		if lastErr == nil {
 			if err := installstate.UpdateProgramHashesLocked(inv, newHashes); err != nil {
 				restoreErr := rollback()
+				if restoreErr != nil {
+					cause := errors.Join(fmt.Errorf("record updated program hashes: %w", err), restoreErr)
+					return fail(windowsHelperRecoveryPending(cause))
+				}
 				return fail(errors.Join(fmt.Errorf("record updated program hashes: %w", err), restoreErr))
 			}
 			return newHashes, rollback, commit, lock, nil
 		}
 		if recoverErr := ensureNoActiveUpdateProfiles(inv); recoverErr != nil {
-			return fail(errors.Join(lastErr, fmt.Errorf("stop active agent profiles before update recovery: %w", recoverErr)))
+			cause := errors.Join(lastErr, fmt.Errorf("stop active agent profiles before update recovery: %w", recoverErr))
+			return fail(windowsHelperRecoveryPending(cause))
 		}
 		if recoverErr := selfupdate.RecoverLocked(inv); recoverErr != nil {
-			return fail(errors.Join(lastErr, recoverErr))
+			return fail(windowsHelperRecoveryPending(errors.Join(lastErr, recoverErr)))
 		}
 		if verifyErr := verifyInstalledFiles(inv); verifyErr != nil {
-			return fail(errors.Join(lastErr, verifyErr))
+			return fail(windowsHelperRecoveryPending(errors.Join(lastErr, verifyErr)))
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
@@ -429,6 +431,31 @@ func applyHelperUpdateWithRetry(ctx context.Context, installDir string, manifest
 		return nil, nil, nil, nil, fmt.Errorf("%w: %w", errWindowsHelperReplacementFailed, lastErr)
 	}
 	return fail(errors.New("Windows update helper update retry deadline elapsed"))
+}
+
+func windowsHelperRecoveryPending(cause error) error {
+	return fmt.Errorf("%w: %w", errWindowsHelperRecoveryPending, cause)
+}
+
+func windowsUpdateResultState(err error) string {
+	switch {
+	case err == nil:
+		return "updated"
+	case errors.Is(err, errWindowsHelperRecoveryPending):
+		return "pending"
+	default:
+		return "failed"
+	}
+}
+
+func restartAfterWindowsReplacementFailure(err error, profile *installstate.Profile, start func(installstate.Profile) error) (error, bool) {
+	if errors.Is(err, errWindowsHelperRecoveryPending) {
+		return err, true
+	}
+	if !errors.Is(err, errWindowsHelperReplacementFailed) || profile == nil {
+		return err, false
+	}
+	return errors.Join(err, start(*profile)), true
 }
 
 func loadAndVerifyHelperManifest(transactionDir string, inv installstate.Inventory) (helperManifest, map[string][]byte, *installstate.Profile, error) {
