@@ -1,9 +1,11 @@
 package serviceapi
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -207,6 +209,10 @@ func TestPullPeersRejectsMalformedPeerDocuments(t *testing.T) {
 		if _, err := client.PullPeers(context.Background(), "net-a", "node-a"); err == nil {
 			t.Errorf("accepted malformed peer set %s", body)
 		}
+		debugClient := newClientWithDebug(JoinBundle{APIURL: server.URL, EnrollmentToken: "key"}, server.Client(), true)
+		if _, err := debugClient.PullPeers(context.Background(), "net-a", "node-a"); err == nil || !strings.Contains(err.Error(), "service returned an invalid peer list") || !strings.Contains(err.Error(), "peers") {
+			t.Errorf("debug error for malformed peer set = %v", err)
+		}
 		server.Close()
 	}
 }
@@ -225,8 +231,15 @@ func TestResponseAndRequestErrorsDoNotLeakToken(t *testing.T) {
 }
 
 func TestHTTPErrorResponseDetailsRequireDebug(t *testing.T) {
-	const token = "private-enrollment-token"
-	responseBody := `{"error":"node ID is registered with another public key","authorization":"private-enrollment-token"}`
+	const token = "private&enrollment-token"
+	responseData, err := json.Marshal(map[string]string{
+		"error":         "node ID is registered with another public key",
+		"authorization": token,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	responseBody := string(responseData)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
@@ -240,7 +253,7 @@ func TestHTTPErrorResponseDetailsRequireDebug(t *testing.T) {
 		wantBody string
 	}{
 		{name: "normal", wantBody: "service API returned HTTP 409"},
-		{name: "debug", debug: true, wantBody: `{"error":"node ID is registered with another public key","authorization":"[REDACTED]"}`},
+		{name: "debug", debug: true, wantBody: `{"authorization":"[REDACTED]","error":"node ID is registered with another public key"}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			client := newClientWithDebug(JoinBundle{APIURL: server.URL, EnrollmentToken: token}, server.Client(), test.debug)
@@ -251,10 +264,55 @@ func TestHTTPErrorResponseDetailsRequireDebug(t *testing.T) {
 			if strings.Contains(err.Error(), token) {
 				t.Fatalf("error leaked the enrollment token: %v", err)
 			}
+			encodedToken, _ := json.Marshal(token)
+			if escapedToken := string(encodedToken[1 : len(encodedToken)-1]); strings.Contains(err.Error(), escapedToken) {
+				t.Fatalf("error leaked the escaped enrollment token: %v", err)
+			}
 			if !test.debug && strings.Contains(err.Error(), "node ID is registered") {
 				t.Fatalf("normal error exposed response details: %v", err)
 			}
 		})
+	}
+}
+
+func TestDebugTransportErrorRedactsTokenFromMalformedStatusLine(t *testing.T) {
+	const token = "private-enrollment-token"
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	serverErr := make(chan error, 1)
+	go func() {
+		connection, err := listener.Accept()
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		defer connection.Close()
+		reader := bufio.NewReader(connection)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				serverErr <- err
+				return
+			}
+			if line == "\r\n" {
+				break
+			}
+		}
+		_, err = fmt.Fprintf(connection, "HTTP/1.1 %s invalid\r\nContent-Length: 0\r\n\r\n", token)
+		serverErr <- err
+	}()
+
+	bundle := JoinBundle{APIURL: "http://" + listener.Addr().String(), EnrollmentToken: token}
+	client := newClientWithDebug(bundle, newAPIHTTPClient(bundle.APIURL), true)
+	_, requestErr := client.GetNetwork(context.Background(), "net-a")
+	if requestErr == nil || strings.Contains(requestErr.Error(), token) || !strings.Contains(requestErr.Error(), "[REDACTED]") {
+		t.Fatalf("debug transport error = %v; want redacted status-line error", requestErr)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatalf("write malformed status line: %v", err)
 	}
 }
 

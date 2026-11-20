@@ -234,7 +234,7 @@ func (c *Client) pullPeerSet(ctx context.Context, path string) (PeerSet, error) 
 		return PeerSet{}, err
 	}
 	if !validPeerSet(data) {
-		return PeerSet{}, errors.New("service returned an invalid peer list")
+		return PeerSet{}, c.responseBodyError("service returned an invalid peer list", data)
 	}
 	var result PeerSet
 	if err := json.Unmarshal(data, &result); err != nil || result.Version != 1 || result.Peers == nil {
@@ -325,7 +325,7 @@ func (c *Client) request(ctx context.Context, method, path string, body []byte) 
 	res, err := c.http.Do(req)
 	if err != nil {
 		if c.debug {
-			return nil, fmt.Errorf("service API request failed: %w", err)
+			return nil, fmt.Errorf("service API request failed: %s", redactTokenFromText(err.Error(), c.token))
 		}
 		return nil, errors.New("service API request failed")
 	}
@@ -373,9 +373,52 @@ func (c *Client) responseBodyError(message string, data []byte) error {
 	if body == "" {
 		return errors.New(message)
 	}
-	// A server may echo request data in an error response. Never print the bearer token.
-	body = strings.ReplaceAll(body, c.token, "[REDACTED]")
+	body = redactTokenFromJSON(body, c.token)
 	return fmt.Errorf("%s: %s", message, body)
+}
+
+func redactTokenFromJSON(body, token string) string {
+	var value any
+	if err := json.Unmarshal([]byte(body), &value); err == nil {
+		encoded, err := json.Marshal(redactJSONValue(value, token))
+		if err == nil {
+			return string(encoded)
+		}
+	}
+	return redactTokenFromText(body, token)
+}
+
+func redactJSONValue(value any, token string) any {
+	switch value := value.(type) {
+	case string:
+		return strings.ReplaceAll(value, token, "[REDACTED]")
+	case []any:
+		for index, item := range value {
+			value[index] = redactJSONValue(item, token)
+		}
+		return value
+	case map[string]any:
+		redacted := make(map[string]any, len(value))
+		for key, item := range value {
+			redactedKey := strings.ReplaceAll(key, token, "[REDACTED]")
+			redacted[redactedKey] = redactJSONValue(item, token)
+		}
+		return redacted
+	default:
+		return value
+	}
+}
+
+func redactTokenFromText(value, token string) string {
+	value = strings.ReplaceAll(value, token, "[REDACTED]")
+	if token == "" {
+		return value
+	}
+	encodedToken, err := json.Marshal(token)
+	if err == nil && len(encodedToken) >= 2 {
+		value = strings.ReplaceAll(value, string(encodedToken[1:len(encodedToken)-1]), "[REDACTED]")
+	}
+	return value
 }
 
 func validPeerSet(data []byte) bool {
