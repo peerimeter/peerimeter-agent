@@ -15,6 +15,7 @@ import (
 
 	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/discovery"
+	"github.com/peerimeter/peerimeter-agent/internal/installstate"
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/paths"
 	"github.com/peerimeter/peerimeter-agent/internal/secret"
@@ -143,6 +144,24 @@ func runJoin(ctx context.Context, app *application, opts joinOptions) error {
 	if err != nil {
 		return err
 	}
+	if err := os.MkdirAll(layout.ConfigDir, 0o700); err != nil {
+		return errors.New("cannot create protected agent configuration directory")
+	}
+	if err := localJoinDirectory(layout.ConfigDir); err != nil {
+		return err
+	}
+	if err := local.ValidateOperator(opts.operator); err != nil {
+		return err
+	}
+	managedStateDir := filepath.Join(layout.StateDir, "managed")
+	if err := local.PrepareDirectory(managedStateDir); err != nil {
+		return err
+	}
+	joinLock, err := installstate.LockNamed(managedStateDir, ".join.lock", false)
+	if err != nil {
+		return fmt.Errorf("cannot serialize network enrollment: %w", err)
+	}
+	defer joinLock.Close()
 	if opts.listenPortSet {
 		if opts.listenPort < 1 || opts.listenPort > 65535 {
 			return errors.New("--listen-port must be between 1 and 65535")
@@ -155,15 +174,6 @@ func runJoin(ctx context.Context, app *application, opts joinOptions) error {
 		if err != nil {
 			return err
 		}
-	}
-	if err := os.MkdirAll(layout.ConfigDir, 0o700); err != nil {
-		return errors.New("cannot create protected agent configuration directory")
-	}
-	if err := localJoinDirectory(layout.ConfigDir); err != nil {
-		return err
-	}
-	if err := local.ValidateOperator(opts.operator); err != nil {
-		return err
 	}
 	network, err := client.GetNetwork(ctx, networkID)
 	if err != nil {

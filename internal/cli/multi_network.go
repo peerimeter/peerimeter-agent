@@ -16,10 +16,12 @@ import (
 
 	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/ifname"
+	"github.com/peerimeter/peerimeter-agent/internal/installstate"
 	"github.com/peerimeter/peerimeter-agent/internal/keycheck"
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/paths"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
+	"github.com/peerimeter/peerimeter-agent/internal/secret"
 )
 
 type managedConfig struct {
@@ -45,6 +47,15 @@ func discoverManagedConfigs(layout paths.Layout) ([]managedConfig, error) {
 		}
 		return nil, errors.New("cannot read network configuration directory")
 	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].Name() == "service.yaml" {
+			return false
+		}
+		if entries[j].Name() == "service.yaml" {
+			return true
+		}
+		return entries[i].Name() < entries[j].Name()
+	})
 	configs := make([]managedConfig, 0, len(entries))
 	seenIDs := make(map[string]bool, len(entries))
 	for _, entry := range entries {
@@ -99,11 +110,18 @@ func runManagedConfigs(ctx context.Context, commandName, override, operator stri
 	if len(configs) == 0 {
 		return errors.New("no registered network configurations found")
 	}
+	if override != "" && len(configs) > 1 {
+		return errors.New("--interface requires selecting one network with --network")
+	}
 	if err := validateNetworkConflicts(configs); err != nil {
 		return err
 	}
 	if err := local.ValidateOperator(operator); err != nil {
 		return err
+	}
+	if commandName == "run" || commandName == "daemon" {
+		installstate.TrustSudoUserForRun()
+		secret.TrustSudoUserForRun()
 	}
 	for _, item := range configs {
 		if _, err := keycheck.LoadAndVerifyInterfaceKey(item.config); err != nil {
@@ -139,24 +157,24 @@ func runManagedConfigs(ctx context.Context, commandName, override, operator stri
 			results <- err
 		}()
 	}
-	allStopped := make(chan struct{})
-	go func() {
-		workers.Wait()
-		close(allStopped)
-	}()
-	select {
-	case <-ctx.Done():
-		cancel()
-		<-allStopped
-		return nil
-	case err := <-results:
-		cancel()
-		<-allStopped
-		if errors.Is(err, context.Canceled) {
+	remaining := len(configs)
+	for remaining > 0 {
+		select {
+		case <-ctx.Done():
+			cancel()
+			workers.Wait()
 			return nil
+		case err := <-results:
+			remaining--
+			if err != nil && !errors.Is(err, context.Canceled) {
+				cancel()
+				workers.Wait()
+				return err
+			}
 		}
-		return err
 	}
+	workers.Wait()
+	return nil
 }
 
 func validateNetworkConflicts(configs []managedConfig) error {

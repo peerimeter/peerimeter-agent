@@ -1,10 +1,14 @@
 package cli
 
 import (
+	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/peerimeter/peerimeter-agent/internal/paths"
 )
 
 func TestSelectManagedNetwork(t *testing.T) {
@@ -40,4 +44,17 @@ func TestSelectManagedNetwork(t *testing.T) {
 			t.Fatalf("selectManagedNetworkIDs() error = %v", err)
 		}
 	})
+}
+
+func TestSyncRejectsNetworkSelectionWithoutSavedCredentials(t *testing.T) {
+	root := t.TempDir()
+	app := &application{out: io.Discard}
+	err := runSync(context.Background(), app, syncOptions{networkID: "network-missing", dirs: paths.Options{
+		ConfigDir:  filepath.Join(root, "config"),
+		StateDir:   filepath.Join(root, "state"),
+		RuntimeDir: filepath.Join(root, "runtime"),
+	}})
+	if err == nil || err.Error() != "no joined network credentials found; run join before syncing Service API peers" {
+		t.Fatalf("runSync() error = %v; want missing joined credential error", err)
+	}
 }

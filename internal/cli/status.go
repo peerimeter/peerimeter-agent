@@ -26,11 +26,14 @@ func newStatusCommand(app *application) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		snapshots, err := readNetworkSnapshots(cmd.Context(), layout, networkID)
-		if err != nil {
+		snapshots, readErr := readNetworkSnapshots(cmd.Context(), layout, networkID)
+		if len(snapshots) == 0 {
+			return readErr
+		}
+		if err := writeNetworkSnapshots(app.out, snapshots); err != nil {
 			return err
 		}
-		return writeNetworkSnapshots(app.out, snapshots)
+		return readErr
 	})
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if !watch {
@@ -48,7 +51,7 @@ func newStatusCommand(app *application) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		runtimes, err := networkRuntimeLayouts(layout, networkID)
+		runtimes, err := networkRuntimeLayouts(cmd.Context(), layout, networkID)
 		if err != nil {
 			return err
 		}
@@ -56,12 +59,12 @@ func newStatusCommand(app *application) *cobra.Command {
 			return errors.New("status --watch requires --network when multiple networks are configured")
 		}
 		if app.jsonOutput {
-			return watchStatusJSON(cmd.Context(), runtimes[0].RuntimeDir, interval, app.out)
+			return watchStatusJSON(cmd.Context(), runtimes[0].layout.RuntimeDir, interval, app.out)
 		}
 		if !interactiveTerminal(cmd, app.out) {
 			return errors.New("status --watch needs an interactive terminal; use --json for a snapshot stream")
 		}
-		return watchStatusTerminal(cmd, runtimes[0].RuntimeDir, interval, app)
+		return watchStatusTerminal(cmd, runtimes[0].layout.RuntimeDir, interval, app)
 	}
 	directoryFlags(cmd, &options)
 	cmd.Flags().StringVar(&networkID, "network", "", "Configured network ID (defaults to all networks)")

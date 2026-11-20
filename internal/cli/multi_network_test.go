@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -37,6 +38,27 @@ func TestDiscoverManagedConfigsWithoutServiceYAML(t *testing.T) {
 	}
 }
 
+func TestDiscoverManagedConfigsPrefersCanonicalFileToServiceAlias(t *testing.T) {
+	root := t.TempDir()
+	layout := paths.Layout{ConfigDir: filepath.Join(root, "config"), StateDir: filepath.Join(root, "state"), RuntimeDir: filepath.Join(root, "runtime")}
+	if err := os.MkdirAll(layout.ConfigDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeManagedConfigFixture(t, layout, "team", 51820, []string{"10.80.0.1/32"})
+	legacy := config.Config{Version: 1, Mode: "static", Network: config.Network{ID: "team", Name: "old snapshot"}, Interface: config.Interface{PrivateKeyFile: filepath.Join(layout.ConfigDir, "team.key"), Address: []string{"10.80.0.2/32"}, ListenPort: 51821}}
+	data, err := config.MarshalYAML(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(layout.ConfigDir, "service.yaml"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	configs, err := discoverManagedConfigs(layout)
+	if err != nil || len(configs) != 1 || configs[0].path != filepath.Join(layout.ConfigDir, "team.yaml") {
+		t.Fatalf("discoverManagedConfigs() = %#v, %v; want canonical team.yaml", configs, err)
+	}
+}
+
 func TestNetworkProfilesHaveDistinctStateAndRuntime(t *testing.T) {
 	base := paths.Layout{ConfigDir: "/config", StateDir: "/state", RuntimeDir: "/runtime"}
 	a := networkLayout(base, "network-a")
@@ -56,6 +78,14 @@ func TestValidateNetworkConflictsRejectsDuplicatePortsAndRoutes(t *testing.T) {
 	b.config.Peers[0].AllowedIPs = []string{"10.80.0.2/32"}
 	if err := validateNetworkConflicts([]managedConfig{a, b}); err == nil {
 		t.Fatal("overlapping peer routes were accepted")
+	}
+}
+
+func TestRunManagedConfigsRequiresNetworkForInterfaceOverride(t *testing.T) {
+	configs := []managedConfig{{networkID: "network-a"}, {networkID: "network-b"}}
+	err := runManagedConfigs(context.Background(), "run", "wg-test", "", paths.Layout{}, configs, 0, io.Discard, rejectBackend{}, nil)
+	if err == nil || err.Error() != "--interface requires selecting one network with --network" {
+		t.Fatalf("runManagedConfigs() error = %v", err)
 	}
 }
 
@@ -130,6 +160,47 @@ func TestStatusAndStopDefaultToEveryConfiguredNetwork(t *testing.T) {
 	code, output, stderr = invoke(t, "stop", "--config-dir", layout.ConfigDir, "--state-dir", layout.StateDir, "--runtime-dir", layout.RuntimeDir)
 	if code != 0 || stderr != "" || !strings.Contains(output, "Network count") || stopped[0].Load() != 1 || stopped[1].Load() != 2 {
 		t.Fatalf("all-network stop = %d %q %q; stopped callbacks = %d, %d", code, output, stderr, stopped[0].Load(), stopped[1].Load())
+	}
+}
+
+func TestStatusKeepsRunningNetworksVisibleWhenAnotherIsStopped(t *testing.T) {
+	tempDir := os.TempDir()
+	if runtime.GOOS != "windows" {
+		tempDir = "/tmp"
+	}
+	root, err := os.MkdirTemp(tempDir, "pma-partial-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	layout := paths.Layout{ConfigDir: filepath.Join(root, "config"), StateDir: filepath.Join(root, "state"), RuntimeDir: filepath.Join(root, "runtime")}
+	if err := os.MkdirAll(layout.ConfigDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	writeManagedConfigFixture(t, layout, "network-a", 51820, []string{configAddress(0)})
+	writeManagedConfigFixture(t, layout, "network-b", 51821, []string{configAddress(1)})
+	stoppedRuntime := networkLayout(layout, "network-a").RuntimeDir
+	if err := os.MkdirAll(stoppedRuntime, 0700); err != nil {
+		t.Fatal(err)
+	}
+	runningRuntime := networkLayout(layout, "network-b").RuntimeDir
+	closeServer, err := local.Serve(context.Background(), runningRuntime, local.Operations{
+		Snapshot: func(context.Context) (platform.Snapshot, error) {
+			return platform.Snapshot{NetworkID: "network-b", NetworkName: "network-b", InterfaceName: "pm-network-b", Peers: []platform.PeerState{}}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = closeServer() })
+	args := []string{"--config-dir", layout.ConfigDir, "--state-dir", layout.StateDir, "--runtime-dir", layout.RuntimeDir}
+	code, output, stderr := invoke(t, append([]string{"status"}, args...)...)
+	if code == 0 || !strings.Contains(output, "network-b") || !strings.Contains(stderr, "network-a") {
+		t.Fatalf("partial status = %d %q %q; want network-b data and network-a failure", code, output, stderr)
+	}
+	code, output, stderr = invoke(t, append([]string{"wg"}, append(args, "--json")...)...)
+	if code == 0 || output != "[]\n" || !strings.Contains(stderr, "network-a") {
+		t.Fatalf("partial wg JSON = %d %q %q; want available peer data and network-a failure", code, output, stderr)
 	}
 }
 

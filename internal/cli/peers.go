@@ -25,21 +25,27 @@ func newPeerViewCommand(app *application) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		snapshots, err := readNetworkSnapshots(cmd.Context(), layout, networkID)
-		if err != nil {
-			return err
+		snapshots, readErr := readNetworkSnapshots(cmd.Context(), layout, networkID)
+		if len(snapshots) == 0 {
+			return readErr
 		}
 		if app.jsonOutput {
 			if len(snapshots) == 1 {
-				return json.NewEncoder(app.out).Encode(snapshots[0].Peers)
+				if err := json.NewEncoder(app.out).Encode(snapshots[0].Peers); err != nil {
+					return err
+				}
+				return readErr
 			}
 			networks := make([]networkPeerSnapshot, 0, len(snapshots))
 			for _, snapshot := range snapshots {
 				networks = append(networks, networkPeerSnapshot{NetworkID: snapshot.NetworkID, NetworkName: snapshot.NetworkName, Interface: snapshot.InterfaceName, Peers: snapshot.Peers})
 			}
-			return json.NewEncoder(app.out).Encode(struct {
+			if err := json.NewEncoder(app.out).Encode(struct {
 				Networks []networkPeerSnapshot `json:"networks"`
-			}{Networks: networks})
+			}{Networks: networks}); err != nil {
+				return err
+			}
+			return readErr
 		}
 		for i, snapshot := range snapshots {
 			if i > 0 {
@@ -51,7 +57,7 @@ func newPeerViewCommand(app *application) *cobra.Command {
 				return err
 			}
 		}
-		return nil
+		return readErr
 	})}
 	directoryFlagSet(cmd.PersistentFlags(), &options)
 	cmd.PersistentFlags().StringVar(&networkID, "network", "", "Configured network ID (defaults to all networks)")
