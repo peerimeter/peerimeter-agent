@@ -6,10 +6,10 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/peerimeter/peerimeter-agent/internal/config"
+	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/logging"
 	"github.com/peerimeter/peerimeter-agent/internal/paths"
 	"github.com/spf13/cobra"
@@ -18,25 +18,26 @@ import (
 const defaultDaemonSyncInterval = 5 * time.Minute
 
 type daemonOptions struct {
-	path, override, operator string
-	interval                 time.Duration
-	paths                    paths.Options
+	path, override, operator, networkID string
+	interval                            time.Duration
+	paths                               paths.Options
 }
 
 func newDaemonCommand(app *application) *cobra.Command {
-	var path, override, operator string
+	var path, override, operator, networkID string
 	var interval time.Duration
 	var options paths.Options
 	cmd := &cobra.Command{
 		Use:   "daemon",
-		Short: "Run the agent and periodically sync its joined network",
-		Long:  "Run the native WireGuard agent in the foreground and refresh its service registration and peer list at a regular interval. Sync failures are logged and retried at the next interval.",
+		Short: "Run configured networks and periodically sync joined networks",
+		Long:  "Load every YAML network from config-dir and run each in its own local runtime. Refresh each joined network's service registration and peer list at a regular interval. Sync failures are logged and retried at the next interval.",
 		Args:  noArguments,
 		RunE: app.handle(func(cmd *cobra.Command) error {
-			return runDaemon(cmd, app, daemonOptions{path: path, override: override, operator: operator, interval: interval, paths: options})
+			return runDaemon(cmd, app, daemonOptions{path: path, override: override, operator: operator, networkID: networkID, interval: interval, paths: options})
 		}),
 	}
 	cmd.Flags().StringVar(&path, "config", "", "Direct static YAML path (overrides installed config-dir/service.yaml)")
+	cmd.Flags().StringVar(&networkID, "network", "", "Run only this configured network (defaults to all)")
 	cmd.Flags().StringVar(&override, "interface", "", "Linux-only initial local interface name override")
 	cmd.Flags().StringVar(&operator, "operator", "", "Authorized local username/UID or Windows account/SID")
 	cmd.Flags().DurationVar(&interval, "sync-interval", defaultDaemonSyncInterval, "How often to sync the joined network")
@@ -61,19 +62,36 @@ func runDaemon(cmd *cobra.Command, app *application, opts daemonOptions) error {
 	if err != nil {
 		return err
 	}
-	if opts.path == "" {
-		opts.path = filepath.Join(layout.ConfigDir, "service.yaml")
+	if opts.path != "" {
+		if opts.networkID != "" {
+			return errors.New("--network cannot be used with --config")
+		}
+		activeConfig, err := config.Load(opts.path)
+		if err != nil {
+			return err
+		}
+		profileOptions := opts.paths
+		profileOptions.RuntimeDir = layout.RuntimeDir
+		background := func(ctx context.Context) {
+			runPeriodicSync(ctx, opts.interval, func(ctx context.Context) error {
+				return syncActiveDaemonNetwork(ctx, layout, profileOptions, activeConfig.Network.ID)
+			})
+		}
+		return staticCommandWithBackground(cmd.Context(), cmd.Name(), opts.path, opts.override, layout, opts.operator, app.out, app.backend, nil, 0, background)
 	}
-	activeConfig, err := config.Load(opts.path)
+	configs, err := discoverManagedConfigs(layout)
 	if err != nil {
 		return err
 	}
-	background := func(ctx context.Context) {
-		runPeriodicSync(ctx, opts.interval, func(ctx context.Context) error {
-			return syncActiveDaemonNetwork(ctx, layout, opts.paths, activeConfig.Network.ID)
-		})
+	configs, err = matchingConfig(configs, opts.networkID)
+	if err != nil {
+		return err
 	}
-	return staticCommandWithBackground(cmd.Context(), cmd.Name(), opts.path, opts.override, layout, opts.operator, app.out, app.backend, nil, 0, background)
+	return runManagedConfigs(cmd.Context(), cmd.Name(), opts.override, opts.operator, layout, configs, opts.interval, app.out, app.backend, func(ctx context.Context, item managedConfig, profile paths.Layout) error {
+		profileOptions := opts.paths
+		profileOptions.RuntimeDir = profile.RuntimeDir
+		return syncActiveDaemonNetwork(ctx, layout, profileOptions, item.networkID)
+	})
 }
 
 func syncActiveDaemonNetwork(ctx context.Context, layout paths.Layout, options paths.Options, activeNetworkID string) error {
@@ -89,9 +107,9 @@ func syncActiveDaemonNetwork(ctx context.Context, layout paths.Layout, options p
 				break
 			}
 		}
-		if targetNetwork == "" {
-			return errors.New("no saved sync credential for the daemon's active network")
-		}
+	}
+	if targetNetwork == "" {
+		return local.Request(ctx, options.RuntimeDir, "reload", io.Discard)
 	}
 	if code := Execute(ctx, daemonSyncArgs(options, targetNetwork), io.Discard, os.Stderr); code != 0 {
 		return errors.New("sync command failed")

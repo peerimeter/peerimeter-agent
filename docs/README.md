@@ -264,17 +264,19 @@ address from the network's API-configured CIDR. It selects a peer's LAN address
 when the reported CIDRs overlap; otherwise it uses that peer's STUN-observed
 public UDP mapping. It saves the managed configuration as
 `<config-dir>/<network-id>.yaml` and the service credential, then exits without
-starting a tunnel. To start it separately, run
-`sudo peerimeter-agent daemon --config /etc/peerimeter/<network-id>.yaml` on
-Linux or macOS. Starting the tunnel requires administrator/root privileges.
-An installed service continues using its `service.yaml` snapshot and does not
-load this per-network file. Install or update the native service to run the
-daemon, which syncs its active joined network every five minutes by default.
+starting a tunnel. To start every registered network, run
+`sudo peerimeter-agent daemon --config-dir /etc/peerimeter` on Linux or macOS.
+Starting the tunnels requires administrator/root privileges. An installed
+service continues using its `service.yaml` snapshot and does not load these
+per-network files. Install or update the native service to run the daemon,
+which syncs each active joined network every five minutes by default.
 The key, config, and shared service credential are stored in protected local
 files. To refresh registration, repeat the same token and any original
 `--node-id` and `--listen-port` values.
 Without `--node-id`, the node ID defaults to the machine hostname; without
-`--listen-port`, the port defaults to 51820. Changing either on a later Join
+`--listen-port`, the first network gets port 51820 and later networks get the
+next unused port starting at 51820. Rejoining a network preserves its current
+port unless `--listen-port` is supplied. Changing either on a later Join
 can register a different node or update the peer port. The shared token remains
 stored after the command exits. If a `run` process is active, restart it after
 changing `--node-id` or `--listen-port`; a running process keeps its loaded
@@ -309,32 +311,32 @@ fails closed instead of reporting another interface's addresses.
 ## Foreground and local control
 
 ```sh
-sudo peerimeter-agent daemon --config /absolute/path/to/peer.yaml
+sudo peerimeter-agent daemon --config-dir /etc/peerimeter
 sudo peerimeter-agent status
-sudo peerimeter-agent status --watch
-sudo peerimeter-agent sync       # refresh joined peers and reconcile the tunnel
-sudo peerimeter-agent stop       # graceful tunnel/route cleanup
+sudo peerimeter-agent status --network network-id --watch
+sudo peerimeter-agent sync       # refresh all joined peers and reconcile their tunnels
+sudo peerimeter-agent stop       # stop all configured tunnels and clean up routes
 ```
 
 On Windows, run the same commands from an elevated terminal.
 
-Use `run` instead of `daemon` when you want the tunnel without scheduled sync.
-The daemon runs the same foreground tunnel and calls `sync` every five minutes
-by default. Change the period with `--sync-interval` (for example,
+Use `run` instead of `daemon` when you want the tunnels without scheduled sync.
+The daemon runs each configured network in its own runtime and calls `sync`
+every five minutes by default. Change the period with `--sync-interval` (for example,
 `--sync-interval 2m`). A failed sync is logged and retried at the next interval;
 it does not stop the tunnel. The native service installed by `service install`
 uses `daemon` automatically.
 
 For a network joined with `join`, `sync` refreshes this node's primary physical
 interface and local addresses in its service registration, then downloads the
-latest peer list and applies it to the configuration currently used by the
-running agent. It verifies that the selected network matches the running
-network. `--config`, when used, must identify that same active file; sync
-refuses to update a different file. On Windows, sync also refuses UNC paths
+latest peer list and applies it to that network's active configuration. Sync
+updates every joined network by default; pass `--network-id` to select one.
+`--config`, when used, must identify the selected active file; sync refuses to
+update a different file. On Windows, sync also refuses UNC paths
 for the active configuration. With one joined network, it is selected
-automatically; with multiple networks, pass `--network-id`. Older joins may
-need `--api-url` and `--node-id` once. Without saved service metadata, `sync`
-keeps its local behavior and reloads the current configuration.
+automatically. Older joins may need `--api-url` and `--node-id` once. Without
+saved service metadata, `sync` keeps its local behavior and reloads the current
+configuration.
 
 While the WireGuard tunnel owns its UDP listen port, `sync` cannot bind that
 port for a STUN probe. In that case it preserves the last registered public
@@ -344,11 +346,11 @@ does not guarantee reachability.
 
 | Command | Output or action |
 | --- | --- |
-| `status` | Readable local agent and adapter state; `--watch` refreshes continuously (`--json` for scripts) |
-| `wg` / `wg show` | Traditional WireGuard-style interface and peer listing |
-| `sync` | Refresh the joined node registration and peer list when available, then reconcile the tunnel; otherwise reload local configuration |
-| `daemon` | Run the tunnel and sync periodically (default: every five minutes; set `--sync-interval` to change it) |
-| `stop` | Stop the tunnel and clean up routes |
+| `status` | Readable state for all configured networks; `--network` selects one and `--watch` requires a selection when ambiguous |
+| `wg` / `wg show` | WireGuard interface and peer listing for all configured networks; `--network` selects one |
+| `stop` | Stop all configured tunnels; `--network` selects one |
+| `sync` | Refresh all joined network registrations and peer lists; `--network-id` selects one |
+| `daemon` | Run configured tunnels and sync each joined network periodically (default: every five minutes) |
 
 `status` reads actual local adapter state through a protected Unix socket or
 Windows named pipe. `running` indicates interface state, not proven peer
@@ -382,8 +384,17 @@ control access.
 Overrides must be absolute. Unix directories are separate; on Windows an
 explicit `--state-dir` also supplies the default config/runtime location unless
 overridden. `run --config <file>` uses the original file directly and never
-relocates it; without `--config`, the installed `config-dir/service.yaml` is
-used. Relative key references remain relative to the original YAML file.
+relocates it. Without `--config`, `run` and `daemon` load every YAML config in
+`config-dir`; managed joins use `<network-id>.yaml`, while `service.yaml`
+remains supported for an installed single-network profile. Each discovered
+network gets its own state and runtime subdirectory under `state-dir/networks/`
+and `runtime-dir/networks/`. Pass `--network <network-id>` to run one network.
+The commands read the directory at startup; restart the process after joining
+another network so it loads the new configuration.
+`status`, `wg`, and `stop` default to all configured networks. `status --watch`
+requires `--network` when there are several. `sync` defaults to all joined
+networks and accepts `--network-id` to select one. Relative key references
+remain relative to each original YAML file.
 
 Control commands use the selected `--runtime-dir`; custom runtime paths must be
 supplied consistently. Persistent state locks prevent two managers for one state
