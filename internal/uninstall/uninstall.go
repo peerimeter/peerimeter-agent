@@ -69,26 +69,20 @@ type report struct {
 func resources(p installstate.Profile) []removalFile {
 	var files []removalFile
 	if p.LegacyConfigOwned && p.LegacyConfigDir != "" && p.LegacyConfigDir != p.ConfigDir {
-		for _, name := range []string{"service.yaml", "service.json", "service.key"} {
-			files = append(files, removalFile{Path: filepath.Join(p.LegacyConfigDir, name)})
-		}
+		files = append(files, serviceSnapshotFiles(p.LegacyConfigDir)...)
 	}
 	if p.PendingConfigOwned && p.PendingConfigDir != "" && p.PendingConfigDir != p.ConfigDir {
-		for _, name := range []string{"service.yaml", "service.json", "service.key"} {
-			files = append(files, removalFile{Path: filepath.Join(p.PendingConfigDir, name)})
-		}
-		files = append(files, removalFile{Path: filepath.Join(p.PendingConfigDir, installstate.ConfigMarkerFilename), Marker: true}, removalFile{Path: filepath.Join(p.PendingConfigDir, installstate.LegacyConfigMarkerFilename), Marker: true})
+		files = append(files, serviceSnapshotFiles(p.PendingConfigDir)...)
+		files = append(files, markerFiles(p.PendingConfigDir, installstate.ConfigMarkerFilename, installstate.LegacyConfigMarkerFilename)...)
 	}
 	if p.ConfigOwned && p.ConfigDir != "" {
-		for _, name := range []string{"service.yaml", "service.json", "service.key"} {
-			files = append(files, removalFile{Path: filepath.Join(p.ConfigDir, name)})
-		}
+		files = append(files, serviceSnapshotFiles(p.ConfigDir)...)
 	}
 	if p.ConfigOwned {
-		files = append(files, removalFile{Path: filepath.Join(p.ConfigDir, installstate.ConfigMarkerFilename), Marker: true}, removalFile{Path: filepath.Join(p.ConfigDir, installstate.LegacyConfigMarkerFilename), Marker: true})
+		files = append(files, markerFiles(p.ConfigDir, installstate.ConfigMarkerFilename, installstate.LegacyConfigMarkerFilename)...)
 	}
 	if p.LegacyConfigOwned && p.LegacyConfigDir != p.ConfigDir {
-		files = append(files, removalFile{Path: filepath.Join(p.LegacyConfigDir, installstate.ConfigMarkerFilename), Marker: true}, removalFile{Path: filepath.Join(p.LegacyConfigDir, installstate.LegacyConfigMarkerFilename), Marker: true})
+		files = append(files, markerFiles(p.LegacyConfigDir, installstate.ConfigMarkerFilename, installstate.LegacyConfigMarkerFilename)...)
 	}
 	// TODO(next major): remove network.json from owned cleanup after migration support expires.
 	for _, name := range []string{"network.yaml", "network.json", "ownership", "agent.lock"} {
@@ -99,6 +93,152 @@ func resources(p installstate.Profile) []removalFile {
 	}
 	files = append(files, removalFile{Path: filepath.Join(p.StateDir, installstate.MarkerFilename), Marker: true}, removalFile{Path: filepath.Join(p.StateDir, installstate.LegacyMarkerFilename), Marker: true})
 	return files
+}
+
+func serviceSnapshotFiles(dir string) []removalFile {
+	var files []removalFile
+	for _, name := range []string{"service.yaml", "service.json", "service.key"} {
+		files = append(files, removalFile{Path: filepath.Join(dir, name)})
+	}
+	return files
+}
+
+func markerFiles(dir, current, legacy string) []removalFile {
+	return []removalFile{
+		{Path: filepath.Join(dir, current), Marker: true},
+		{Path: filepath.Join(dir, legacy), Marker: true},
+	}
+}
+
+func ownedProfileDirs(profile installstate.Profile) []string {
+	dirs := []string{profile.StateDir}
+	if profile.PendingConfigOwned {
+		dirs = append(dirs, profile.PendingConfigDir)
+	}
+	if profile.ConfigOwned {
+		dirs = append(dirs, profile.ConfigDir)
+	}
+	if profile.LegacyConfigOwned {
+		dirs = append(dirs, profile.LegacyConfigDir)
+	}
+	if profile.RuntimeOwned {
+		dirs = append(dirs, profile.RuntimeDir)
+	}
+	return dirs
+}
+
+func collectPlannedPaths(plan removalPlan, purge bool) ([]string, map[string][]string, error) {
+	paths := make([]string, 0, len(plan.Files)+len(plan.Directories)+len(plan.PurgeDirs))
+	seen := make(map[string]bool)
+	add := func(path string) {
+		if path != "" && !seen[path] {
+			paths = append(paths, path)
+			seen[path] = true
+		}
+	}
+	for _, file := range plan.Files {
+		add(file.Path)
+	}
+	for _, dir := range plan.Directories {
+		add(dir)
+	}
+	for _, path := range []string{plan.Lock, plan.LegacyLock, plan.Inventory, plan.UpdateLock, plan.LegacyUpdateLock, plan.DataLock, plan.LegacyDataLock} {
+		add(path)
+	}
+	for _, path := range plan.LegacyInventories {
+		add(path)
+	}
+	purgeContents := make(map[string][]string)
+	if purge {
+		for _, root := range plan.PurgeDirs {
+			contents, err := listTree(root)
+			if err != nil {
+				return nil, nil, fmt.Errorf("cannot list purge contents of %s: %w", root, err)
+			}
+			purgeContents[root] = contents
+			for _, path := range contents {
+				add(path)
+			}
+		}
+	}
+	return paths, purgeContents, nil
+}
+
+func reportAlreadyAbsentOrUntracked(dir string, out io.Writer) error {
+	programNames := installstate.ProgramNames()
+	if runtime.GOOS == "windows" {
+		// TODO(next major): remove legacy pma.exe detection with inventory compatibility.
+		programNames = append(programNames, "pma.exe")
+	}
+	for _, name := range append(append(programNames, installstate.Filename, installstate.LegacyYAMLFilename, installstate.LegacyJSONFilename), installstate.ReferenceFilename, installstate.LegacyReferenceFilename) {
+		if _, err := os.Lstat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			return errors.New("installation inventory is absent; existing files are untracked and were preserved")
+		}
+	}
+	return json.NewEncoder(out).Encode(report{State: "already_absent"})
+}
+
+func writeDryRunReport(opts Options, plan removalPlan, inv installstate.Inventory, out io.Writer) error {
+	r := report{State: "dry_run", Message: "Deletes the installed identity, configuration, credentials and inventoried program files; original source files are preserved."}
+	if opts.Purge {
+		r.Message = "In addition to the tracked install files, deletes every file and nested directory inside the recorded state, config and runtime directories."
+	}
+	paths, _, err := collectPlannedPaths(plan, opts.Purge)
+	if err != nil {
+		return err
+	}
+	r.Paths = paths
+	for _, profile := range inv.Profiles {
+		if profile.Service {
+			r.Services = append(r.Services, "owned agent service registration")
+		}
+	}
+	return json.NewEncoder(out).Encode(r)
+}
+
+func confirmUninstall(opts Options, plan removalPlan) (map[string][]string, error) {
+	if opts.ConfirmIn == nil || opts.ConfirmOut == nil {
+		return nil, errors.New("uninstall requires confirmation; use --yes to confirm non-interactively")
+	}
+	preview, purgeContents, err := collectPlannedPaths(plan, opts.Purge)
+	if err != nil {
+		return nil, err
+	}
+	writeLine := func(line string) error {
+		_, err := fmt.Fprintln(opts.ConfirmOut, line)
+		return err
+	}
+	if err := writeLine("The following files and directories will be removed:"); err != nil {
+		return nil, fmt.Errorf("cannot display uninstall preview: %w", err)
+	}
+	for _, path := range preview {
+		if err := writeLine("  " + path); err != nil {
+			return nil, fmt.Errorf("cannot display uninstall preview: %w", err)
+		}
+	}
+	if !opts.Purge {
+		if err := writeLine("Non-empty directories are preserved unless --purge is enabled."); err != nil {
+			return nil, fmt.Errorf("cannot display uninstall preview: %w", err)
+		}
+	}
+	confirmed := false
+	if opts.Confirm != nil {
+		confirmed, err = opts.Confirm("Continue with uninstall?")
+		if err != nil {
+			return nil, fmt.Errorf("cannot confirm uninstall: %w", err)
+		}
+	} else {
+		if _, err := fmt.Fprint(opts.ConfirmOut, "Continue? [y/N] "); err != nil {
+			return nil, fmt.Errorf("cannot display uninstall confirmation prompt: %w", err)
+		}
+		answer, readErr := bufio.NewReader(opts.ConfirmIn).ReadString('\n')
+		answer = strings.TrimSpace(answer)
+		confirmed = (readErr == nil || errors.Is(readErr, io.EOF)) && (answer == "y" || answer == "Y" || answer == "yes" || answer == "YES")
+	}
+	if !confirmed {
+		return nil, errors.New("uninstall cancelled")
+	}
+	return purgeContents, nil
 }
 func makePlan(inv installstate.Inventory, purge bool) removalPlan {
 	inventoryName := installstate.Filename
@@ -126,20 +266,7 @@ func makePlan(inv installstate.Inventory, purge bool) removalPlan {
 				seen[f.Path] = true
 			}
 		}
-		ownedDirs := []string{profile.StateDir}
-		if profile.PendingConfigOwned {
-			ownedDirs = append(ownedDirs, profile.PendingConfigDir)
-		}
-		if profile.ConfigOwned {
-			ownedDirs = append(ownedDirs, profile.ConfigDir)
-		}
-		if profile.LegacyConfigOwned {
-			ownedDirs = append(ownedDirs, profile.LegacyConfigDir)
-		}
-		if profile.RuntimeOwned {
-			ownedDirs = append(ownedDirs, profile.RuntimeDir)
-		}
-		for _, d := range ownedDirs {
+		for _, d := range ownedProfileDirs(profile) {
 			if d != "" {
 				dirs[d] = true
 			}
@@ -419,20 +546,7 @@ func preflight(inv installstate.Inventory, p removalPlan) error {
 		if err := verifyProfile(inv, profile); err != nil {
 			return err
 		}
-		ownedDirs := []string{profile.StateDir}
-		if profile.PendingConfigOwned {
-			ownedDirs = append(ownedDirs, profile.PendingConfigDir)
-		}
-		if profile.ConfigOwned {
-			ownedDirs = append(ownedDirs, profile.ConfigDir)
-		}
-		if profile.LegacyConfigOwned {
-			ownedDirs = append(ownedDirs, profile.LegacyConfigDir)
-		}
-		if profile.RuntimeOwned {
-			ownedDirs = append(ownedDirs, profile.RuntimeDir)
-		}
-		for _, dir := range ownedDirs {
+		for _, dir := range ownedProfileDirs(profile) {
 			if dir != "" {
 				if err := installstate.CheckDirectoryWithPolicy(dir, inv.AllowInsecureInstallDir); err != nil {
 					return err
@@ -555,6 +669,19 @@ func acquireStopped(ctx context.Context, inv installstate.Inventory, p installst
 	}
 }
 
+func acquireRuntimeOwnershipGuards(ctx context.Context, inv installstate.Inventory, guards *[]*local.Guard) error {
+	for _, profile := range inv.Profiles {
+		guard, err := acquireStopped(ctx, inv, profile)
+		if err != nil {
+			return err
+		}
+		if guard != nil {
+			*guards = append(*guards, guard)
+		}
+	}
+	return nil
+}
+
 type registrationProbe func(context.Context, string) (bool, error)
 
 func Execute(ctx context.Context, opts Options, out io.Writer) error {
@@ -581,17 +708,7 @@ func executeWithRegistrationProbeAndFinalizer(ctx context.Context, opts Options,
 	}
 	inv, err := installstate.Load(dir)
 	if os.IsNotExist(err) {
-		programNames := installstate.ProgramNames()
-		if runtime.GOOS == "windows" {
-			// TODO(next major): remove legacy pma.exe detection with inventory compatibility.
-			programNames = append(programNames, "pma.exe")
-		}
-		for _, name := range append(append(programNames, installstate.Filename, installstate.LegacyYAMLFilename, installstate.LegacyJSONFilename), installstate.ReferenceFilename, installstate.LegacyReferenceFilename) {
-			if _, e := os.Lstat(filepath.Join(dir, name)); !os.IsNotExist(e) {
-				return errors.New("installation inventory is absent; existing files are untracked and were preserved")
-			}
-		}
-		return json.NewEncoder(out).Encode(report{State: "already_absent"})
+		return reportAlreadyAbsentOrUntracked(dir, out)
 	}
 	if err != nil {
 		return err
@@ -620,117 +737,13 @@ func executeWithRegistrationProbeAndFinalizer(ctx context.Context, opts Options,
 		}
 	}
 	if opts.DryRun {
-		r := report{State: "dry_run", Message: "Deletes the installed identity, configuration, credentials and inventoried program files; original source files are preserved."}
-		for _, f := range plan.Files {
-			r.Paths = append(r.Paths, f.Path)
-		}
-		r.Paths = append(r.Paths, plan.Lock, plan.LegacyLock, plan.Inventory)
-		r.Paths = append(r.Paths, plan.UpdateLock, plan.LegacyUpdateLock)
-		r.Paths = append(r.Paths, plan.LegacyInventories...)
-		if opts.Purge {
-			r.Message = "In addition to the tracked install files, deletes every file and nested directory inside the recorded state, config and runtime directories."
-			for _, dir := range plan.PurgeDirs {
-				paths, err := listTree(dir)
-				if err != nil {
-					return err
-				}
-				for _, path := range paths {
-					if !contains(r.Paths, path) {
-						r.Paths = append(r.Paths, path)
-					}
-				}
-			}
-		}
-		if plan.DataLock != "" {
-			r.Paths = append(r.Paths, plan.DataLock, plan.LegacyDataLock)
-		}
-		for _, p := range inv.Profiles {
-			if p.Service {
-				r.Services = append(r.Services, "owned agent service registration")
-			}
-		}
-		return json.NewEncoder(out).Encode(r)
+		return writeDryRunReport(opts, plan, inv, out)
 	}
 	confirmedPlanPurgeContents := make(map[string][]string)
 	if !opts.Yes {
-		if opts.ConfirmIn == nil || opts.ConfirmOut == nil {
-			return errors.New("uninstall requires confirmation; use --yes to confirm non-interactively")
-		}
-		preview := make([]string, 0, len(plan.Files)+len(plan.Directories))
-		seen := map[string]bool{}
-		for _, f := range plan.Files {
-			if !seen[f.Path] {
-				preview = append(preview, f.Path)
-				seen[f.Path] = true
-			}
-		}
-		for _, dir := range plan.Directories {
-			if !seen[dir] {
-				preview = append(preview, dir)
-				seen[dir] = true
-			}
-		}
-		for _, path := range []string{plan.Lock, plan.LegacyLock, plan.Inventory, plan.UpdateLock, plan.LegacyUpdateLock, plan.DataLock, plan.LegacyDataLock} {
-			if path != "" && !seen[path] {
-				preview = append(preview, path)
-				seen[path] = true
-			}
-		}
-		for _, path := range plan.LegacyInventories {
-			if !seen[path] {
-				preview = append(preview, path)
-				seen[path] = true
-			}
-		}
-		if opts.Purge {
-			for _, root := range plan.PurgeDirs {
-				paths, err := listTree(root)
-				if err != nil {
-					return fmt.Errorf("cannot list purge contents of %s: %w", root, err)
-				}
-				for _, path := range paths {
-					if !seen[path] {
-						preview = append(preview, path)
-						seen[path] = true
-					}
-				}
-				confirmedPlanPurgeContents[root] = paths
-			}
-		}
-		writeLine := func(line string) error {
-			_, err := fmt.Fprintln(opts.ConfirmOut, line)
+		confirmedPlanPurgeContents, err = confirmUninstall(opts, plan)
+		if err != nil {
 			return err
-		}
-		if err := writeLine("The following files and directories will be removed:"); err != nil {
-			return fmt.Errorf("cannot display uninstall preview: %w", err)
-		}
-		for _, path := range preview {
-			if err := writeLine("  " + path); err != nil {
-				return fmt.Errorf("cannot display uninstall preview: %w", err)
-			}
-		}
-		if !opts.Purge {
-			if err := writeLine("Non-empty directories are preserved unless --purge is enabled."); err != nil {
-				return fmt.Errorf("cannot display uninstall preview: %w", err)
-			}
-		}
-		confirmed := false
-		if opts.Confirm != nil {
-			var err error
-			confirmed, err = opts.Confirm("Continue with uninstall?")
-			if err != nil {
-				return fmt.Errorf("cannot confirm uninstall: %w", err)
-			}
-		} else {
-			if _, err := fmt.Fprint(opts.ConfirmOut, "Continue? [y/N] "); err != nil {
-				return fmt.Errorf("cannot display uninstall confirmation prompt: %w", err)
-			}
-			answer, readErr := bufio.NewReader(opts.ConfirmIn).ReadString('\n')
-			answer = strings.TrimSpace(answer)
-			confirmed = (readErr == nil || errors.Is(readErr, io.EOF)) && (answer == "y" || answer == "Y" || answer == "yes" || answer == "YES")
-		}
-		if !confirmed {
-			return errors.New("uninstall cancelled")
 		}
 	}
 	if opts.Purge && opts.Yes {
@@ -792,19 +805,16 @@ func executeWithRegistrationProbeAndFinalizer(ctx context.Context, opts Options,
 	if err := preflight(inv, plan); err != nil {
 		return err
 	}
-	exeName := "peerimeter-agent"
-	if runtime.GOOS == "windows" {
-		exeName += ".exe"
-	}
+	exe := registrationExecutable(dir)
 	if !hasTrackedService(inv.Profiles) {
-		if err := requireNoOwnedRegistration(ctx, filepath.Join(dir, exeName), probe); err != nil {
+		if err := requireNoOwnedRegistration(ctx, exe, probe); err != nil {
 			return err
 		}
 	}
 	if err := installstate.MarkRemoving(inv); err != nil {
 		return err
 	}
-	if err := removeServices(ctx, filepath.Join(dir, exeName), inv.Profiles); err != nil {
+	if err := removeServices(ctx, exe, inv.Profiles); err != nil {
 		return fmt.Errorf("owned service registration could not be removed: %w", err)
 	}
 	var guards []*local.Guard
@@ -813,20 +823,14 @@ func executeWithRegistrationProbeAndFinalizer(ctx context.Context, opts Options,
 			_ = g.Close()
 		}
 	}()
-	for _, p := range inv.Profiles {
-		guard, err := acquireStopped(ctx, inv, p)
-		if err != nil {
-			return err
-		}
-		if guard != nil {
-			guards = append(guards, guard)
-		}
+	if err := acquireRuntimeOwnershipGuards(ctx, inv, &guards); err != nil {
+		return err
 	}
 	// Native supervisor removal can return before its process exits. In
 	// particular, launchd may still report a booted-out label during that
 	// interval. Establish process shutdown through every profile lock before
 	// treating a remaining registration as orphaned or cleaning its tunnel.
-	if err := requireNoOwnedRegistration(ctx, filepath.Join(dir, exeName), probe); err != nil {
+	if err := requireNoOwnedRegistration(ctx, exe, probe); err != nil {
 		return err
 	}
 	for _, p := range inv.Profiles {

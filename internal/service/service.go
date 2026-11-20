@@ -152,28 +152,8 @@ func provision(cfg *Config, secure func(...string) error) (copied bool, resultEr
 	destination := filepath.Join(directory, "service.yaml")
 	keyPath := filepath.Join(directory, "service.key")
 	if _, err := os.Lstat(destination); err == nil {
-		if err := installstate.CheckPrivateFile(destination); err != nil {
-			return false, fmt.Errorf("existing protected service configuration %s is not secure: %w", destination, err)
-		}
-		installed, err := config.Load(destination)
-		if err != nil {
+		if err := verifyExistingServiceSnapshot(destination, keyPath, desired, key); err != nil {
 			return false, err
-		}
-		// Reinstall must reuse exactly the same protected desired state and key.
-		expected := desired
-		expected.Interface.PrivateKeyFile = keyPath
-		if !reflect.DeepEqual(installed, expected) {
-			return false, errors.New("existing protected service configuration differs; use the installed configuration or make an explicit migration")
-		}
-		if err := installstate.CheckPrivateFile(keyPath); err != nil {
-			return false, fmt.Errorf("existing protected service key %s is not secure: %w", keyPath, err)
-		}
-		oldKey, err := secret.Load(keyPath)
-		if err != nil {
-			return false, err
-		}
-		if oldKey != key {
-			return false, errors.New("existing protected service key differs; refusing to overwrite it")
 		}
 		cfg.ConfigPath = destination
 		return false, nil
@@ -221,6 +201,33 @@ func provision(cfg *Config, secure func(...string) error) (copied bool, resultEr
 	return true, nil
 }
 
+func verifyExistingServiceSnapshot(destination, keyPath string, desired config.Config, key [32]byte) error {
+	if err := installstate.CheckPrivateFile(destination); err != nil {
+		return fmt.Errorf("existing protected service configuration %s is not secure: %w", destination, err)
+	}
+	installed, err := config.Load(destination)
+	if err != nil {
+		return err
+	}
+	// Reinstall must reuse exactly the same protected desired state and key.
+	expected := desired
+	expected.Interface.PrivateKeyFile = keyPath
+	if !reflect.DeepEqual(installed, expected) {
+		return errors.New("existing protected service configuration differs; use the installed configuration or make an explicit migration")
+	}
+	if err := installstate.CheckPrivateFile(keyPath); err != nil {
+		return fmt.Errorf("existing protected service key %s is not secure: %w", keyPath, err)
+	}
+	oldKey, err := secret.Load(keyPath)
+	if err != nil {
+		return err
+	}
+	if oldKey != key {
+		return errors.New("existing protected service key differs; refusing to overwrite it")
+	}
+	return nil
+}
+
 // install is separated from OS registration so partial-registration failures and
 // safe secret-preserving retry can be tested without a privileged service manager.
 func install(cfg Config, register func(Config) error, secure func(...string) error) error {
@@ -249,24 +256,15 @@ func install(cfg Config, register func(Config) error, secure func(...string) err
 		return err
 	}
 	if err := startup.RegisterProfile(installstate.Profile{ConfigDir: snapshotDirectory(cfg), StateDir: cfg.StateDirectory, RuntimeDir: serviceRuntime(cfg), ClaimConfig: true}); err != nil {
-		if created {
-			return errors.Join(err, rollbackSnapshots(cfg))
-		}
-		return err
+		return rollbackIfCreated(err, created, cfg)
 	}
 	// Native registration obtains its own registry lock. Retain persistent state
 	// ownership while releasing the short lease before that separate operation.
 	if err := startup.Close(); err != nil {
-		if created {
-			return errors.Join(err, rollbackSnapshots(cfg))
-		}
-		return err
+		return rollbackIfCreated(err, created, cfg)
 	}
 	if err := register(cfg); err != nil {
-		if created {
-			return errors.Join(err, rollbackSnapshots(cfg))
-		}
-		return err
+		return rollbackIfCreated(err, created, cfg)
 	}
 	return nil
 }
@@ -277,6 +275,13 @@ func secureSnapshot(cfg Config, destination, key string, secure func(...string) 
 		files = append(files, filepath.Join(cfg.StateDirectory, "agent.lock"))
 	}
 	return secure(files...)
+}
+
+func rollbackIfCreated(err error, created bool, cfg Config) error {
+	if !created {
+		return err
+	}
+	return errors.Join(err, rollbackSnapshots(cfg))
 }
 
 // migrate keeps the durable identity in place. It removes old snapshots only
@@ -295,48 +300,8 @@ func migrateWithContext(ctx context.Context, cfg Config, unregister func(Config)
 		return err
 	}
 	defer startup.Close()
-	legacyConfig, err := legacySnapshotPath(cfg.StateDirectory)
+	legacyConfig, legacyKey, old, err := validateLegacyMigrationSource(cfg)
 	if err != nil {
-		return errors.New("legacy service snapshot is unavailable")
-	}
-	legacyKey := filepath.Join(cfg.StateDirectory, "service.key")
-	if snapshotDirectory(cfg) == cfg.StateDirectory || cfg.RuntimeDirectory == cfg.StateDirectory {
-		return errors.New("migration requires separate config, persistent state and runtime directories")
-	}
-	if err := validateLegacySnapshot(legacyConfig); err != nil {
-		return err
-	}
-	legacy, err := config.Load(legacyConfig)
-	if err != nil {
-		return err
-	}
-	expected, err := filepath.EvalSymlinks(legacyKey)
-	if err != nil {
-		return errors.New("legacy service key is unavailable")
-	}
-	actual, err := filepath.EvalSymlinks(legacy.Interface.PrivateKeyFile)
-	if err != nil || actual != expected {
-		return errors.New("legacy service configuration must reference its protected installed service.key")
-	}
-	if _, err := secret.Load(legacyKey); err != nil {
-		return err
-	}
-	// Validate target ownership and conflicts before stopping a working service.
-	if err := validateConfigOwnership(cfg); err != nil {
-		return err
-	}
-	for _, name := range []string{"service.yaml", "service.json", "service.key"} {
-		if _, err := os.Lstat(filepath.Join(snapshotDirectory(cfg), name)); err == nil {
-			return errors.New("migration destination already contains service configuration or keys; refusing to overwrite")
-		} else if !os.IsNotExist(err) {
-			return err
-		}
-	}
-	old := cfg
-	old.ConfigDirectory = cfg.StateDirectory
-	old.ConfigPath = legacyConfig
-	old.RuntimeDirectory = cfg.StateDirectory
-	if err := validateConfigOwnership(old); err != nil {
 		return err
 	}
 	if err := startup.Check(); err != nil {
@@ -386,23 +351,66 @@ func migrateWithContext(ctx context.Context, cfg Config, unregister func(Config)
 		return err
 	}
 	if err := lease.ClaimMigrationConfig(installstate.Profile{ConfigDir: snapshotDirectory(cfg), StateDir: cfg.StateDirectory, RuntimeDir: serviceRuntime(cfg)}); err != nil {
-		if created {
-			return errors.Join(err, rollbackSnapshots(cfg))
-		}
-		return err
+		return rollbackIfCreated(err, created, cfg)
 	}
 	if err := lease.Close(); err != nil {
-		if created {
-			return errors.Join(err, rollbackSnapshots(cfg))
-		}
-		return err
+		return rollbackIfCreated(err, created, cfg)
 	}
 	if err := register(cfg); err != nil {
-		if created {
-			return errors.Join(err, rollbackSnapshots(cfg))
-		}
-		return err
+		return rollbackIfCreated(err, created, cfg)
 	}
+	return cleanupMigratedLegacyFiles(cfg, legacyConfig, legacyKey)
+}
+
+func validateLegacyMigrationSource(cfg Config) (string, string, Config, error) {
+	legacyConfig, err := legacySnapshotPath(cfg.StateDirectory)
+	if err != nil {
+		return "", "", Config{}, errors.New("legacy service snapshot is unavailable")
+	}
+	legacyKey := filepath.Join(cfg.StateDirectory, "service.key")
+	if snapshotDirectory(cfg) == cfg.StateDirectory || cfg.RuntimeDirectory == cfg.StateDirectory {
+		return "", "", Config{}, errors.New("migration requires separate config, persistent state and runtime directories")
+	}
+	if err := validateLegacySnapshot(legacyConfig); err != nil {
+		return "", "", Config{}, err
+	}
+	legacy, err := config.Load(legacyConfig)
+	if err != nil {
+		return "", "", Config{}, err
+	}
+	expected, err := filepath.EvalSymlinks(legacyKey)
+	if err != nil {
+		return "", "", Config{}, errors.New("legacy service key is unavailable")
+	}
+	actual, err := filepath.EvalSymlinks(legacy.Interface.PrivateKeyFile)
+	if err != nil || actual != expected {
+		return "", "", Config{}, errors.New("legacy service configuration must reference its protected installed service.key")
+	}
+	if _, err := secret.Load(legacyKey); err != nil {
+		return "", "", Config{}, err
+	}
+	// Validate destination ownership and conflicts before stopping a working service.
+	if err := validateConfigOwnership(cfg); err != nil {
+		return "", "", Config{}, err
+	}
+	for _, name := range []string{"service.yaml", "service.json", "service.key"} {
+		if _, err := os.Lstat(filepath.Join(snapshotDirectory(cfg), name)); err == nil {
+			return "", "", Config{}, errors.New("migration destination already contains service configuration or keys; refusing to overwrite")
+		} else if !os.IsNotExist(err) {
+			return "", "", Config{}, err
+		}
+	}
+	old := cfg
+	old.ConfigDirectory = cfg.StateDirectory
+	old.ConfigPath = legacyConfig
+	old.RuntimeDirectory = cfg.StateDirectory
+	if err := validateConfigOwnership(old); err != nil {
+		return "", "", Config{}, err
+	}
+	return legacyConfig, legacyKey, old, nil
+}
+
+func cleanupMigratedLegacyFiles(cfg Config, legacyConfig, legacyKey string) error {
 	// The directory lock proves the current manager released the legacy state.
 	// Persistent network/ownership files are untouched.
 	var cleanup []error

@@ -43,6 +43,23 @@ type linuxWG interface {
 	ConfigureDevice(string, wgtypes.Config) error
 	Close() error
 }
+
+type undoStack []func() error
+
+func (stack *undoStack) push(action func() error) {
+	*stack = append(*stack, action)
+}
+
+func (stack undoStack) rollback(cause error) error {
+	errorsFound := []error{cause}
+	for i := len(stack) - 1; i >= 0; i-- {
+		if err := stack[i](); err != nil {
+			errorsFound = append(errorsFound, fmt.Errorf("Linux reconciliation rollback failed: %w", err))
+		}
+	}
+	return errors.Join(errorsFound...)
+}
+
 type linuxSession struct {
 	mu      sync.Mutex
 	links   linuxLinks
@@ -147,7 +164,7 @@ func startLinux(ctx context.Context, d Desired, links linuxLinks, openWG func() 
 		}
 		ownerToken = hex.EncodeToString(token)
 	}
-	link := &netlink.Wireguard{LinkAttrs: netlink.LinkAttrs{Name: d.InterfaceName, MTU: 1420, Alias: "peerimeter:" + ownerToken}}
+	link := &netlink.Wireguard{LinkAttrs: netlink.LinkAttrs{Name: d.InterfaceName, MTU: defaultTunnelMTU, Alias: "peerimeter:" + ownerToken}}
 	if err := links.LinkAdd(link); err != nil {
 		return nil, fmt.Errorf("create native Linux WireGuard interface (requires CAP_NET_ADMIN and WireGuard kernel support): %w", err)
 	}
@@ -196,15 +213,6 @@ func (s *linuxSession) ownedLink() (netlink.Link, error) {
 	return link, nil
 }
 
-func cloneLinuxDesired(d Desired) Desired {
-	d.Config.Interface.Address = append([]string(nil), d.Config.Interface.Address...)
-	d.Config.Peers = append([]config.Peer(nil), d.Config.Peers...)
-	for i := range d.Config.Peers {
-		d.Config.Peers[i].AllowedIPs = append([]string(nil), d.Config.Peers[i].AllowedIPs...)
-	}
-	return d
-}
-
 func (s *linuxSession) Reconcile(ctx context.Context, d Desired) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -245,17 +253,7 @@ func (s *linuxSession) reconcileLocked(ctx context.Context, d Desired) error {
 		return fmt.Errorf("read Linux WireGuard state before reconciliation: %w", err)
 	}
 	change := linuxWGDiff(s.desired, d, before)
-	var undo []func() error
-	rollback := func(cause error) error {
-		var errs []error
-		errs = append(errs, cause)
-		for i := len(undo) - 1; i >= 0; i-- {
-			if err := undo[i](); err != nil {
-				errs = append(errs, fmt.Errorf("Linux reconciliation rollback failed: %w", err))
-			}
-		}
-		return errors.Join(errs...)
-	}
+	var undo undoStack
 	currentAddrs, err := s.links.AddrList(s.link, netlink.FAMILY_ALL)
 	if err != nil {
 		return err
@@ -271,43 +269,43 @@ func (s *linuxSession) reconcileLocked(ctx context.Context, d Desired) error {
 			continue
 		}
 		if err := ctx.Err(); err != nil {
-			return rollback(err)
+			return undo.rollback(err)
 		}
 		a := a
 		if err := s.links.AddrAdd(s.link, &a); err != nil {
-			return rollback(fmt.Errorf("add Linux tunnel address: %w", err))
+			return undo.rollback(fmt.Errorf("add Linux tunnel address: %w", err))
 		}
-		undo = append(undo, func() error { return s.links.AddrDel(s.link, &a) })
+		undo.push(func() error { return s.links.AddrDel(s.link, &a) })
 	}
 	wantedRoutes := map[string]bool{}
 	for _, r := range routes {
 		wantedRoutes[r.Dst.String()] = true
 		exists, err := linuxRouteExists(s.links, r)
 		if err != nil {
-			return rollback(err)
+			return undo.rollback(err)
 		}
 		if exists {
 			continue
 		}
 		if err := ctx.Err(); err != nil {
-			return rollback(err)
+			return undo.rollback(err)
 		}
 		r := r
 		if err := s.links.RouteAdd(&r); err != nil {
-			return rollback(fmt.Errorf("add Linux peer route: %w", err))
+			return undo.rollback(fmt.Errorf("add Linux peer route: %w", err))
 		}
-		undo = append(undo, func() error { return s.links.RouteDel(&r) })
+		undo.push(func() error { return s.links.RouteDel(&r) })
 	}
 	if linuxHasWGChange(change) {
 		reverse := linuxWGUndo(before, change)
 		// Register first: ConfigureDevice can fail after applying part of a message.
-		undo = append(undo, func() error { return s.wg.ConfigureDevice(d.InterfaceName, reverse) })
+		undo.push(func() error { return s.wg.ConfigureDevice(d.InterfaceName, reverse) })
 		if err := s.wg.ConfigureDevice(d.InterfaceName, change); err != nil {
-			return rollback(fmt.Errorf("apply Linux WireGuard peer changes: %w", err))
+			return undo.rollback(fmt.Errorf("apply Linux WireGuard peer changes: %w", err))
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return rollback(err)
+		return undo.rollback(err)
 	}
 	for _, r := range linuxRoutes(s.desired, s.link.Attrs().Index) {
 		if wantedRoutes[r.Dst.String()] {
@@ -315,16 +313,16 @@ func (s *linuxSession) reconcileLocked(ctx context.Context, d Desired) error {
 		}
 		exists, err := linuxRouteExists(s.links, r)
 		if err != nil {
-			return rollback(err)
+			return undo.rollback(err)
 		}
 		if !exists {
 			continue
 		}
 		r := r
 		if err := s.links.RouteDel(&r); err != nil {
-			return rollback(fmt.Errorf("remove obsolete Linux peer route: %w", err))
+			return undo.rollback(fmt.Errorf("remove obsolete Linux peer route: %w", err))
 		}
-		undo = append(undo, func() error { return s.links.RouteAdd(&r) })
+		undo.push(func() error { return s.links.RouteAdd(&r) })
 	}
 	for _, a := range linuxAddresses(s.desired) {
 		if wantedAddrs[linuxAddrKey(a)] || !addrPresent[linuxAddrKey(a)] {
@@ -332,11 +330,11 @@ func (s *linuxSession) reconcileLocked(ctx context.Context, d Desired) error {
 		}
 		a := a
 		if err := s.links.AddrDel(s.link, &a); err != nil {
-			return rollback(fmt.Errorf("remove obsolete Linux tunnel address: %w", err))
+			return undo.rollback(fmt.Errorf("remove obsolete Linux tunnel address: %w", err))
 		}
-		undo = append(undo, func() error { return s.links.AddrAdd(s.link, &a) })
+		undo.push(func() error { return s.links.AddrAdd(s.link, &a) })
 	}
-	s.desired = cloneLinuxDesired(d)
+	s.desired = cloneDesired(d)
 	return nil
 }
 

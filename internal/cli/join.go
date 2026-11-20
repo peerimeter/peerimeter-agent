@@ -96,127 +96,12 @@ func refreshManagedPeers(ctx context.Context, client *serviceapi.Client, network
 }
 
 func newJoinCommand(app *application) *cobra.Command {
-	var networkID, nodeID, operator string
+	var nodeID, operator string
 	var allowInsecureHTTP bool
 	var listenPort int
 	var dirs paths.Options
 	cmd := &cobra.Command{Use: "join", Short: "Register this agent with a service-managed network", Args: noArguments, RunE: app.handle(func(cmd *cobra.Command) error {
-		data, err := io.ReadAll(io.LimitReader(app.in, 16<<10+1))
-		if err != nil || len(data) > 16<<10 {
-			return errors.New("could not read join token from stdin or token is too large")
-		}
-		token := strings.TrimSpace(string(data))
-		bundle, err := serviceapi.DecodeJoinTokenWithInsecureHTTP(token, allowInsecureHTTP)
-		if err != nil {
-			return err
-		}
-		client := serviceapi.New(bundle)
-		networkID = bundle.NetworkID
-		if listenPort < 1 || listenPort > 65535 {
-			return errors.New("--listen-port must be between 1 and 65535")
-		}
-		layout, err := paths.Resolve(dirs)
-		if err != nil {
-			return err
-		}
-		if err := os.MkdirAll(layout.ConfigDir, 0o700); err != nil {
-			return errors.New("cannot create protected agent configuration directory")
-		}
-		if err := localJoinDirectory(layout.ConfigDir); err != nil {
-			return err
-		}
-		if err := local.ValidateOperator(operator); err != nil {
-			return err
-		}
-		network, err := client.GetNetwork(cmd.Context(), networkID)
-		if err != nil {
-			return err
-		}
-		keyPath := filepath.Join(layout.ConfigDir, networkID+".key")
-		private, err := secret.Load(keyPath)
-		if err != nil {
-			if _, statErr := os.Lstat(keyPath); statErr == nil {
-				return err
-			}
-			private, err = secret.Generate()
-			if err != nil {
-				return err
-			}
-			if err := secret.WriteNew(keyPath, private); err != nil {
-				return err
-			}
-		}
-		public, err := secret.Public(private)
-		if err != nil {
-			return err
-		}
-		publicText := base64.StdEncoding.EncodeToString(public[:])
-		if nodeID == "" {
-			hostname, hostErr := os.Hostname()
-			if hostErr != nil {
-				return errors.New("cannot determine hostname for default node ID")
-			}
-			nodeID, err = defaultNodeID(hostname)
-			if err != nil {
-				return err
-			}
-		}
-		underlay, err := discovery.PrimaryUnderlay(cmd.Context())
-		if err != nil {
-			return err
-		}
-		publicEndpoint := ""
-		if mapped, err := stunprobe.Probe(listenPort, ""); err == nil {
-			publicEndpoint = mapped.MappedAddress
-		} else {
-			// LAN candidates still work when STUN is unavailable.
-			fmt.Fprintln(os.Stderr, "STUN endpoint discovery unavailable; joining with LAN candidates only")
-		}
-		registered, err := client.RegisterNode(cmd.Context(), networkID, nodeID, serviceapi.NodeRegistration{
-			Version: 1, PublicKey: publicText, ListenPort: listenPort, PrimaryInterface: underlay.Name,
-			LocalAddresses: underlay.Addresses, PublicEndpoint: publicEndpoint,
-		})
-		if err != nil {
-			return err
-		}
-		address, err := netip.ParseAddr(registered.TunnelAddress)
-		prefix, prefixErr := netip.ParsePrefix(network.CIDR)
-		if err != nil || prefixErr != nil || !prefix.Contains(address) {
-			return errors.New("service assigned a tunnel address outside the network CIDR")
-		}
-		configPath := filepath.Join(layout.ConfigDir, networkID+".yaml")
-		loadConfig := func(ctx context.Context) (config.Config, error) {
-			desired := config.Config{Version: 1, Mode: "static", Network: config.Network{ID: network.ID, Name: network.Name, CIDR: network.CIDR}, Interface: config.Interface{PrivateKeyFile: keyPath, Address: []string{address.String() + "/32"}, ListenPort: listenPort}}
-			desired, err := refreshManagedPeers(ctx, client, networkID, nodeID, underlay.Addresses, desired)
-			if err != nil {
-				return config.Config{}, err
-			}
-			encoded, err := config.MarshalYAML(desired)
-			if err != nil {
-				return config.Config{}, err
-			}
-			if err := config.Validate(desired, runtime.GOOS); err != nil {
-				return config.Config{}, err
-			}
-			if err := writeConfigFile(configPath, encoded); err != nil {
-				return config.Config{}, errors.New("cannot securely update managed network configuration")
-			}
-			return desired, nil
-		}
-		initial, err := loadConfig(cmd.Context())
-		if err != nil {
-			return err
-		}
-		if err := saveManagedToken(filepath.Join(layout.StateDir, "managed", networkID+".token"), bundle.EnrollmentToken); err != nil {
-			return err
-		}
-		if err := saveManagedNetworkMetadata(layout.StateDir, managedNetworkMetadata{Version: 1, APIURL: bundle.APIURL, NetworkID: networkID, NodeID: nodeID, AllowInsecureHTTP: allowInsecureHTTP}); err != nil {
-			return err
-		}
-		if err := json.NewEncoder(app.out).Encode(map[string]any{"state": "registered", "network_id": networkID, "node_id": nodeID, "tunnel_address": registered.TunnelAddress, "peer_count": len(initial.Peers)}); err != nil {
-			return err
-		}
-		return nil
+		return runJoin(cmd.Context(), app, joinOptions{nodeID: nodeID, operator: operator, listenPort: listenPort, allowInsecureHTTP: allowInsecureHTTP, dirs: dirs})
 	})}
 	cmd.Long = "Register this agent using a network-scoped Base64URL token read from stdin and save its managed configuration. The network ID comes from the token; the node ID defaults to the machine hostname. Start a tunnel separately with run --config."
 	cmd.Flags().StringVar(&nodeID, "node-id", "", "Optional stable node ID (defaults to hostname)")
@@ -225,6 +110,138 @@ func newJoinCommand(app *application) *cobra.Command {
 	cmd.Flags().BoolVar(&allowInsecureHTTP, "allow-insecure-http", false, "Allow HTTP API URLs outside localhost (sends the enrollment token without TLS)")
 	directoryFlags(cmd, &dirs)
 	return cmd
+}
+
+type joinOptions struct {
+	nodeID            string
+	operator          string
+	listenPort        int
+	allowInsecureHTTP bool
+	dirs              paths.Options
+}
+
+func runJoin(ctx context.Context, app *application, opts joinOptions) error {
+	data, err := io.ReadAll(io.LimitReader(app.in, 16<<10+1))
+	if err != nil || len(data) > 16<<10 {
+		return errors.New("could not read join token from stdin or token is too large")
+	}
+	token := strings.TrimSpace(string(data))
+	bundle, err := serviceapi.DecodeJoinTokenWithInsecureHTTP(token, opts.allowInsecureHTTP)
+	if err != nil {
+		return err
+	}
+	client := serviceapi.New(bundle)
+	networkID := bundle.NetworkID
+	if opts.listenPort < 1 || opts.listenPort > 65535 {
+		return errors.New("--listen-port must be between 1 and 65535")
+	}
+	layout, err := paths.Resolve(opts.dirs)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(layout.ConfigDir, 0o700); err != nil {
+		return errors.New("cannot create protected agent configuration directory")
+	}
+	if err := localJoinDirectory(layout.ConfigDir); err != nil {
+		return err
+	}
+	if err := local.ValidateOperator(opts.operator); err != nil {
+		return err
+	}
+	network, err := client.GetNetwork(ctx, networkID)
+	if err != nil {
+		return err
+	}
+	keyPath := filepath.Join(layout.ConfigDir, networkID+".key")
+	_, publicText, err := loadOrGenerateNetworkKey(keyPath)
+	if err != nil {
+		return err
+	}
+	nodeID, err := resolveNodeID(opts.nodeID)
+	if err != nil {
+		return err
+	}
+	underlay, err := discovery.PrimaryUnderlay(ctx)
+	if err != nil {
+		return err
+	}
+	publicEndpoint := ""
+	if mapped, err := stunprobe.Probe(opts.listenPort, ""); err == nil {
+		publicEndpoint = mapped.MappedAddress
+	} else {
+		// LAN candidates still work when STUN is unavailable.
+		fmt.Fprintln(os.Stderr, "STUN endpoint discovery unavailable; joining with LAN candidates only")
+	}
+	registered, err := client.RegisterNode(ctx, networkID, nodeID, serviceapi.NodeRegistration{
+		Version: 1, PublicKey: publicText, ListenPort: opts.listenPort, PrimaryInterface: underlay.Name,
+		LocalAddresses: underlay.Addresses, PublicEndpoint: publicEndpoint,
+	})
+	if err != nil {
+		return err
+	}
+	address, err := netip.ParseAddr(registered.TunnelAddress)
+	prefix, prefixErr := netip.ParsePrefix(network.CIDR)
+	if err != nil || prefixErr != nil || !prefix.Contains(address) {
+		return errors.New("service assigned a tunnel address outside the network CIDR")
+	}
+	configPath := filepath.Join(layout.ConfigDir, networkID+".yaml")
+	desired := config.Config{Version: 1, Mode: "static", Network: config.Network{ID: network.ID, Name: network.Name, CIDR: network.CIDR}, Interface: config.Interface{PrivateKeyFile: keyPath, Address: []string{address.String() + "/32"}, ListenPort: opts.listenPort}}
+	initial, err := refreshManagedPeers(ctx, client, networkID, nodeID, underlay.Addresses, desired)
+	if err != nil {
+		return err
+	}
+	encoded, err := config.MarshalYAML(initial)
+	if err != nil {
+		return err
+	}
+	if err := config.Validate(initial, runtime.GOOS); err != nil {
+		return err
+	}
+	if err := writeConfigFile(configPath, encoded); err != nil {
+		return errors.New("cannot securely update managed network configuration")
+	}
+	if err := saveManagedToken(filepath.Join(layout.StateDir, "managed", networkID+".token"), bundle.EnrollmentToken); err != nil {
+		return err
+	}
+	if err := saveManagedNetworkMetadata(layout.StateDir, managedNetworkMetadata{Version: 1, APIURL: bundle.APIURL, NetworkID: networkID, NodeID: nodeID, AllowInsecureHTTP: opts.allowInsecureHTTP}); err != nil {
+		return err
+	}
+	if err := json.NewEncoder(app.out).Encode(map[string]any{"state": "registered", "network_id": networkID, "node_id": nodeID, "tunnel_address": registered.TunnelAddress, "peer_count": len(initial.Peers)}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func loadOrGenerateNetworkKey(keyPath string) ([32]byte, string, error) {
+	private, err := secret.Load(keyPath)
+	if err != nil {
+		if _, statErr := os.Lstat(keyPath); statErr == nil {
+			return [32]byte{}, "", err
+		}
+		private, err = secret.Generate()
+		if err != nil {
+			return [32]byte{}, "", err
+		}
+		if err := secret.WriteNew(keyPath, private); err != nil {
+			return [32]byte{}, "", err
+		}
+	}
+	public, err := secret.Public(private)
+	if err != nil {
+		return [32]byte{}, "", err
+	}
+	return private, base64.StdEncoding.EncodeToString(public[:]), nil
+}
+
+func resolveNodeID(nodeID string) (string, error) {
+	if nodeID != "" {
+		return nodeID, nil
+	}
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "", errors.New("cannot determine hostname for default node ID")
+	}
+	return defaultNodeID(hostname)
 }
 
 func localJoinDirectory(path string) error {

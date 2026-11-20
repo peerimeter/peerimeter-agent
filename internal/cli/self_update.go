@@ -266,6 +266,90 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 	if tag != latestTag {
 		return fmt.Errorf("latest release changed from %s to %s while preparing the update; run self-update again", latestTag, tag)
 	}
+	if err := prepareReleaseFiles(inv, files, goos); err != nil {
+		return err
+	}
+	var managedService *installstate.Profile
+	restartAfterFailure := func(profile *installstate.Profile, cause error) error {
+		return restartServiceAfterFailure(profile, cause, deps.manage, deps.wait)
+	}
+	if err := runSelfUpdateAction(deps.progress, "Checking that agent profiles are stopped", func() error {
+		var err error
+		managedService, err = findAndCheckActiveProfiles(inv.Profiles, selfUpdateProfileLockError)
+		if errors.Is(err, errMultipleServiceProfiles) {
+			return errors.New("installation has multiple service profiles; self-update cannot select one safely")
+		}
+		return err
+	}); err != nil {
+		return err
+	}
+	if managedService != nil {
+		if err := runSelfUpdateAction(deps.progress, "Stopping the managed agent service", func() error {
+			return deps.manage("stop", profileServiceConfig(*managedService))
+		}); err != nil {
+			return restartAfterFailure(managedService, fmt.Errorf("stop installed service before update: %w", err))
+		}
+		if err := runSelfUpdateAction(deps.progress, "Waiting for the stopped agent to release its locks", func() error {
+			return waitForProfileStopped(ctx, *managedService)
+		}); err != nil {
+			return restartAfterFailure(managedService, fmt.Errorf("wait for installed service to stop: %w", err))
+		}
+	}
+	if goos == "windows" {
+		return runSelfUpdateAction(deps.progress, "Scheduling Windows file replacement", func() error {
+			return scheduleWindowsUpdate(inv, files, tag, managedService, out, jsonOutput)
+		})
+	}
+	inv, applied, err := replaceInstalledFiles(deps.progress, installDir, updateSnapshot, files)
+	if err != nil {
+		if applied.rollback != nil {
+			return rollbackInstalledUpdate(deps.progress, installDir, applied.rollback, profileValue(managedService), err, deps.manage, deps.wait)
+		}
+		return restartAfterFailure(managedService, err)
+	}
+	rollback, commit := applied.rollback, applied.commit
+	if managedService != nil {
+		profile := *managedService
+		err := startAndWaitForUpdatedService(
+			func() error {
+				return runSelfUpdateAction(deps.progress, "Starting the updated agent service", func() error {
+					return deps.manage("start", profileServiceConfig(profile))
+				})
+			},
+			func() error {
+				return runSelfUpdateAction(deps.progress, "Waiting for the updated service to become ready", func() error {
+					return deps.wait(ctx, profile.RuntimeDir)
+				})
+			},
+			func() error { return deps.manage("stop", profileServiceConfig(profile)) },
+			"restart updated service",
+			"updated service did not become ready",
+		)
+		if err != nil {
+			if rollbackMustWaitForRecovery(err) {
+				return err
+			}
+			return rollbackInstalledUpdate(deps.progress, installDir, rollback, profile, err, deps.manage, deps.wait)
+		}
+	} else if err := runSelfUpdateAction(deps.progress, "Verifying the updated agent binary", func() error {
+		return deps.verify(ctx, filepath.Join(installDir, binaryNameFor(goos)), tag)
+	}); err != nil {
+		return rollbackInstalledUpdate(deps.progress, installDir, rollback, installstate.Profile{}, err, deps.manage, deps.wait)
+	}
+	if err := runSelfUpdateAction(deps.progress, "Finalizing update and removing rollback backup", func() error {
+		return commit()
+	}); err != nil {
+		return fmt.Errorf("update succeeded but backup cleanup needs attention: %w", err)
+	}
+	filesUpdated := make([]string, 0, len(inv.Files))
+	for _, f := range inv.Files {
+		filesUpdated = append(filesUpdated, f.Name)
+	}
+	deps.progress.stop(selfUpdateProgressUpdateSucceeded)
+	return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "updated", PreviousVersion: currentVersion, UpdatedVersion: tag, Files: filesUpdated}, color)
+}
+
+func prepareReleaseFiles(inv installstate.Inventory, files map[string][]byte, goos string) error {
 	aliasName := commandAliasNameFor(goos)
 	aliasOwned := false
 	legacyAliasName := ""
@@ -299,121 +383,19 @@ func selfUpdateAt(ctx context.Context, out io.Writer, jsonOutput bool, installDi
 		// WireGuardNT is an independently pinned, Authenticode-verified runtime
 		// dependency. Do not change it as part of an agent-only update.
 		for _, owned := range inv.Files {
-			if owned.Name == "wireguard.dll" {
-				old, err := os.ReadFile(installstate.ResourcePath(inv, owned))
-				if err != nil {
-					return err
-				}
-				if !bytes.Equal(old, files[owned.Name]) {
-					return errors.New("release contains a different WireGuardNT DLL; install it through the verified installer")
-				}
-			}
-		}
-	}
-	var managedService *installstate.Profile
-	serviceConfig := func(p *installstate.Profile) service.Config {
-		return service.Config{ConfigDirectory: p.ConfigDir, StateDirectory: p.StateDir, RuntimeDirectory: p.RuntimeDir}
-	}
-	restartAfterFailure := func(profile *installstate.Profile, cause error) error {
-		if profile == nil {
-			return cause
-		}
-		if err := deps.manage("start", serviceConfig(profile)); err != nil {
-			return errors.Join(cause, fmt.Errorf("restart installed service after update failure: %w", err))
-		}
-		if err := deps.wait(context.Background(), profile.RuntimeDir); err != nil {
-			return errors.Join(cause, fmt.Errorf("verify service after update failure: %w", err))
-		}
-		return cause
-	}
-	if err := runSelfUpdateAction(deps.progress, "Checking that agent profiles are stopped", func() error {
-		for i := range inv.Profiles {
-			p := &inv.Profiles[i]
-			if p.Service {
-				if managedService != nil {
-					return errors.New("installation has multiple service profiles; self-update cannot select one safely")
-				}
-				managedService = p
+			if owned.Name != "wireguard.dll" {
 				continue
 			}
-			for _, dir := range []string{p.StateDir, p.RuntimeDir} {
-				guard, err := local.TryAcquireExisting(dir)
-				if err != nil {
-					return selfUpdateProfileLockError(err)
-				}
-				if guard != nil {
-					_ = guard.Close()
-				}
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-	if managedService != nil {
-		if err := runSelfUpdateAction(deps.progress, "Stopping the managed agent service", func() error {
-			return deps.manage("stop", serviceConfig(managedService))
-		}); err != nil {
-			return restartAfterFailure(managedService, fmt.Errorf("stop installed service before update: %w", err))
-		}
-		if err := runSelfUpdateAction(deps.progress, "Waiting for the stopped agent to release its locks", func() error {
-			return waitForProfileStopped(ctx, *managedService)
-		}); err != nil {
-			return restartAfterFailure(managedService, fmt.Errorf("wait for installed service to stop: %w", err))
-		}
-	}
-	if goos == "windows" {
-		return runSelfUpdateAction(deps.progress, "Scheduling Windows file replacement", func() error {
-			return scheduleWindowsUpdate(inv, files, tag, managedService, out, jsonOutput)
-		})
-	}
-	inv, applied, err := replaceInstalledFiles(deps.progress, installDir, updateSnapshot, files)
-	if err != nil {
-		if applied.rollback != nil {
-			return rollbackInstalledUpdate(deps.progress, installDir, applied.rollback, profileValue(managedService), err, deps.manage, deps.wait)
-		}
-		return restartAfterFailure(managedService, err)
-	}
-	rollback, commit := applied.rollback, applied.commit
-	if managedService != nil {
-		profile := *managedService
-		err := startAndWaitForUpdatedService(
-			func() error {
-				return runSelfUpdateAction(deps.progress, "Starting the updated agent service", func() error {
-					return deps.manage("start", serviceConfig(&profile))
-				})
-			},
-			func() error {
-				return runSelfUpdateAction(deps.progress, "Waiting for the updated service to become ready", func() error {
-					return deps.wait(ctx, profile.RuntimeDir)
-				})
-			},
-			func() error { return deps.manage("stop", serviceConfig(&profile)) },
-			"restart updated service",
-			"updated service did not become ready",
-		)
-		if err != nil {
-			if rollbackMustWaitForRecovery(err) {
+			old, err := os.ReadFile(installstate.ResourcePath(inv, owned))
+			if err != nil {
 				return err
 			}
-			return rollbackInstalledUpdate(deps.progress, installDir, rollback, profile, err, deps.manage, deps.wait)
+			if !bytes.Equal(old, files[owned.Name]) {
+				return errors.New("release contains a different WireGuardNT DLL; install it through the verified installer")
+			}
 		}
-	} else if err := runSelfUpdateAction(deps.progress, "Verifying the updated agent binary", func() error {
-		return deps.verify(ctx, filepath.Join(installDir, binaryNameFor(goos)), tag)
-	}); err != nil {
-		return rollbackInstalledUpdate(deps.progress, installDir, rollback, installstate.Profile{}, err, deps.manage, deps.wait)
 	}
-	if err := runSelfUpdateAction(deps.progress, "Finalizing update and removing rollback backup", func() error {
-		return commit()
-	}); err != nil {
-		return fmt.Errorf("update succeeded but backup cleanup needs attention: %w", err)
-	}
-	filesUpdated := make([]string, 0, len(inv.Files))
-	for _, f := range inv.Files {
-		filesUpdated = append(filesUpdated, f.Name)
-	}
-	deps.progress.stop(selfUpdateProgressUpdateSucceeded)
-	return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "updated", PreviousVersion: currentVersion, UpdatedVersion: tag, Files: filesUpdated}, color)
+	return nil
 }
 
 func selfUpdateProfileLockError(err error) error {
@@ -550,32 +532,23 @@ func recoverInterruptedUpdate(installDir string, inv installstate.Inventory, goo
 	if goos == "windows" {
 		return true, scheduleWindowsRecovery(inv)
 	}
-	var profile *installstate.Profile
-	for i := range inv.Profiles {
-		p := &inv.Profiles[i]
-		if p.Service {
-			if profile != nil {
-				return false, errors.New("multiple service profiles prevent safe update recovery")
-			}
-			profile = p
-			continue
-		}
-		guard, guardErr := local.TryAcquireExisting(p.RuntimeDir)
-		if guardErr != nil {
-			return false, errors.New("stop active agent profiles before update recovery")
-		}
-		if guard != nil {
-			_ = guard.Close()
-		}
+	profile, err := findAndCheckActiveProfiles(inv.Profiles, func(error) error {
+		return errors.New("stop active agent profiles before update recovery")
+	})
+	if errors.Is(err, errMultipleServiceProfiles) {
+		return false, errors.New("multiple service profiles prevent safe update recovery")
+	}
+	if err != nil {
+		return false, err
 	}
 	if profile != nil {
-		if err := service.Manage("stop", service.Config{ConfigDirectory: profile.ConfigDir, StateDirectory: profile.StateDir, RuntimeDirectory: profile.RuntimeDir}); err != nil {
+		if err := service.Manage("stop", profileServiceConfig(*profile)); err != nil {
 			return false, fmt.Errorf("stop service before update recovery: %w", err)
 		}
 	}
 	lock, err := installstate.Lock(installDir)
 	if err != nil {
-		return false, restartServiceAfterFailure(profile, err)
+		return false, restartServiceAfterFailure(profile, err, service.Manage, waitForService)
 	}
 	current, err := installstate.Load(installDir)
 	if err == nil {
@@ -585,7 +558,7 @@ func recoverInterruptedUpdate(installDir string, inv installstate.Inventory, goo
 		err = selfupdate.RecoverLocked(current)
 	}
 	err = errors.Join(err, lock.Close())
-	err = restartServiceAfterFailure(profile, err)
+	err = restartServiceAfterFailure(profile, err, service.Manage, waitForService)
 	return err == nil, err
 }
 
@@ -650,20 +623,28 @@ func verifyInstalledFiles(inv installstate.Inventory) error {
 }
 
 func startManagedService(p installstate.Profile) error {
-	return service.Manage("start", service.Config{ConfigDirectory: p.ConfigDir, StateDirectory: p.StateDir, RuntimeDirectory: p.RuntimeDir})
+	return service.Manage("start", profileServiceConfig(p))
 }
 
-func restartServiceAfterFailure(profile *installstate.Profile, cause error) error {
+func profileServiceConfig(profile installstate.Profile) service.Config {
+	return service.Config{ConfigDirectory: profile.ConfigDir, StateDirectory: profile.StateDir, RuntimeDirectory: profile.RuntimeDir}
+}
+
+func restartServiceAfterFailure(profile *installstate.Profile, cause error, manage updateServiceManager, wait updateServiceWaiter) error {
 	if profile == nil {
 		return cause
 	}
-	if err := startManagedService(*profile); err != nil {
+	if err := manage("start", profileServiceConfig(*profile)); err != nil {
 		return errors.Join(cause, fmt.Errorf("restart installed service after update failure: %w", err))
 	}
-	if err := waitForService(context.Background(), profile.RuntimeDir); err != nil {
+	if err := wait(context.Background(), profile.RuntimeDir); err != nil {
 		return errors.Join(cause, fmt.Errorf("verify service after update failure: %w", err))
 	}
 	return cause
+}
+
+func restartManagedServiceAfterFailure(profile *installstate.Profile, cause error) error {
+	return restartServiceAfterFailure(profile, cause, service.Manage, waitForService)
 }
 
 func waitForService(parent context.Context, runtimeDir string) error {
@@ -703,7 +684,7 @@ func rollbackInstalledUpdate(progress *selfUpdateProgress, dir string, rollback 
 	rollbackErr := restoreUpdateFiles(progress, dir, rollback)
 	if p.Service {
 		rollbackErr = errors.Join(rollbackErr, runSelfUpdateAction(progress, "Restarting the previous service version", func() error {
-			return errors.Join(manage("start", service.Config{ConfigDirectory: p.ConfigDir, StateDirectory: p.StateDir, RuntimeDirectory: p.RuntimeDir}), wait(context.Background(), p.RuntimeDir))
+			return errors.Join(manage("start", profileServiceConfig(p)), wait(context.Background(), p.RuntimeDir))
 		}))
 	}
 	if rollbackErr != nil {
@@ -727,32 +708,56 @@ func ensureNoActiveUpdateProfiles(inv installstate.Inventory) error {
 	return nil
 }
 
+var errMultipleServiceProfiles = errors.New("multiple service profiles")
+
+func findAndCheckActiveProfiles(profiles []installstate.Profile, mapErr func(error) error) (*installstate.Profile, error) {
+	var serviceProfile *installstate.Profile
+	for i := range profiles {
+		profile := &profiles[i]
+		if profile.Service {
+			if serviceProfile != nil {
+				return nil, errMultipleServiceProfiles
+			}
+			serviceProfile = profile
+			continue
+		}
+		for _, dir := range []string{profile.StateDir, profile.RuntimeDir} {
+			guard, err := local.TryAcquireExisting(dir)
+			if err != nil {
+				return nil, mapErr(err)
+			}
+			if guard != nil {
+				_ = guard.Close()
+			}
+		}
+	}
+	return serviceProfile, nil
+}
+
 func writeSelfUpdateResult(out io.Writer, jsonOutput bool, result selfUpdateResult, color bool) error {
 	if jsonOutput {
 		return json.NewEncoder(out).Encode(result)
 	}
-	if result.State == "up_to_date" {
+	switch result.State {
+	case "up_to_date":
 		message := fmt.Sprintf("✓ Peerimeter Agent is already up to date (%s).", result.PreviousVersion)
 		_, err := fmt.Fprintln(out, selfUpdateGreen(message, color))
 		return err
-	}
-	if result.State == "cancelled" {
+	case "cancelled":
 		_, err := fmt.Fprintln(out, "Update cancelled.")
 		return err
-	}
-	if result.State == "scheduled" {
+	case "scheduled":
 		_, err := fmt.Fprintf(out, "Windows update helper started for %s. It will finish replacing the agent in the background.\n", result.UpdatedVersion)
 		return err
-	}
-	if result.State == "recovered" {
+	case "recovered":
 		_, err := fmt.Fprintln(out, "Recovered the previous installation after an interrupted update. Run `peerimeter-agent self-update` again to retry.")
 		return err
-	}
-	if result.State == "recovery_scheduled" {
+	case "recovery_scheduled":
 		_, err := fmt.Fprintln(out, "Windows recovery helper started. It will restore the previous installation after this command exits.")
 		return err
+	default:
+		message := fmt.Sprintf("✓ Updated Peerimeter Agent %s → %s.", result.PreviousVersion, result.UpdatedVersion)
+		_, err := fmt.Fprintln(out, selfUpdateGreen(message, color))
+		return err
 	}
-	message := fmt.Sprintf("✓ Updated Peerimeter Agent %s → %s.", result.PreviousVersion, result.UpdatedVersion)
-	_, err := fmt.Fprintln(out, selfUpdateGreen(message, color))
-	return err
 }

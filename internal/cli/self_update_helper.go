@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
-	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/selfupdate"
 	"github.com/peerimeter/peerimeter-agent/internal/service"
 )
@@ -44,7 +43,7 @@ type helperManifest struct {
 func scheduleWindowsUpdate(inv installstate.Inventory, files map[string][]byte, tag string, profile *installstate.Profile, out io.Writer, jsonOutput bool) error {
 	dir, err := installstate.CreatePrivateTempDir(inv.LockDir, ".peerimeter-update-")
 	if err != nil {
-		return restartServiceAfterFailure(profile, fmt.Errorf("create update staging directory under recorded lock directory: %w", err))
+		return restartManagedServiceAfterFailure(profile, fmt.Errorf("create update staging directory under recorded lock directory: %w", err))
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 	hashes := make(map[string]string, len(files))
@@ -57,23 +56,23 @@ func scheduleWindowsUpdate(inv installstate.Inventory, files map[string][]byte, 
 		}
 		if err := os.WriteFile(filepath.Join(dir, name), data, mode); err != nil {
 			cleanup()
-			return restartServiceAfterFailure(profile, err)
+			return restartManagedServiceAfterFailure(profile, err)
 		}
 	}
 	manifest, err := json.Marshal(helperManifest{Version: tag, InstallID: inv.ID, Hashes: hashes, Snapshot: snapshotUpdateInventory(inv)})
 	if err != nil {
 		cleanup()
-		return restartServiceAfterFailure(profile, err)
+		return restartManagedServiceAfterFailure(profile, err)
 	}
 	if err := installstate.WritePrivate(filepath.Join(dir, updateManifestName), append(manifest, '\n')); err != nil {
 		cleanup()
-		return restartServiceAfterFailure(profile, err)
+		return restartManagedServiceAfterFailure(profile, err)
 	}
 	resultPath := dir + updateResultSuffix
 	pending, _ := json.Marshal(windowsUpdateResult{State: "pending"})
 	if err := installstate.WritePrivate(resultPath, append(pending, '\n')); err != nil {
 		cleanup()
-		return restartServiceAfterFailure(profile, fmt.Errorf("create Windows update result file: %w", err))
+		return restartManagedServiceAfterFailure(profile, fmt.Errorf("create Windows update result file: %w", err))
 	}
 	helper := filepath.Join(dir, "peerimeter-agent.exe")
 	cmd := exec.Command(helper, "__update-helper", inv.InstallDir, dir)
@@ -82,7 +81,7 @@ func scheduleWindowsUpdate(inv installstate.Inventory, files map[string][]byte, 
 	cmd.SysProcAttr = updateHelperProcessAttributes()
 	if err := cmd.Start(); err != nil {
 		cleanup()
-		return restartServiceAfterFailure(profile, fmt.Errorf("start Windows update helper: %w", err))
+		return restartManagedServiceAfterFailure(profile, fmt.Errorf("start Windows update helper: %w", err))
 	}
 	ready := false
 	deadline := time.Now().Add(30 * time.Second)
@@ -102,7 +101,7 @@ func scheduleWindowsUpdate(inv installstate.Inventory, files map[string][]byte, 
 	if !ready {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-		return restartServiceAfterFailure(profile, fmt.Errorf("Windows update helper could not initialize; inspect %s", resultPath))
+		return restartManagedServiceAfterFailure(profile, fmt.Errorf("Windows update helper could not initialize; inspect %s", resultPath))
 	}
 	_ = cmd.Process.Release()
 	return writeSelfUpdateResult(out, jsonOutput, selfUpdateResult{State: "scheduled", PreviousVersion: Version, UpdatedVersion: tag, ResultFile: resultPath}, false)
@@ -190,28 +189,17 @@ func runWindowsRecoveryHelper(ctx context.Context, args []string) error {
 	} else if err := installstate.CheckPrivateFile(journalPath); err != nil {
 		return err
 	}
-	var profile *installstate.Profile
-	for i := range inv.Profiles {
-		p := &inv.Profiles[i]
-		if p.Service {
-			if profile != nil {
-				return errors.New("multiple service profiles prevent safe update recovery")
-			}
-			profile = p
-			continue
-		}
-		for _, dir := range []string{p.StateDir, p.RuntimeDir} {
-			guard, guardErr := local.TryAcquireExisting(dir)
-			if guardErr != nil {
-				return errors.New("stop active agent profiles before update recovery")
-			}
-			if guard != nil {
-				_ = guard.Close()
-			}
-		}
+	profile, err := findAndCheckActiveProfiles(inv.Profiles, func(error) error {
+		return errors.New("stop active agent profiles before update recovery")
+	})
+	if errors.Is(err, errMultipleServiceProfiles) {
+		return errors.New("multiple service profiles prevent safe update recovery")
+	}
+	if err != nil {
+		return err
 	}
 	if profile != nil {
-		if err := service.Manage("stop", service.Config{ConfigDirectory: profile.ConfigDir, StateDirectory: profile.StateDir, RuntimeDirectory: profile.RuntimeDir}); err != nil {
+		if err := service.Manage("stop", profileServiceConfig(*profile)); err != nil {
 			return fmt.Errorf("stop service before update recovery: %w", err)
 		}
 	}
@@ -484,7 +472,7 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) (resultErr error
 	if profile != nil {
 		serviceRestartAttempted = true
 		profileValue := *profile
-		serviceConfig := service.Config{ConfigDirectory: profileValue.ConfigDir, StateDirectory: profileValue.StateDir, RuntimeDirectory: profileValue.RuntimeDir}
+		serviceConfig := profileServiceConfig(profileValue)
 		err := startAndWaitForUpdatedService(
 			func() error { return startManagedService(profileValue) },
 			func() error { return waitForService(ctx, profileValue.RuntimeDir) },
