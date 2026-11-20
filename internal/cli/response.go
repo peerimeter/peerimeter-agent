@@ -20,6 +20,23 @@ func renderResponse(out io.Writer, raw []byte, color bool, width int) error {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return fmt.Errorf("decode command result: %w", err)
 	}
+	if rawNetworks, ok := fields["networks"]; ok {
+		var result networkSnapshots
+		if err := json.Unmarshal(rawNetworks, &result.Networks); err != nil {
+			return err
+		}
+		for i, snapshot := range result.Networks {
+			if i > 0 {
+				if _, err := io.WriteString(out, "\n"); err != nil {
+					return err
+				}
+			}
+			if err := presentation.StatusOverview(out, snapshot, time.Now(), color, width); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	if _, ok := fields["network_id"]; ok {
 		if _, ok := fields["peers"]; ok {
 			var snapshot platform.Snapshot

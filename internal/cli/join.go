@@ -104,13 +104,13 @@ func newJoinCommand(app *application) *cobra.Command {
 		if token != "" && cmd.Flags().Changed("token-file") {
 			return errors.New("--token and --token-file cannot be used together")
 		}
-		return runJoin(cmd.Context(), app, joinOptions{nodeID: nodeID, operator: operator, token: token, tokenFile: tokenFile, listenPort: listenPort, allowInsecureHTTP: allowInsecureHTTP, dirs: dirs})
+		return runJoin(cmd.Context(), app, joinOptions{nodeID: nodeID, operator: operator, token: token, tokenFile: tokenFile, listenPort: listenPort, listenPortSet: cmd.Flags().Changed("listen-port"), allowInsecureHTTP: allowInsecureHTTP, dirs: dirs})
 	})}
 	cmd.Long = "Register this agent using a network-scoped Base64URL token and save its managed configuration. The token is read from stdin by default. The network ID comes from the token; the node ID defaults to the machine hostname. Start a tunnel separately with run --config."
 	cmd.Flags().StringVar(&token, "token", "", "Join token (prefer --token-file for sensitive values)")
 	cmd.Flags().StringVar(&tokenFile, "token-file", "-", "Read join token from this file, or - for stdin (default)")
 	cmd.Flags().StringVar(&nodeID, "node-id", "", "Optional stable node ID (defaults to hostname)")
-	cmd.Flags().IntVar(&listenPort, "listen-port", 51820, "WireGuard UDP listen port")
+	cmd.Flags().IntVar(&listenPort, "listen-port", 0, "WireGuard UDP listen port (allocated automatically when omitted)")
 	cmd.Flags().StringVar(&operator, "operator", "", "Authorized local username/UID or Windows account/SID")
 	cmd.Flags().BoolVar(&allowInsecureHTTP, "allow-insecure-http", false, "Allow HTTP API URLs outside localhost (sends the enrollment token without TLS)")
 	directoryFlags(cmd, &dirs)
@@ -123,6 +123,7 @@ type joinOptions struct {
 	token             string
 	tokenFile         string
 	listenPort        int
+	listenPortSet     bool
 	allowInsecureHTTP bool
 	dirs              paths.Options
 }
@@ -138,12 +139,22 @@ func runJoin(ctx context.Context, app *application, opts joinOptions) error {
 	}
 	client := serviceapi.New(bundle)
 	networkID := bundle.NetworkID
-	if opts.listenPort < 1 || opts.listenPort > 65535 {
-		return errors.New("--listen-port must be between 1 and 65535")
-	}
 	layout, err := paths.Resolve(opts.dirs)
 	if err != nil {
 		return err
+	}
+	if opts.listenPortSet {
+		if opts.listenPort < 1 || opts.listenPort > 65535 {
+			return errors.New("--listen-port must be between 1 and 65535")
+		}
+		if err := ensureListenPortAvailable(layout.ConfigDir, layout.StateDir, networkID, opts.listenPort); err != nil {
+			return err
+		}
+	} else {
+		opts.listenPort, err = allocateListenPort(layout.ConfigDir, layout.StateDir, networkID)
+		if err != nil {
+			return err
+		}
 	}
 	if err := os.MkdirAll(layout.ConfigDir, 0o700); err != nil {
 		return errors.New("cannot create protected agent configuration directory")

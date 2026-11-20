@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -22,14 +23,14 @@ func newSyncCommand(app *application) *cobra.Command {
 	var dirs paths.Options
 	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Refresh this node's registration and reconcile the running agent",
-		Long:  "For a joined network, sync updates this node's primary interface addresses in the Service API, then pulls the current peer list and applies it to the running agent configuration. It verifies the selected network matches the running network. --config, if supplied, must identify that active file. Windows UNC config paths are not supported. Without complete saved metadata it reloads the local configuration as before. With one joined network, --network-id is optional; with multiple joined networks it is required. Older joins may need --api-url and --node-id once. It preserves the last public endpoint when STUN cannot bind the configured WireGuard port.",
+		Short: "Refresh all joined networks or select one with --network-id",
+		Long:  "For each selected joined network, sync updates this node's primary interface addresses in the Service API, then pulls the current peer list and applies it to that network's running configuration. It verifies each selected network matches its running agent. --config, if supplied, must identify the selected active file. Windows UNC config paths are not supported. Without complete saved metadata it reloads local configuration as before. By default all joined networks are selected; --network-id selects one. Older joins may need --api-url and --node-id once. It preserves the last public endpoint when STUN cannot bind the configured WireGuard port.",
 		Args:  noArguments,
 		RunE: app.handleResponse(func(cmd *cobra.Command) error {
 			return runSync(cmd.Context(), app, syncOptions{networkID: networkID, nodeID: nodeID, apiURL: apiURL, configPath: configPath, allowInsecureHTTP: allowInsecureHTTP, dirs: dirs})
 		}),
 	}
-	cmd.Flags().StringVar(&networkID, "network-id", "", "Joined network ID (required when multiple networks are joined)")
+	cmd.Flags().StringVar(&networkID, "network-id", "", "Joined network ID (defaults to all joined networks)")
 	cmd.Flags().StringVar(&nodeID, "node-id", "", "Node ID (defaults to the joined node; required if not saved)")
 	cmd.Flags().StringVar(&configPath, "config", "", "WireGuard configuration path (must match the running agent's active config)")
 	cmd.Flags().StringVar(&apiURL, "api-url", "", "Service API URL (required once for older joins without saved service metadata)")
@@ -52,17 +53,47 @@ func runSync(ctx context.Context, app *application, opts syncOptions) error {
 	if err != nil {
 		return err
 	}
-	networkID, err := selectManagedNetwork(layout.StateDir, opts.networkID)
+	networks, err := managedNetworkIDs(layout.StateDir)
 	if err != nil {
 		return err
 	}
+	if len(networks) == 0 {
+		return syncManagedNetwork(ctx, app, opts, layout, "")
+	}
+	selected, err := selectManagedNetworkIDs(networks, opts.networkID)
+	if err != nil {
+		return err
+	}
+	if len(selected) > 1 && (opts.configPath != "" || opts.nodeID != "" || opts.apiURL != "") {
+		return errors.New("--config, --node-id and --api-url require selecting one network with --network-id")
+	}
+	originalOutput := app.out
+	app.out = io.Discard
+	defer func() { app.out = originalOutput }()
+	var failures []error
+	for _, networkID := range selected {
+		if err := syncManagedNetwork(ctx, app, opts, layout, networkID); err != nil {
+			failures = append(failures, fmt.Errorf("network %q: %w", networkID, err))
+		}
+	}
+	if err := errors.Join(failures...); err != nil {
+		return err
+	}
+	if len(selected) == 1 {
+		return json.NewEncoder(originalOutput).Encode(map[string]string{"state": "reconciled", "network_id": selected[0]})
+	}
+	return json.NewEncoder(originalOutput).Encode(map[string]any{"state": "reconciled", "network_ids": selected})
+}
+
+func syncManagedNetwork(ctx context.Context, app *application, opts syncOptions, layout paths.Layout, networkID string) error {
 	if networkID == "" {
 		return local.Request(ctx, layout.RuntimeDir, "reload", app.out)
 	}
+	runtimeDir := controlNetworkLayout(layout, networkID).RuntimeDir
 	metadata, metadataErr := readManagedNetworkMetadata(layout.StateDir, networkID)
 	// TODO(peerimeter): Remove the local-only fallback when legacy joins no longer need compatibility.
 	if shouldFallbackToLocalSync(metadata, metadataErr, opts.nodeID, opts.apiURL) {
-		return local.Request(ctx, layout.RuntimeDir, "reload", app.out)
+		return local.Request(ctx, runtimeDir, "reload", app.out)
 	}
 	nodeID := opts.nodeID
 	if nodeID == "" {
@@ -72,7 +103,7 @@ func runSync(ctx context.Context, app *application, opts syncOptions) error {
 		return errors.New("--node-id is required because this network has no saved node ID")
 	}
 	serviceOptions := serviceConfigOptions{networkID: networkID, nodeID: nodeID, apiURL: opts.apiURL, allowInsecureHTTP: opts.allowInsecureHTTP}
-	identity, err := local.GetIdentity(ctx, layout.RuntimeDir)
+	identity, err := local.GetIdentity(ctx, runtimeDir)
 	if err != nil {
 		return err
 	}
@@ -86,7 +117,7 @@ func runSync(ctx context.Context, app *application, opts syncOptions) error {
 	if err != nil {
 		return err
 	}
-	configData, err := local.GetConfig(ctx, layout.RuntimeDir, identity)
+	configData, err := local.GetConfig(ctx, runtimeDir, identity)
 	if err != nil {
 		return err
 	}
@@ -122,35 +153,22 @@ func runSync(ctx context.Context, app *application, opts syncOptions) error {
 	if err != nil {
 		return err
 	}
-	if err := local.ApplyConfig(ctx, layout.RuntimeDir, identity, data, app.out); err != nil {
+	if err := local.ApplyConfig(ctx, runtimeDir, identity, data, app.out); err != nil {
 		return fmt.Errorf("cannot apply refreshed peer configuration: %w", err)
 	}
 	return nil
 }
 
-func selectManagedNetwork(stateDir, requestedID string) (string, error) {
-	networks, err := managedNetworkIDs(stateDir)
-	if err != nil {
-		return "", err
-	}
-	if len(networks) == 0 {
-		if requestedID == "" {
-			return "", nil
-		}
-		return "", errors.New("no joined network credentials found; run join before syncing Service API peers")
-	}
+func selectManagedNetworkIDs(networks []string, requestedID string) ([]string, error) {
 	if requestedID == "" {
-		if len(networks) == 1 {
-			return networks[0], nil
-		}
-		return "", fmt.Errorf("--network-id is required when multiple networks are joined (%s)", strings.Join(networks, ", "))
+		return networks, nil
 	}
 	for _, networkID := range networks {
 		if networkID == requestedID {
-			return requestedID, nil
+			return []string{requestedID}, nil
 		}
 	}
-	return "", errors.New("no saved credential found for --network-id")
+	return nil, errors.New("no saved credential found for --network-id")
 }
 
 func shouldFallbackToLocalSync(metadata managedNetworkMetadata, metadataErr error, nodeID, apiURL string) bool {

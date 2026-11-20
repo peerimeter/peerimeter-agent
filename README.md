@@ -14,13 +14,13 @@ the full command list.
 | --- | --- |
 | `generate-example` | Create example mesh configs and fresh keys |
 | `validate-config` | Validate a static YAML config and its key |
-| `run` | Run the WireGuard agent in the foreground |
-| `daemon` | Run the agent and sync a joined network periodically |
+| `run` | Run every network YAML in `--config-dir` (or one with `--network`/`--config`) |
+| `daemon` | Run configured networks and periodically sync joined networks |
 | `join` | Enroll this agent in a service-managed network (`--token` or `--token-file`) |
-| `sync` | Refresh enrollment and reconcile the running agent |
-| `status` | Show local tunnel status; `--watch` keeps it updated |
-| `wg [show]` | Show WireGuard interfaces and peers |
-| `stop` | Stop the tunnel and clean up routes |
+| `sync` | Refresh all joined networks or select one with `--network-id` |
+| `status` | Show all local network tunnels; use `--network` to select one |
+| `wg [show]` | Show all local WireGuard interfaces and peers |
+| `stop` | Stop all configured tunnels or select one with `--network` |
 | `service install` | Install and register the native OS service |
 | `service start` / `service stop` | Start or stop the installed service |
 | `service migrate` | Migrate the legacy Unix service layout |
