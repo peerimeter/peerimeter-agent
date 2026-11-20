@@ -272,20 +272,7 @@ func makePlan(inv installstate.Inventory, purge bool) removalPlan {
 			}
 		}
 		if purge {
-			purgeDirs := []string{profile.StateDir}
-			if profile.ConfigOwned {
-				purgeDirs = append(purgeDirs, profile.ConfigDir)
-			}
-			if profile.LegacyConfigOwned {
-				purgeDirs = append(purgeDirs, profile.LegacyConfigDir)
-			}
-			if profile.PendingConfigOwned {
-				purgeDirs = append(purgeDirs, profile.PendingConfigDir)
-			}
-			if profile.RuntimeOwned {
-				purgeDirs = append(purgeDirs, profile.RuntimeDir)
-			}
-			for _, d := range purgeDirs {
+			for _, d := range ownedProfileDirs(profile) {
 				if d != "" && !contains(p.PurgeDirs, d) {
 					p.PurgeDirs = append(p.PurgeDirs, d)
 				}
@@ -770,37 +757,9 @@ func executeWithRegistrationProbeAndFinalizer(ctx context.Context, opts Options,
 		return err
 	}
 	defer lock.Close()
-	reread, err := installstate.Load(dir)
+	inv, plan, err = reverifyPlanUnderLock(dir, inv, confirmedPlan, opts.Purge, confirmedPlanPurgeContents)
 	if err != nil {
 		return err
-	}
-	if reread.ID != inv.ID {
-		return errors.New("installation inventory changed before removal")
-	}
-	if _, found, err := selfupdate.FindJournal(reread); err != nil {
-		return err
-	} else if found {
-		return errors.New("an interrupted self-update must be recovered with `peerimeter-agent self-update` before uninstall")
-	}
-	inv = reread
-	if err := verifyProfileOwnership(&inv); err != nil {
-		return err
-	}
-	updatedPlan := makePlan(inv, opts.Purge)
-	if !sameConfirmedPlan(confirmedPlan, updatedPlan) {
-		return errors.New("installation profiles or removal resources changed before removal")
-	}
-	plan = updatedPlan
-	if opts.Purge {
-		for _, root := range plan.PurgeDirs {
-			current, err := listTree(root)
-			if err != nil {
-				return fmt.Errorf("cannot recheck purge contents of %s: %w", root, err)
-			}
-			if !samePathSet(confirmedPlanPurgeContents[root], current) {
-				return errors.New("purge contents changed after confirmation; review the updated contents and retry uninstall")
-			}
-		}
 	}
 	if err := preflight(inv, plan); err != nil {
 		return err
@@ -846,40 +805,8 @@ func executeWithRegistrationProbeAndFinalizer(ctx context.Context, opts Options,
 	}
 	plan = makePlan(inv, opts.Purge)
 	if runtime.GOOS != "windows" {
-		held := map[string]bool{}
-		for _, p := range inv.Profiles {
-			held[p.StateDir] = true
-		}
-		for _, p := range inv.Profiles {
-			if !p.RuntimeOwned || held[p.RuntimeDir] {
-				continue
-			}
-			guard, e := local.TryAcquireExisting(p.RuntimeDir)
-			stillOwned, verifyErr := installstate.VerifyRuntime(inv, p)
-			if verifyErr != nil {
-				if guard != nil {
-					guard.Close()
-				}
-				return verifyErr
-			}
-			if !stillOwned {
-				if guard != nil {
-					guard.Close()
-				}
-				for i, profile := range inv.Profiles {
-					if profile.ID == p.ID {
-						inv.Profiles[i].RuntimeOwned = false
-					}
-				}
-				continue
-			}
-			if e != nil {
-				return fmt.Errorf("runtime remains in use; unrelated listener was preserved: %w", e)
-			}
-			if guard != nil {
-				guards = append(guards, guard)
-			}
-			held[p.RuntimeDir] = true
+		if err := acquireUnixRuntimeDirectoryGuards(&inv, &guards); err != nil {
+			return err
 		}
 	}
 	plan = makePlan(inv, opts.Purge)
@@ -892,6 +819,85 @@ func executeWithRegistrationProbeAndFinalizer(ctx context.Context, opts Options,
 		return json.NewEncoder(out).Encode(report{State: "pending", ResultFile: result, Message: "The bounded removal helper runs after this process exits. Read the result file to confirm completion; remaining paths indicate a retry is required."})
 	}
 	return executeUnixRemoval(plan, inv, opts.Purge, confirmedPlanPurgeContents, lock, updateLock, &updateLockHeld, remove, out)
+}
+
+func acquireUnixRuntimeDirectoryGuards(inv *installstate.Inventory, guards *[]*local.Guard) error {
+	held := make(map[string]bool, len(inv.Profiles))
+	for _, profile := range inv.Profiles {
+		held[profile.StateDir] = true
+	}
+	for _, profile := range inv.Profiles {
+		if !profile.RuntimeOwned || held[profile.RuntimeDir] {
+			continue
+		}
+		guard, lockErr := local.TryAcquireExisting(profile.RuntimeDir)
+		stillOwned, verifyErr := installstate.VerifyRuntime(*inv, profile)
+		if verifyErr != nil {
+			closeGuard(guard)
+			return verifyErr
+		}
+		if !stillOwned {
+			closeGuard(guard)
+			clearRuntimeOwnership(inv, profile.ID)
+			continue
+		}
+		if lockErr != nil {
+			return fmt.Errorf("runtime remains in use; unrelated listener was preserved: %w", lockErr)
+		}
+		if guard != nil {
+			*guards = append(*guards, guard)
+		}
+		held[profile.RuntimeDir] = true
+	}
+	return nil
+}
+
+func closeGuard(guard *local.Guard) {
+	if guard != nil {
+		_ = guard.Close()
+	}
+}
+
+func clearRuntimeOwnership(inv *installstate.Inventory, profileID string) {
+	for index := range inv.Profiles {
+		if inv.Profiles[index].ID == profileID {
+			inv.Profiles[index].RuntimeOwned = false
+		}
+	}
+}
+
+func reverifyPlanUnderLock(dir string, initialInv installstate.Inventory, confirmedPlan removalPlan, purge bool, confirmedPurgeContents map[string][]string) (installstate.Inventory, removalPlan, error) {
+	inv, err := installstate.Load(dir)
+	if err != nil {
+		return installstate.Inventory{}, removalPlan{}, err
+	}
+	if inv.ID != initialInv.ID {
+		return installstate.Inventory{}, removalPlan{}, errors.New("installation inventory changed before removal")
+	}
+	if _, found, err := selfupdate.FindJournal(inv); err != nil {
+		return installstate.Inventory{}, removalPlan{}, err
+	} else if found {
+		return installstate.Inventory{}, removalPlan{}, errors.New("an interrupted self-update must be recovered with `peerimeter-agent self-update` before uninstall")
+	}
+	if err := verifyProfileOwnership(&inv); err != nil {
+		return installstate.Inventory{}, removalPlan{}, err
+	}
+	plan := makePlan(inv, purge)
+	if !sameConfirmedPlan(confirmedPlan, plan) {
+		return installstate.Inventory{}, removalPlan{}, errors.New("installation profiles or removal resources changed before removal")
+	}
+	if purge {
+		for _, root := range plan.PurgeDirs {
+			current, err := listTree(root)
+			if err != nil {
+				return installstate.Inventory{}, removalPlan{}, fmt.Errorf("cannot recheck purge contents of %s: %w", root, err)
+			}
+			if !samePathSet(confirmedPurgeContents[root], current) {
+				return installstate.Inventory{}, removalPlan{}, errors.New("purge contents changed after confirmation; review the updated contents and retry uninstall")
+			}
+		}
+	}
+	return inv, plan, nil
 }
 
 func executeUnixRemoval(plan removalPlan, inv installstate.Inventory, purge bool, purgeContents map[string][]string, lock, updateLock io.Closer, updateLockHeld *bool, remove trackedFileRemover, out io.Writer) error {

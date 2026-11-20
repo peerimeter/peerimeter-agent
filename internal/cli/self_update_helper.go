@@ -534,7 +534,7 @@ func loadAndVerifyHelperManifest(transactionDir string, inv installstate.Invento
 	}
 	files := make(map[string][]byte, len(manifest.Hashes))
 	for name, want := range manifest.Hashes {
-		if !knownFileName(inv, name) {
+		if !inv.HasFile(name) {
 			return helperManifest{}, nil, nil, errors.New("update helper manifest contains an unowned file")
 		}
 		path := filepath.Join(transactionDir, name)
@@ -629,15 +629,6 @@ func acquireWindowsUpdateLock(ctx context.Context, inv installstate.Inventory, t
 		case <-ticker.C:
 		}
 	}
-}
-
-func knownFileName(inv installstate.Inventory, name string) bool {
-	for _, f := range inv.Files {
-		if f.Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 func pathWithin(parent, child string) bool {

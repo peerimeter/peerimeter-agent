@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/paths"
 	"github.com/peerimeter/peerimeter-agent/internal/secret"
 	"github.com/peerimeter/peerimeter-agent/internal/serviceapi"
@@ -36,24 +37,12 @@ func managedNetworkIDs(stateDir string) ([]string, error) {
 			continue
 		}
 		id := strings.TrimSuffix(entry.Name(), ".token")
-		if validManagedNetworkID(id) {
+		if config.ValidIdentifier(id) {
 			networks = append(networks, id)
 		}
 	}
 	sort.Strings(networks)
 	return networks, nil
-}
-
-func validManagedNetworkID(value string) bool {
-	if value == "" || len(value) > 128 || value == "." || value == ".." {
-		return false
-	}
-	for _, r := range value {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '.' || r == '-') {
-			return false
-		}
-	}
-	return true
 }
 
 func readManagedNetworkMetadata(stateDir, networkID string) (managedNetworkMetadata, error) {
@@ -87,7 +76,7 @@ func readManagedNetworkMetadata(stateDir, networkID string) (managedNetworkMetad
 }
 
 func managedServiceClient(options serviceConfigOptions, layout paths.Layout) (*serviceapi.Client, func() error, error) {
-	if !validManagedNetworkID(options.networkID) {
+	if !config.ValidIdentifier(options.networkID) {
 		return nil, nil, errors.New("--network-id is invalid")
 	}
 	metadata, metadataErr := readManagedNetworkMetadata(layout.StateDir, options.networkID)

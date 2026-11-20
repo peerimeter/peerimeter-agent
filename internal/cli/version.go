@@ -62,7 +62,7 @@ func renderVersion(out io.Writer, color bool) error {
 			return err
 		}
 	}
-	return presentation.Table(out, nil, versionRows(), color, versionOutputWidth(out))
+	return presentation.Table(out, nil, versionRows(), color, outputWidth(out))
 }
 
 func versionRows() [][]string {
@@ -71,13 +71,4 @@ func versionRows() [][]string {
 		{"Platform", runtime.GOOS + "/" + runtime.GOARCH},
 		{"Go", runtime.Version()},
 	}
-}
-
-func versionOutputWidth(out io.Writer) int {
-	if file, ok := out.(*os.File); ok {
-		if width, _, err := term.GetSize(int(file.Fd())); err == nil && width > 0 {
-			return width
-		}
-	}
-	return 80
 }

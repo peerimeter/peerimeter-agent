@@ -3,7 +3,6 @@ package service
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
+	"github.com/peerimeter/peerimeter-agent/internal/keycheck"
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/paths"
 	"github.com/peerimeter/peerimeter-agent/internal/secret"
@@ -121,18 +121,9 @@ func provision(cfg *Config, secure func(...string) error) (copied bool, resultEr
 	if err != nil {
 		return false, err
 	}
-	key, err := secret.Load(desired.Interface.PrivateKeyFile)
+	key, err := keycheck.LoadAndVerifyInterfaceKey(desired)
 	if err != nil {
 		return false, err
-	}
-	public, err := secret.Public(key)
-	if err != nil {
-		return false, err
-	}
-	for _, peer := range desired.Peers {
-		if peer.PublicKey == base64.StdEncoding.EncodeToString(public[:]) {
-			return false, errors.New("peer public key matches the local interface key")
-		}
 	}
 	directory := snapshotDirectory(*cfg)
 	if _, err := os.Lstat(directory); err == nil {

@@ -258,12 +258,21 @@ func (c *Client) RegisterNode(ctx context.Context, networkID, nodeID string, reg
 
 func validNodeRegistration(registration NodeRegistration) bool {
 	key, err := base64.StdEncoding.Strict().DecodeString(registration.PublicKey)
-	if registration.Version != 1 || err != nil || len(key) != 32 || config.IsAllZeroKey(key) || base64.StdEncoding.EncodeToString(key) != registration.PublicKey || registration.ListenPort < 1 || registration.ListenPort > 65535 || strings.TrimSpace(registration.PrimaryInterface) == "" || len(registration.PrimaryInterface) > 64 || len(registration.LocalAddresses) == 0 || len(registration.LocalAddresses) > 16 {
+	if registration.Version != 1 || err != nil || !validRegistrationPublicKey(registration.PublicKey, key) {
+		return false
+	}
+	if registration.ListenPort < 1 || registration.ListenPort > 65535 {
+		return false
+	}
+	if strings.TrimSpace(registration.PrimaryInterface) == "" || len(registration.PrimaryInterface) > 64 {
+		return false
+	}
+	if len(registration.LocalAddresses) == 0 || len(registration.LocalAddresses) > 16 {
 		return false
 	}
 	for _, raw := range registration.LocalAddresses {
 		prefix, err := netip.ParsePrefix(raw)
-		if err != nil || prefix.Bits() == 0 || !prefix.Addr().IsGlobalUnicast() || prefix.Addr().IsLinkLocalUnicast() || prefix.Addr().IsLoopback() || prefix.Addr().IsMulticast() || prefix.Addr().IsUnspecified() || prefix.Addr().Is4In6() {
+		if err != nil || !validRegistrationPrefix(prefix) {
 			return false
 		}
 	}
@@ -274,6 +283,15 @@ func validNodeRegistration(registration NodeRegistration) bool {
 		}
 	}
 	return true
+}
+
+func validRegistrationPublicKey(raw string, key []byte) bool {
+	return len(key) == 32 && !config.IsAllZeroKey(key) && base64.StdEncoding.EncodeToString(key) == raw
+}
+
+func validRegistrationPrefix(prefix netip.Prefix) bool {
+	addr := prefix.Addr()
+	return prefix.Bits() > 0 && addr.IsGlobalUnicast() && !addr.IsLinkLocalUnicast() && !addr.IsLoopback() && !addr.IsMulticast() && !addr.IsUnspecified() && !addr.Is4In6()
 }
 
 func (c *Client) request(ctx context.Context, method, path string, body []byte) ([]byte, error) {
