@@ -620,6 +620,10 @@ func TestUninstallRefusesActiveSelfUpdate(t *testing.T) {
 }
 func TestFullRemovalPreservesUnrelatedAndSupportsRetry(t *testing.T) {
 	dir, p := prepareUninstall(t)
+	legacyNetworkPath := filepath.Join(p.StateDir, "network.json")
+	if err := os.WriteFile(legacyNetworkPath, []byte("preserve"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	var untouched []string
 	for _, d := range []string{dir, p.ConfigDir, p.StateDir, p.RuntimeDir} {
 		path := filepath.Join(d, "unrelated.txt")
@@ -658,10 +662,14 @@ func TestFullRemovalPreservesUnrelatedAndSupportsRetry(t *testing.T) {
 			t.Fatal("unrelated custom-parent content was removed")
 		}
 	}
-	for _, path := range []string{filepath.Join(p.ConfigDir, "service.key"), filepath.Join(p.ConfigDir, "service.yaml"), filepath.Join(p.StateDir, "network.yaml"), filepath.Join(p.StateDir, "network.json"), filepath.Join(p.StateDir, installstate.MarkerFilename), filepath.Join(dir, installstate.Filename)} {
+	for _, path := range []string{filepath.Join(p.ConfigDir, "service.key"), filepath.Join(p.ConfigDir, "service.yaml"), filepath.Join(p.StateDir, "network.yaml"), filepath.Join(p.StateDir, installstate.MarkerFilename), filepath.Join(dir, installstate.Filename)} {
 		if _, e := os.Lstat(path); !os.IsNotExist(e) {
 			t.Fatalf("owned file remained: %s", path)
 		}
+	}
+	legacyNetworkPath := filepath.Join(p.StateDir, "network.json")
+	if data, err := os.ReadFile(legacyNetworkPath); err != nil || string(data) != "preserve" {
+		t.Fatalf("legacy network state was not preserved: %q, %v", data, err)
 	}
 	out.Reset()
 	if err := Execute(context.Background(), Options{InstallDir: dir, Yes: true}, &out); err != nil {
