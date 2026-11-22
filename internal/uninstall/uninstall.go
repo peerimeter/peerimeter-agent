@@ -85,8 +85,7 @@ func resources(p installstate.Profile) []removalFile {
 	if p.LegacyConfigOwned && p.LegacyConfigDir != p.ConfigDir {
 		files = append(files, markerFiles(p.LegacyConfigDir, installstate.ConfigMarkerFilename, installstate.LegacyConfigMarkerFilename)...)
 	}
-	// TODO(next major): remove network.json from owned cleanup after migration support expires.
-	for _, name := range []string{"network.yaml", "network.json", "ownership", "agent.lock"} {
+	for _, name := range []string{"network.yaml", "ownership", "agent.lock"} {
 		files = append(files, removalFile{Path: filepath.Join(p.StateDir, name)})
 	}
 	if p.RuntimeOwned {

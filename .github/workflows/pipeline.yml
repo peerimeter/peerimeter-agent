@@ -222,19 +222,36 @@ jobs:
           fallbackTag: v0.0.0
           noNewCommitBehavior: current
           noVersionBumpBehavior: current
+      - id: release_version
+        name: Keep breaking changes on the next 0.x minor release
+        env:
+          CURRENT: ${{ steps.semver.outputs.current }}
+          NEXT: ${{ steps.semver.outputs.next }}
+          BUMP: ${{ steps.semver.outputs.bump }}
+        run: |
+          if [[ "$CURRENT" =~ ^v0\.([0-9]+)\.[0-9]+$ && "$BUMP" == major ]]; then
+            echo "next=v0.$((BASH_REMATCH[1] + 1)).0" >> "$GITHUB_OUTPUT"
+            echo "bump=minor" >> "$GITHUB_OUTPUT"
+            echo "breaking=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+            echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
+            echo "breaking=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-go@v7.0.0
-        if: steps.semver.outputs.bump != 'none'
+        if: steps.release_version.outputs.bump != 'none'
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
       - name: Create local release tag for GoReleaser
-        if: steps.semver.outputs.bump != 'none'
-        run: git tag "${{ steps.semver.outputs.next }}" "$GITHUB_SHA"
+        if: steps.release_version.outputs.bump != 'none'
+        run: git tag "${{ steps.release_version.outputs.next }}" "$GITHUB_SHA"
       - name: Build and publish with GoReleaser
-        if: steps.semver.outputs.bump != 'none'
+        if: steps.release_version.outputs.bump != 'none'
         uses: goreleaser/goreleaser-action@v7.3.0
         with:
           version: v2.20.1
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          BREAKING_RELEASE: ${{ steps.release_version.outputs.breaking }}

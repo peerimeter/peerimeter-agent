@@ -99,19 +99,11 @@ func PrepareDirectory(dir string) error { return prepareDirectory(dir) }
 // InterfaceChoice persists the local Linux name independently of display names.
 func (g *Guard) InterfaceChoice(id, display, override string) (string, error) {
 	path := filepath.Join(g.dir, "network.yaml")
-	// TODO(next major): remove the legacy network.json read and conversion.
-	legacyPath := filepath.Join(g.dir, "network.json")
 	var old struct {
 		NetworkID     string `yaml:"network_id"`
 		InterfaceName string `yaml:"interface_name"`
 	}
 	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		data, err = os.ReadFile(legacyPath)
-		if err == nil {
-			path = legacyPath
-		}
-	}
 	if err == nil {
 		dec := yaml.NewDecoder(strings.NewReader(string(data)))
 		dec.KnownFields(true)
@@ -120,15 +112,6 @@ func (g *Guard) InterfaceChoice(id, display, override string) (string, error) {
 		}
 		if override != "" && override != old.InterfaceName {
 			return "", errors.New("persisted interface selection differs from override; explicit safe migration is required")
-		}
-		if path == legacyPath {
-			path = filepath.Join(g.dir, "network.yaml")
-			if err := persistInterfaceChoice(path, old); err != nil {
-				return "", err
-			}
-			if err := os.Remove(legacyPath); err != nil && !os.IsNotExist(err) {
-				return "", fmt.Errorf("cannot remove migrated local interface selection %s: %w", legacyPath, err)
-			}
 		}
 		return old.InterfaceName, nil
 	}
