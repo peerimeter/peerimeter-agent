@@ -57,6 +57,12 @@ release:
     owner: peerimeter
     name: peerimeter-agent
   name_template: '{{ .Tag }}'
+  header: |
+    {{- if eq .Env.BREAKING_RELEASE "true" }}
+    ## Breaking changes included
+
+    This release includes backward-incompatible changes. Review the compatibility changes and required operator actions below before upgrading.
+    {{- end }}
   target_commitish: '{{ .Commit }}'
   prerelease: auto
   make_latest: true

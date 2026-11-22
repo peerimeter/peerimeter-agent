@@ -212,9 +212,12 @@ Recovery is operator-triggered rather than an automatic boot action.
 
 Push release commits to `main` to start **Peerimeter CI and Release**. The
 workflow uses the lockfile-verified `ietf-tools/semver-action` to read
-Conventional Commits since the latest stable tag: `feat` bumps minor,
-patch-level changes bump patch, and breaking changes bump major. If commits do
-not call for a version bump, the release job is skipped. Manually running the
+Conventional Commits since the latest stable tag: `feat` bumps minor and
+patch-level changes bump patch. While the project remains on `0.y.z`, breaking
+changes also use the next minor version (for example `v0.14.0` to `v0.15.0`);
+the GitHub release description must start with **Breaking changes included** and
+summarize the compatibility paths removed and required operator action. If
+commits do not call for a version bump, the release job is skipped. Manually running the
 workflow runs CI and creates package artifacts using the selected input version,
 but does not publish a GitHub release. Native installer checks run on Linux,
 macOS and Windows; GoReleaser cross-builds both `x86_64` and `aarch64` assets
@@ -425,7 +428,8 @@ resolved selection persists and survives display-name changes. Implicit renames
 and unrelated existing interfaces are rejected. Overrides are Linux-only; macOS
 allocates an actual utun and Windows uses a stable network-derived alias.
 The selected network and interface are stored in the private state file
-`network.yaml`; an existing `network.json` is converted on the next run.
+`network.yaml`. Existing `network.json` state is no longer read or migrated;
+remove it only after recording any interface selection you need to preserve.
 
 ## Native service
 
