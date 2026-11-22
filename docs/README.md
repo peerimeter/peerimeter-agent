@@ -428,8 +428,10 @@ resolved selection persists and survives display-name changes. Implicit renames
 and unrelated existing interfaces are rejected. Overrides are Linux-only; macOS
 allocates an actual utun and Windows uses a stable network-derived alias.
 The selected network and interface are stored in the private state file
-`network.yaml`. Existing `network.json` state is no longer read or migrated;
-remove it only after recording any interface selection you need to preserve.
+`network.yaml`. Existing `network.json` state is no longer read or migrated.
+Before upgrading, create `network.yaml` in the same state directory with the
+existing `network_id` and `interface_name` values if you need to retain that
+interface selection.
 
 ## Native service
 
