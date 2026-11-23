@@ -24,7 +24,7 @@ func newSyncCommand(app *application) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Refresh all joined networks or select one with --network-id",
-		Long:  "For each selected joined network, sync updates this node's primary interface addresses in the Service API, then pulls the current peer list and applies it to that network's running configuration. It verifies each selected network matches its running agent. --config, if supplied, must identify the selected active file. Windows UNC config paths are not supported. Without complete saved metadata it reloads local configuration as before. By default all joined networks are selected; --network-id selects one. Older joins may need --api-url and --node-id once. It preserves the last public endpoint when STUN cannot bind the configured WireGuard port.",
+		Long:  "For each selected joined network, sync updates this node's primary interface addresses in the Service API, then pulls the current peer list and applies it to that network's running configuration. It verifies each selected network matches its running agent. --config, if supplied, must identify the selected active file. Windows UNC config paths are not supported. Joined networks without saved YAML metadata must be rejoined or synced with --api-url and --node-id on every invocation. By default all joined networks are selected; --network-id selects one. Pass --network-id to sync a network without metadata, and repeat the command for each affected network. It preserves the last public endpoint when STUN cannot bind the configured WireGuard port.",
 		Args:  noArguments,
 		RunE: app.handleResponse(func(cmd *cobra.Command) error {
 			return runSync(cmd.Context(), app, syncOptions{networkID: networkID, nodeID: nodeID, apiURL: apiURL, configPath: configPath, allowInsecureHTTP: allowInsecureHTTP, dirs: dirs})
@@ -33,7 +33,7 @@ func newSyncCommand(app *application) *cobra.Command {
 	cmd.Flags().StringVar(&networkID, "network-id", "", "Joined network ID (defaults to all joined networks)")
 	cmd.Flags().StringVar(&nodeID, "node-id", "", "Node ID (defaults to the joined node; required if not saved)")
 	cmd.Flags().StringVar(&configPath, "config", "", "WireGuard configuration path (must match the running agent's active config)")
-	cmd.Flags().StringVar(&apiURL, "api-url", "", "Service API URL (required once for older joins without saved service metadata)")
+	cmd.Flags().StringVar(&apiURL, "api-url", "", "Service API URL (required on each sync without saved YAML metadata)")
 	cmd.Flags().BoolVar(&allowInsecureHTTP, "allow-insecure-http", false, "Allow a non-local HTTP API URL (sends the enrollment token without TLS)")
 	directoryFlags(cmd, &dirs)
 	return cmd
