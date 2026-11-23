@@ -345,7 +345,9 @@ automatically. A joined network without saved YAML service metadata must be
 rejoined, or synced with both `--api-url` and `--node-id` on every invocation.
 For that recovery, pass `--network-id` and repeat `sync` separately for each
 affected network. Without the required metadata or overrides, sync returns an
-error instead of reloading local configuration.
+error instead of reloading local configuration. Manual overrides apply only to
+that invocation; scheduled daemon sync does not reuse them. Rejoin the network
+to save YAML metadata and restore scheduled sync.
 
 While the WireGuard tunnel owns its UDP listen port, `sync` cannot bind that
 port for a STUN probe. In that case it preserves the last registered public
