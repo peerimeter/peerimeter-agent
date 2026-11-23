@@ -111,7 +111,7 @@ func fixtureInstall(t *testing.T) string {
 	return dir
 }
 
-func TestLoadAcceptsInventoryWithoutPmaForUpgradeCompatibility(t *testing.T) {
+func TestLoadRejectsInventoryWithoutCommandAlias(t *testing.T) {
 	dir := fixtureInstall(t)
 	inv, err := Load(dir)
 	if err != nil {
@@ -131,69 +131,8 @@ func TestLoadAcceptsInventoryWithoutPmaForUpgradeCompatibility(t *testing.T) {
 	if err := save(inv); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(dir); err != nil {
-		t.Fatalf("legacy inventory without pma was rejected: %v", err)
-	}
-	for index, file := range inv.Files {
-		if file.Name == ProgramNames()[0] {
-			inv.Files = append(inv.Files[:index], inv.Files[index+1:]...)
-			break
-		}
-	}
-	if err := save(inv); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := Load(dir); err == nil {
-		t.Fatal("inventory missing the primary agent executable was accepted")
-	}
-}
-
-func TestRegisterMigratesLegacyWindowsPmaExeInventory(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows legacy alias migration")
-	}
-	dir := fixtureInstall(t)
-	inv, err := Load(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldAlias := filepath.Join(dir, "pma.exe")
-	newAlias := filepath.Join(dir, "pma.cmd")
-	if err := os.Rename(newAlias, oldAlias); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(newAlias, []byte("@echo off\r\n\"%~dp0peerimeter-agent.exe\" %*\r\nexit /b %ERRORLEVEL%\r\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	for index := range inv.Files {
-		if inv.Files[index].Name == "pma.cmd" {
-			inv.Files[index].Name = "pma.exe"
-			inv.Files[index].SHA256, err = Hash(oldAlias)
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	if err := save(inv); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Load(dir); err != nil {
-		t.Fatalf("legacy Windows alias inventory was rejected: %v", err)
-	}
-	if err := RegisterWithDirectories(dir, dir, dir, dir, false); err != nil {
-		t.Fatalf("registration did not migrate legacy Windows alias inventory: %v", err)
-	}
-	updated, err := Load(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if updated.ID != inv.ID {
-		t.Fatalf("registration changed installation identity: got %s, want %s", updated.ID, inv.ID)
-	}
-	for _, file := range updated.Files {
-		if file.Name == "pma.exe" {
-			t.Fatal("migrated inventory still owns pma.exe")
-		}
+		t.Fatal("inventory without its current command alias was accepted")
 	}
 }
 

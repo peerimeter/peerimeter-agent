@@ -514,10 +514,6 @@ func validateInventoryPrograms(inv Inventory) error {
 	for _, name := range ProgramNames() {
 		names[name] = true
 	}
-	if runtime.GOOS == "windows" {
-		// TODO(next major): remove pma.exe inventory compatibility after migration.
-		names["pma.exe"] = true
-	}
 	seen := map[string]bool{}
 	for _, file := range inv.Files {
 		digest, err := hex.DecodeString(file.SHA256)
@@ -534,16 +530,11 @@ func validateInventoryPrograms(inv Inventory) error {
 	programs := ProgramNames()
 	requiredPresent := true
 	for _, name := range programs {
-		if name != commandAliasName() && !seen[name] {
+		if !seen[name] {
 			requiredPresent = false
 		}
 	}
-	currentAliasPresent := seen[commandAliasName()]
-	legacyAliasPresent := runtime.GOOS == "windows" && seen["pma.exe"]
-	currentAliasSet := currentAliasPresent && !legacyAliasPresent && len(seen) == len(programs)
-	legacyAliasSet := legacyAliasPresent && !currentAliasPresent && len(seen) == len(programs)
-	aliasFreeSet := !legacyAliasPresent && !currentAliasPresent && len(seen) == len(programs)-1
-	if !requiredPresent || !(currentAliasSet || legacyAliasSet || aliasFreeSet) {
+	if !requiredPresent || len(seen) != len(programs) {
 		return errors.New("installation inventory is missing a program resource")
 	}
 	return nil

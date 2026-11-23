@@ -18,22 +18,12 @@ if ($InstallDir -notmatch '^[A-Za-z]:[\\/]') { throw 'InstallDir must be an abso
 if ($InstallDir.Contains(';')) { throw 'InstallDir must not contain a semicolon' }
 $InstallDir = [IO.Path]::GetFullPath($InstallDir)
 $aliasPath = Join-Path $InstallDir 'pma.cmd'
-$legacyAliasPath = Join-Path $InstallDir 'pma.exe'
 $agentPath = Join-Path $InstallDir 'peerimeter-agent.exe'
 $expectedAlias = "@echo off`r`nsetlocal DisableDelayedExpansion`r`n`"%~dp0peerimeter-agent.exe`" %*`r`nexit /b %ERRORLEVEL%`r`n"
 if (Test-Path -LiteralPath $aliasPath) {
     $aliasItem = Get-Item -LiteralPath $aliasPath -Force
     if ($aliasItem.PSIsContainer -or ($aliasItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Test-Path -LiteralPath $agentPath -PathType Leaf) -or [IO.File]::ReadAllText($aliasPath) -ne $expectedAlias) {
         throw 'pma.cmd destination already exists and is not a managed Peerimeter alias'
-    }
-}
-if (Test-Path -LiteralPath $legacyAliasPath) {
-    $legacyAliasItem = Get-Item -LiteralPath $legacyAliasPath -Force
-    if ($legacyAliasItem.PSIsContainer -or ($legacyAliasItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Test-Path -LiteralPath $agentPath -PathType Leaf)) {
-        throw 'pma.exe destination already exists and is not a managed legacy Peerimeter alias'
-    }
-    if ((Get-FileHash -LiteralPath $legacyAliasPath -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $agentPath -Algorithm SHA256).Hash) {
-        throw 'pma.exe destination already exists and does not match the installed agent'
     }
 }
 if ([string]::IsNullOrWhiteSpace($DocDir) -or [string]::IsNullOrWhiteSpace($DataDir) -or [string]::IsNullOrWhiteSpace($LockDir)) {
@@ -191,11 +181,6 @@ try {
             $staged += $next
             Copy-Item -LiteralPath (Join-Path $unpacked $member.Source) -Destination $next
             Set-InstallerACL $next
-        }
-        if (Test-Path -LiteralPath $legacyAliasPath) {
-            $backup = $legacyAliasPath + '.old-' + [guid]::NewGuid()
-            Move-Item -LiteralPath $legacyAliasPath -Destination $backup
-            $moved += ,@($backup,$legacyAliasPath)
         }
         for ($i=0; $i -lt $packageFiles.Count; $i++) {
             $dest = Join-Path $packageFiles[$i].Dir $packageFiles[$i].Name
