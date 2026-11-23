@@ -61,7 +61,7 @@ release:
     {{- if eq .Env.BREAKING_RELEASE "true" }}
     ## Breaking changes included
 
-    This release includes backward-incompatible changes. Before upgrading, create `network.yaml` in the same state directory with the `network_id` and `interface_name` values from the existing `network.json`. Review the linked pull request for details.
+    This release includes backward-incompatible changes. If you need to retain a selection from an existing `network.json`, create `network.yaml` in the same state directory with its `network_id` and `interface_name` values before upgrading. Review the linked pull request for details.
     {{- end }}
   target_commitish: '{{ .Commit }}'
   prerelease: auto
