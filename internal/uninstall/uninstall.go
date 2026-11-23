@@ -166,10 +166,6 @@ func collectPlannedPaths(plan removalPlan, purge bool) ([]string, map[string][]s
 
 func reportAlreadyAbsentOrUntracked(dir string, out io.Writer) error {
 	programNames := installstate.ProgramNames()
-	if runtime.GOOS == "windows" {
-		// TODO(next major): remove legacy pma.exe detection with inventory compatibility.
-		programNames = append(programNames, "pma.exe")
-	}
 	for _, name := range append(append(programNames, installstate.Filename, installstate.LegacyYAMLFilename, installstate.LegacyJSONFilename), installstate.ReferenceFilename, installstate.LegacyReferenceFilename) {
 		if _, err := os.Lstat(filepath.Join(dir, name)); !os.IsNotExist(err) {
 			return errors.New("installation inventory is absent; existing files are untracked and were preserved")
@@ -1029,7 +1025,7 @@ func executeUnixRemoval(plan removalPlan, inv installstate.Inventory, purge bool
 
 func isCommandAlias(path string) bool {
 	name := filepath.Base(path)
-	return name == "pma" || name == "pma.exe" || name == "pma.cmd"
+	return name == "pma" || name == "pma.cmd"
 }
 
 func isInstallationReference(path, installDir string) bool {

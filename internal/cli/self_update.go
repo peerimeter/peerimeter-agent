@@ -376,14 +376,8 @@ func checkReleaseAndConfirmUpdate(ctx context.Context, out io.Writer, jsonOutput
 func prepareReleaseFiles(inv installstate.Inventory, files map[string][]byte, goos string) error {
 	aliasName := commandAliasNameFor(goos)
 	aliasOwned := false
-	legacyAliasName := ""
-	if goos == "windows" {
-		// TODO(next major): remove pma.exe release compatibility with inventory support.
-		legacyAliasName = "pma.exe"
-	}
 	for _, owned := range inv.Files {
-		if owned.Name == aliasName || owned.Name == legacyAliasName {
-			aliasName = owned.Name
+		if owned.Name == aliasName {
 			aliasOwned = true
 		}
 		if _, ok := files[owned.Name]; !ok {
@@ -392,16 +386,9 @@ func prepareReleaseFiles(inv installstate.Inventory, files map[string][]byte, go
 	}
 	if aliasOwned {
 		aliasContents := files[aliasName]
-		delete(files, commandAliasNameFor(goos))
-		if legacyAliasName != "" {
-			delete(files, legacyAliasName)
-		}
 		files[aliasName] = aliasContents
 	} else {
 		delete(files, aliasName)
-		if legacyAliasName != "" {
-			delete(files, legacyAliasName)
-		}
 	}
 	if goos == "windows" {
 		// WireGuardNT is an independently pinned, Authenticode-verified runtime

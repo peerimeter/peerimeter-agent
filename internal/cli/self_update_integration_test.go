@@ -21,7 +21,6 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/selfupdate"
 	"github.com/peerimeter/peerimeter-agent/internal/service"
-	"gopkg.in/yaml.v3"
 )
 
 type selfUpdateFixture struct {
@@ -194,50 +193,6 @@ func TestSelfUpdateIntegrationUpdatesOwnedFilesAndPreservesProfileData(t *testin
 	}
 	if _, err := os.Stat(filepath.Join(f.lock, selfupdate.JournalFilename)); !os.IsNotExist(err) {
 		t.Fatalf("committed update journal remains: %v", err)
-	}
-}
-
-func TestSelfUpdateKeepsLegacyInstallationWithoutPma(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("legacy Unix inventory alias migration")
-	}
-	f := newSelfUpdateFixture(t, false)
-	inv, err := installstate.Load(f.install)
-	if err != nil {
-		t.Fatal(err)
-	}
-	aliasPath := filepath.Join(f.install, "pma")
-	if err := os.Remove(aliasPath); err != nil {
-		t.Fatal(err)
-	}
-	legacyFiles := inv.Files[:0]
-	for _, file := range inv.Files {
-		if file.Name != "pma" {
-			legacyFiles = append(legacyFiles, file)
-		}
-	}
-	inv.Files = legacyFiles
-	data, err := yaml.Marshal(inv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(f.data, installstate.Filename), data, 0600); err != nil {
-		t.Fatal(err)
-	}
-	deps := f.deps("v1.2.0", nil, nil)
-	var output bytes.Buffer
-	if err := selfUpdateAt(context.Background(), &output, true, f.install, "v1.0.0", "linux", runtime.GOARCH, deps); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Lstat(aliasPath); !os.IsNotExist(err) {
-		t.Fatalf("self-update created an unregistered pma alias: %v", err)
-	}
-	updated, err := installstate.Load(f.install)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(updated.Files) != len(inv.Files) {
-		t.Fatalf("self-update changed legacy inventory size: got %d, want %d", len(updated.Files), len(inv.Files))
 	}
 }
 

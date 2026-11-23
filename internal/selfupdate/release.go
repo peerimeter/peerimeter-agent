@@ -89,7 +89,6 @@ func fetchAt(ctx context.Context, client *http.Client, goos, goarch, latestEndpo
 	}
 	if goos == "windows" {
 		files["pma.cmd"] = []byte(windowsCommandAlias)
-		files["pma.exe"] = append([]byte(nil), files["peerimeter-agent.exe"]...)
 	} else {
 		files["pma"] = append([]byte(nil), files["peerimeter-agent"]...)
 	}
