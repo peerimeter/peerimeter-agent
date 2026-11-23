@@ -12,7 +12,6 @@ $latest = Join-Path $base 'latest custom path'
 $pinned = Join-Path $base 'pinned custom path'
 $badTarget = Join-Path $base 'must not install'
 $collisionTarget = Join-Path $base 'existing unrelated pma'
-$legacyCollisionTarget = Join-Path $base 'existing unrelated legacy pma'
 $defaultTarget = Join-Path $env:ProgramFiles 'Peerimeter'
 $defaultInstalled = $false
 $programDataTarget = Join-Path $env:ProgramData ('Peerimeter Installer CI ' + [guid]::NewGuid().ToString('N') + ' custom path')
