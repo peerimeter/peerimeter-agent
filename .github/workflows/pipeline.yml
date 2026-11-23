@@ -236,7 +236,11 @@ jobs:
           else
             echo "next=$NEXT" >> "$GITHUB_OUTPUT"
             echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
-            echo "breaking=false" >> "$GITHUB_OUTPUT"
+            if [[ "$BUMP" == major ]]; then
+              echo "breaking=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "breaking=false" >> "$GITHUB_OUTPUT"
+            fi
           fi
       - uses: actions/setup-go@v7.0.0
         if: steps.release_version.outputs.bump != 'none'
