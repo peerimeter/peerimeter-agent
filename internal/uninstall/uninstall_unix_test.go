@@ -667,7 +667,6 @@ func TestFullRemovalPreservesUnrelatedAndSupportsRetry(t *testing.T) {
 			t.Fatalf("owned file remained: %s", path)
 		}
 	}
-	legacyNetworkPath := filepath.Join(p.StateDir, "network.json")
 	if data, err := os.ReadFile(legacyNetworkPath); err != nil || string(data) != "preserve" {
 		t.Fatalf("legacy network state was not preserved: %q, %v", data, err)
 	}
