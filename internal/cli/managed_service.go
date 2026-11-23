@@ -19,9 +19,9 @@ import (
 )
 
 type serviceConfigOptions struct {
-	networkID, nodeID, apiURL string
-	allowInsecureHTTP         bool
-	debug                     bool
+	networkID, apiURL string
+	allowInsecureHTTP bool
+	debug             bool
 }
 
 func managedNetworkIDs(stateDir string) ([]string, error) {
@@ -49,87 +49,50 @@ func managedNetworkIDs(stateDir string) ([]string, error) {
 func readManagedNetworkMetadata(stateDir, networkID string) (managedNetworkMetadata, error) {
 	var metadata managedNetworkMetadata
 	metadataPath := filepath.Join(stateDir, "managed", networkID+".yaml")
-	legacyPath := filepath.Join(stateDir, "managed", networkID+".json")
-	legacyFormat := false
-	if _, err := os.Lstat(metadataPath); errors.Is(err, os.ErrNotExist) {
-		metadataPath = legacyPath
-		legacyFormat = true
-	}
 	data, err := secret.ReadProtectedText(metadataPath, 16<<10)
 	if err != nil {
 		return metadata, errors.New("managed service metadata is unavailable; rejoin this network or supply --api-url")
 	}
-	var decodeErr error
-	if legacyFormat {
-		decodeErr = json.Unmarshal([]byte(data), &metadata)
-	} else {
-		decodeErr = yaml.Unmarshal([]byte(data), &metadata)
-	}
-	if decodeErr != nil || metadata.Version != 1 || metadata.NetworkID != networkID {
+	if yaml.Unmarshal([]byte(data), &metadata) != nil || metadata.Version != 1 || metadata.NetworkID != networkID {
 		return managedNetworkMetadata{}, errors.New("managed service metadata is invalid; rejoin this network")
-	}
-	if legacyFormat {
-		if err := saveManagedNetworkMetadata(stateDir, metadata); err != nil {
-			return managedNetworkMetadata{}, err
-		}
 	}
 	return metadata, nil
 }
 
-func managedServiceClient(options serviceConfigOptions, layout paths.Layout) (*serviceapi.Client, func() error, error) {
+func managedServiceClient(options serviceConfigOptions, layout paths.Layout) (*serviceapi.Client, error) {
 	if !config.ValidIdentifier(options.networkID) {
-		return nil, nil, errors.New("--network-id is invalid")
+		return nil, errors.New("--network-id is invalid")
 	}
 	metadata, metadataErr := readManagedNetworkMetadata(layout.StateDir, options.networkID)
 	apiURL := options.apiURL
 	allowInsecureHTTP := options.allowInsecureHTTP
 	if apiURL == "" {
 		if metadataErr != nil {
-			return nil, nil, metadataErr
+			return nil, metadataErr
 		}
 		apiURL = metadata.APIURL
 		allowInsecureHTTP = allowInsecureHTTP || metadata.AllowInsecureHTTP
 	}
 	token, err := secret.ReadProtectedText(filepath.Join(layout.StateDir, "managed", options.networkID+".token"), 16<<10)
 	if err != nil {
-		return nil, nil, errors.New("managed network credential is unavailable; run join before syncing")
+		return nil, errors.New("managed network credential is unavailable; run join before syncing")
 	}
 	bundle := serviceapi.JoinBundle{Version: 1, APIURL: apiURL, NetworkID: options.networkID, EnrollmentToken: strings.TrimSpace(token)}
 	encoded, err := json.Marshal(bundle)
 	if err != nil {
-		return nil, nil, errors.New("could not validate managed service credential")
+		return nil, errors.New("could not validate managed service credential")
 	}
 	validated, err := serviceapi.DecodeJoinTokenWithInsecureHTTP(base64.RawURLEncoding.EncodeToString(encoded), allowInsecureHTTP)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	// TODO(peerimeter): Remove this legacy migration after all supported join versions save service metadata.
-	needsMigration := metadataErr != nil && options.apiURL != "" || metadataErr == nil && metadata.NodeID == "" && options.nodeID != ""
-	if needsMigration {
-		metadata = managedNetworkMetadata{Version: 1, APIURL: validated.APIURL, NetworkID: options.networkID, NodeID: options.nodeID, AllowInsecureHTTP: allowInsecureHTTP}
-	}
-	return serviceapi.NewWithDebug(validated, options.debug), func() error {
-		if !needsMigration {
-			return nil
-		}
-		return saveManagedNetworkMetadata(layout.StateDir, metadata)
-	}, nil
+	return serviceapi.NewWithDebug(validated, options.debug), nil
 }
 
 func saveManagedNetworkMetadata(stateDir string, metadata managedNetworkMetadata) error {
 	dir := filepath.Join(stateDir, "managed")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return errors.New("cannot create protected managed state directory")
-	}
-	legacyPath := filepath.Join(dir, metadata.NetworkID+".json")
-	legacyExists := false
-	if _, err := os.Lstat(legacyPath); err == nil {
-		if _, err := secret.ReadProtectedText(legacyPath, 16<<10); err != nil {
-			return errors.New("legacy managed service metadata has unsafe permissions")
-		}
-		legacyExists = true
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return errors.New("cannot inspect legacy managed service metadata")
 	}
 	data, err := yaml.Marshal(metadata)
 	if err != nil {
@@ -138,11 +101,6 @@ func saveManagedNetworkMetadata(stateDir string, metadata managedNetworkMetadata
 	path := filepath.Join(dir, metadata.NetworkID+".yaml")
 	if err := writeConfigFile(path, data); err != nil {
 		return errors.New("cannot securely save managed network metadata")
-	}
-	if legacyExists {
-		if err := os.Remove(legacyPath); err != nil {
-			return errors.New("cannot remove migrated managed service metadata")
-		}
 	}
 	return nil
 }

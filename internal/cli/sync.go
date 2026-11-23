@@ -98,18 +98,17 @@ func syncManagedNetwork(ctx context.Context, app *application, opts syncOptions,
 	}
 	runtimeDir := runtimeLayout.RuntimeDir
 	metadata, metadataErr := readManagedNetworkMetadata(layout.StateDir, networkID)
-	// TODO(peerimeter): Remove the local-only fallback when legacy joins no longer need compatibility.
-	if shouldFallbackToLocalSync(metadata, metadataErr, opts.nodeID, opts.apiURL) {
-		return local.Request(ctx, runtimeDir, "reload", app.out)
+	if metadataErr != nil && opts.apiURL == "" {
+		return metadataErr
 	}
 	nodeID := opts.nodeID
-	if nodeID == "" {
+	if nodeID == "" && metadataErr == nil {
 		nodeID = metadata.NodeID
 	}
 	if nodeID == "" {
 		return errors.New("--node-id is required because this network has no saved node ID")
 	}
-	serviceOptions := serviceConfigOptions{networkID: networkID, nodeID: nodeID, apiURL: opts.apiURL, allowInsecureHTTP: opts.allowInsecureHTTP, debug: app.debug}
+	serviceOptions := serviceConfigOptions{networkID: networkID, apiURL: opts.apiURL, allowInsecureHTTP: opts.allowInsecureHTTP, debug: app.debug}
 	identity, err := local.GetIdentity(ctx, runtimeDir)
 	if err != nil {
 		return err
@@ -132,7 +131,7 @@ func syncManagedNetwork(ctx context.Context, app *application, opts syncOptions,
 	if err := json.Unmarshal(configData, &current); err != nil {
 		return errors.New("running agent returned an invalid configuration")
 	}
-	client, saveMigration, err := managedServiceClient(serviceOptions, layout)
+	client, err := managedServiceClient(serviceOptions, layout)
 	if err != nil {
 		return err
 	}
@@ -148,9 +147,6 @@ func syncManagedNetwork(ctx context.Context, app *application, opts syncOptions,
 	}
 	updated, err := refreshManagedPeers(ctx, client, networkID, nodeID, underlay.Addresses, current)
 	if err != nil {
-		return err
-	}
-	if err := saveMigration(); err != nil {
 		return err
 	}
 	if err := config.Validate(updated, runtime.GOOS); err != nil {
@@ -176,10 +172,6 @@ func selectManagedNetworkIDs(networks []string, requestedID string) ([]string, e
 		}
 	}
 	return nil, errors.New("no saved credential found for --network-id")
-}
-
-func shouldFallbackToLocalSync(metadata managedNetworkMetadata, metadataErr error, nodeID, apiURL string) bool {
-	return (metadataErr != nil || metadata.NodeID == "") && nodeID == "" && apiURL == ""
 }
 
 func syncConfigPath(override, runtimePath string) (string, error) {
