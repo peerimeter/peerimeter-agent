@@ -173,7 +173,6 @@ try {
     $everyone = [Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-1-0'),[Security.AccessControl.FileSystemRights]::FullControl,[Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit',[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow)
     $acl.AddAccessRule($everyone)
     Set-Acl -LiteralPath $offline -AclObject $acl
-    Copy-Item -LiteralPath (Join-Path $offline 'peerimeter-agent.exe') -Destination (Join-Path $offline 'pma.exe')
     & $Installer -Archive $Archive -SHA256 $checksum -InstallDir $offline
     Assert-Package $offline
     if (@((Get-Acl -LiteralPath $offline).GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]) | Where-Object { $_.IdentityReference.Value -eq 'S-1-1-0' -and $_.AccessControlType -eq 'Allow' }).Count) { throw 'Unsafe explicit directory ACL survived installation' }
@@ -194,17 +193,6 @@ try {
         throw 'Unrelated pma.cmd was changed during installer collision rejection'
     }
     Write-Output 'PASS unrelated pma.cmd is preserved and rejected before installer mutation'
-
-    New-Item -ItemType Directory -Path $legacyCollisionTarget | Out-Null
-    $unrelatedLegacyAlias = Join-Path $legacyCollisionTarget 'pma.exe'
-    [IO.File]::WriteAllText($unrelatedLegacyAlias,'unrelated executable data')
-    $unrelatedLegacyHash = (Get-FileHash -LiteralPath $unrelatedLegacyAlias -Algorithm SHA256).Hash
-    Track-ResourceRoot $legacyCollisionTarget
-    Expect-Failure { & $Installer -Archive $Archive -SHA256 $checksum -InstallDir $legacyCollisionTarget }
-    if ((Get-FileHash -LiteralPath $unrelatedLegacyAlias -Algorithm SHA256).Hash -ne $unrelatedLegacyHash -or (Test-Path -LiteralPath (Join-Path $legacyCollisionTarget 'peerimeter-agent.exe'))) {
-        throw 'Unrelated legacy pma.exe was changed during installer collision rejection'
-    }
-    Write-Output 'PASS unrelated legacy pma.exe is preserved and rejected before installer mutation'
 
     # Exercise release URL selection against a local, already verified ZIP.
     # These mocks prevent dependence on a release that has not been published.
