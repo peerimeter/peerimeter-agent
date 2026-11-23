@@ -142,8 +142,9 @@ The installer adds the installation directory to the machine PATH. Open a new
 PowerShell window to run `peerimeter-agent` or its short alias `pma` by name.
 Windows installs `pma.cmd` as a small wrapper beside the agent executable.
 Linux and macOS create `pma` as a symlink beside the agent binary. Full uninstall
-removes the current alias and, on Windows, the PATH entry. If upgrading from
-before alias support, remove any leftover alias manually.
+removes the current alias and, on Windows, the PATH entry. If an old `pma.exe`
+remains in the installation directory, remove it manually; Windows can run
+`pma.exe` before `pma.cmd`.
 
 ### Package verification
 
@@ -340,9 +341,11 @@ updates every joined network by default; pass `--network-id` to select one.
 `--config`, when used, must identify the selected active file; sync refuses to
 update a different file. On Windows, sync also refuses UNC paths
 for the active configuration. With one joined network, it is selected
-automatically. Older joins may need `--api-url` and `--node-id` once. Without
-saved service metadata, `sync` keeps its local behavior and reloads the current
-configuration.
+automatically. A joined network without saved YAML service metadata must be
+rejoined, or synced with both `--api-url` and `--node-id` on every invocation.
+For that recovery, pass `--network-id` and repeat `sync` separately for each
+affected network. Without the required metadata or overrides, sync returns an
+error instead of reloading local configuration.
 
 While the WireGuard tunnel owns its UDP listen port, `sync` cannot bind that
 port for a STUN probe. In that case it preserves the last registered public
