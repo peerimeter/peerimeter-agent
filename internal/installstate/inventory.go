@@ -688,7 +688,7 @@ func RegisterWithDirectories(dir, docDir, dataDir, lockDir string, allowInsecure
 	} else if !os.IsNotExist(readErr) {
 		return fmt.Errorf("inspect installation data directory inventory: %w", readErr)
 	}
-	inv, err := load(dir, allowInsecure)
+	inv, err := loadForRegistration(dir, dataDir, allowInsecure)
 	if os.IsNotExist(err) {
 		inv = Inventory{Version: 1, InstallDir: dir, DataDir: dataDir, DocDir: docDir, LockDir: lockDir, Profiles: []Profile{}, AllowInsecureInstallDir: allowInsecure}
 		inv.ID, err = NewID()
