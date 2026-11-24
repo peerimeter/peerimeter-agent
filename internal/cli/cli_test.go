@@ -316,6 +316,18 @@ func TestCobraHelpAndCompletion(t *testing.T) {
 	if code == 0 || out != "" || err == "" {
 		t.Fatal("missing flag value accepted")
 	}
+	code, out, err = invoke(t, "service")
+	if code == 0 || !strings.Contains(out, "status      Show whether") || !strings.Contains(err, "requires at least 1 arg(s)") {
+		t.Fatalf("missing service action should show help and preserve the error: %d %q %q", code, out, err)
+	}
+	code, out, err = invoke(t, "generate-example")
+	if code == 0 || !strings.Contains(out, "--directory") || !strings.Contains(err, "required flag(s)") {
+		t.Fatalf("missing required flag should show help and preserve the error: %d %q %q", code, out, err)
+	}
+	code, out, err = invoke(t, "unknown-command")
+	if code == 0 || out != "" || !strings.Contains(err, "invalid command or arguments") {
+		t.Fatalf("unknown command should preserve its error without help: %d %q %q", code, out, err)
+	}
 	code, _, err = invoke(t, "version", "SECRET-POSITIONAL")
 	if code == 0 || strings.Contains(err, "SECRET") {
 		t.Fatal("positional error leaked input")
