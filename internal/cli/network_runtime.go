@@ -14,6 +14,7 @@ import (
 	"github.com/peerimeter/peerimeter-agent/internal/local"
 	"github.com/peerimeter/peerimeter-agent/internal/paths"
 	"github.com/peerimeter/peerimeter-agent/internal/platform"
+	"github.com/peerimeter/peerimeter-agent/internal/service"
 )
 
 type networkSnapshots struct {
@@ -127,6 +128,20 @@ func writeNetworkSnapshots(out io.Writer, snapshots []platform.Snapshot) error {
 		return json.NewEncoder(out).Encode(snapshots[0])
 	}
 	return json.NewEncoder(out).Encode(networkSnapshots{Networks: snapshots})
+}
+
+func writeStatusSnapshots(out io.Writer, snapshots []platform.Snapshot, serviceStatus service.Status) error {
+	encoder := json.NewEncoder(out)
+	if len(snapshots) == 1 {
+		return encoder.Encode(struct {
+			platform.Snapshot
+			service.Status
+		}{Snapshot: snapshots[0], Status: serviceStatus})
+	}
+	return encoder.Encode(struct {
+		Networks []platform.Snapshot `json:"networks"`
+		service.Status
+	}{Networks: snapshots, Status: serviceStatus})
 }
 
 func requestAllNetworks(ctx context.Context, layout paths.Layout, requestedID, operation string, out io.Writer) error {

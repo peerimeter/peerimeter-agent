@@ -7,10 +7,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"golang.org/x/term"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"strings"
+
+	"golang.org/x/term"
 
 	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/diagnostic"
@@ -86,7 +89,7 @@ func executeWithEnvironment(ctx context.Context, args []string, out, errOut io.W
 		return 0
 	}
 	if !app.ran {
-		err = errors.New("invalid command or arguments; use --help")
+		showCommandHelpForMissingInput(root, args, err)
 	}
 	format := settings.LogFormat
 	if app.jsonOutput {
@@ -112,6 +115,35 @@ func executeWithEnvironment(ctx context.Context, args []string, out, errOut io.W
 	}
 	return 1
 }
+
+func showCommandHelpForMissingInput(root *cobra.Command, args []string, executeErr error) {
+	if !isMissingRequiredInput(executeErr) {
+		return
+	}
+	command, remaining, err := root.Find(args)
+	if err == nil && len(remaining) == 0 {
+		_ = command.Help()
+	}
+}
+
+func isMissingRequiredInput(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	if strings.HasPrefix(message, "required flag(s)") && strings.HasSuffix(message, "not set") {
+		return true
+	}
+	if strings.Contains(message, "requires at least") && strings.Contains(message, "only received") {
+		return true
+	}
+	var required, received int
+	if _, scanErr := fmt.Sscanf(message, "accepts %d arg(s), received %d", &required, &received); scanErr == nil {
+		return received < required
+	}
+	return false
+}
+
 func newRootCommand(app *application) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "peerimeter-agent",

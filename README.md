@@ -18,11 +18,12 @@ the full command list.
 | `daemon` | Run configured networks and periodically sync joined networks |
 | `join` | Enroll this agent in a service-managed network (`--token` or `--token-file`) |
 | `sync` | Refresh all joined networks or select one with `--network-id` |
-| `status` | Show all local network tunnels; use `--network` to select one |
+| `status` | Show all local network tunnels and native service installation/running state; use `--network` to select one |
 | `wg [show]` | Show all local WireGuard interfaces and peers |
 | `stop` | Stop all configured tunnels or select one with `--network` |
 | `service install` | Install and register the native OS service |
 | `service start` / `service stop` | Start or stop the installed service |
+| `service status` | Show whether the native service is installed and running |
 | `service uninstall` | Remove service registration, keeping config and keys |
 | `uninstall` | Remove the tracked agent installation and managed data |
 | `stun [local-udp-port]` | Probe the public UDP mapping with STUN |

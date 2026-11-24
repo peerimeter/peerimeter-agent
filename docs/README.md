@@ -357,16 +357,18 @@ does not guarantee reachability.
 
 | Command | Output or action |
 | --- | --- |
-| `status` | Readable state for all configured networks; `--network` selects one and `--watch` requires a selection when ambiguous |
+| `status` | Readable state for all configured networks and native service installation/running state; `--network` selects one and `--watch` requires a selection when ambiguous |
 | `wg` / `wg show` | WireGuard interface and peer listing for all configured networks; `--network` selects one |
 | `stop` | Stop all configured tunnels; `--network` selects one |
 | `sync` | Refresh all joined network registrations and peer lists; `--network-id` selects one |
 | `daemon` | Run configured tunnels and sync each joined network periodically (default: every five minutes) |
 
 `status` reads actual local adapter state through a protected Unix socket or
-Windows named pipe. `running` indicates interface state, not proven peer
-connectivity; inspect real handshake timestamps and byte counters. A stopped or
-unreachable agent returns an error.
+Windows named pipe and reports whether the native service is installed and
+running. `service status` reports the same service fields independently of
+tunnel status. `running` indicates interface state, not proven peer connectivity;
+inspect real handshake timestamps and byte counters. A stopped or unreachable
+agent returns an error.
 
 `status --watch` refreshes the live status view every two seconds until you press
 `q` or Ctrl-C. Set `--interval` to change the refresh period. With `--json`, watch
@@ -446,6 +448,7 @@ installation requires administrator/root privileges and absolute paths:
 sudo peerimeter-agent service install --config /absolute/path/to/peer.yaml --operator alice
 sudo peerimeter-agent service start
 sudo peerimeter-agent status
+sudo peerimeter-agent service status
 sudo peerimeter-agent service stop
 sudo peerimeter-agent service uninstall
 ```
