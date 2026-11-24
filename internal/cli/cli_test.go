@@ -320,9 +320,13 @@ func TestCobraHelpAndCompletion(t *testing.T) {
 	if code == 0 || !strings.Contains(out, "status      Show whether") || !strings.Contains(err, "requires at least 1 arg(s)") {
 		t.Fatalf("missing service action should show help and preserve the error: %d %q %q", code, out, err)
 	}
-	code, out, err = invoke(t, "generate-example")
+	code, out, err = invoke(t, "generate-example", "--peers", "3")
 	if code == 0 || !strings.Contains(out, "--directory") || !strings.Contains(err, "required flag(s)") {
 		t.Fatalf("missing required flag should show help and preserve the error: %d %q %q", code, out, err)
+	}
+	code, out, err = invoke(t, "service", "unknown-action")
+	if code == 0 || out != "" || !strings.Contains(err, "unknown subcommand") {
+		t.Fatalf("unknown service action should fail without help: %d %q %q", code, out, err)
 	}
 	code, out, err = invoke(t, "unknown-command")
 	if code == 0 || out != "" || !strings.Contains(err, "invalid command or arguments") {

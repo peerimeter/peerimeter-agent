@@ -124,8 +124,8 @@ func showCommandHelpForMissingInput(root *cobra.Command, args []string, executeE
 	if !isMissingRequiredInput(executeErr) {
 		return
 	}
-	command, remaining, err := root.Find(args)
-	if err == nil && len(remaining) == 0 {
+	command, _, err := root.Find(args)
+	if err == nil {
 		_ = command.Help()
 	}
 }
@@ -223,12 +223,16 @@ func requireSubcommandActions(root *cobra.Command, app *application) {
 func requireSubcommandAction(command *cobra.Command, app *application) {
 	if command.HasAvailableSubCommands() && !command.Runnable() {
 		command.Args = cobra.MinimumNArgs(1)
-		command.RunE = app.handle(func(cmd *cobra.Command) error {
+		command.RunE = func(cmd *cobra.Command, args []string) error {
+			app.ran = true
+			if len(args) > 0 {
+				return errors.New("unknown subcommand")
+			}
 			if err := cmd.Help(); err != nil {
 				return err
 			}
 			return fmt.Errorf("%s requires a subcommand", cmd.CommandPath())
-		})
+		}
 	}
 	for _, child := range command.Commands() {
 		requireSubcommandAction(child, app)

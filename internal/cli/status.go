@@ -24,24 +24,22 @@ func newStatusCommand(app *application) *cobra.Command {
 	}
 	normalRun := app.handleResponse(func(cmd *cobra.Command) error {
 		serviceStatus, err := service.Inspect()
-		if err != nil {
-			return err
-		}
+		serviceStatusErr := err
 		layout, err := paths.Resolve(options)
 		if err != nil {
 			return err
 		}
 		snapshots, readErr := readNetworkSnapshots(cmd.Context(), layout, networkID)
 		if len(snapshots) == 0 {
-			if err := writeStatusSnapshots(app.out, snapshots, serviceStatus); err != nil {
+			if err := writeStatusSnapshots(app.out, snapshots, serviceStatus, serviceStatusErr); err != nil {
 				return err
 			}
-			return readErr
+			return errors.Join(readErr, serviceStatusErr)
 		}
-		if err := writeStatusSnapshots(app.out, snapshots, serviceStatus); err != nil {
+		if err := writeStatusSnapshots(app.out, snapshots, serviceStatus, serviceStatusErr); err != nil {
 			return err
 		}
-		return readErr
+		return errors.Join(readErr, serviceStatusErr)
 	})
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if !watch {

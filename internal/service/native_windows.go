@@ -216,25 +216,29 @@ func nativeManage(action string, cfg Config) error {
 }
 
 func nativeStatus() (Status, error) {
-	manager, err := mgr.Connect()
+	manager, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
 	if err != nil {
 		return Status{}, fmt.Errorf("connect to Windows Service Control Manager: %w", err)
 	}
-	defer manager.Disconnect()
+	defer windows.CloseServiceHandle(manager)
 
-	service, err := manager.OpenService(windowsServiceName)
+	serviceName, err := windows.UTF16PtrFromString(windowsServiceName)
+	if err != nil {
+		return Status{}, errors.New("invalid Windows service name")
+	}
+	service, err := windows.OpenService(manager, serviceName, windows.SERVICE_QUERY_STATUS)
 	if err != nil {
 		if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
 			return Status{}, nil
 		}
 		return Status{}, fmt.Errorf("inspect Windows agent service: %w", err)
 	}
-	defer service.Close()
-	status, err := service.Query()
-	if err != nil {
+	defer windows.CloseServiceHandle(service)
+	var status windows.SERVICE_STATUS
+	if err := windows.QueryServiceStatus(service, &status); err != nil {
 		return Status{}, fmt.Errorf("query Windows agent service: %w", err)
 	}
-	return Status{Installed: true, Running: status.State == svc.Running}, nil
+	return Status{Installed: true, Running: status.CurrentState == windows.SERVICE_RUNNING}, nil
 }
 
 type windowsHandler struct {
