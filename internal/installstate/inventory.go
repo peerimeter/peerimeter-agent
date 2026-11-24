@@ -527,7 +527,11 @@ func validateInventoryProfiles(profiles []Profile) error {
 
 func loadForRegistration(dir, dataDir string, allowInsecureOverride bool) (Inventory, error) {
 	if _, err := os.Lstat(filepath.Join(dir, ReferenceFilename)); err == nil {
-		return load(dir, allowInsecureOverride)
+		inv, loadErr := load(dir, allowInsecureOverride)
+		if os.IsNotExist(loadErr) {
+			return Inventory{}, errors.New("installation reference points to a missing inventory")
+		}
+		return inv, loadErr
 	} else if !os.IsNotExist(err) {
 		return Inventory{}, err
 	}

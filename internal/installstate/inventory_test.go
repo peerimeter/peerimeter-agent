@@ -1,6 +1,7 @@
 package installstate
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -108,6 +109,53 @@ func fixtureInstall(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+func TestRegisterRejectsStaleReferenceWithoutReplacingInventory(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "program")
+	docDir := filepath.Join(root, "documentation")
+	dataDir := filepath.Join(root, "data")
+	lockDir := filepath.Join(root, "locks")
+	for _, path := range []string{dir, docDir, dataDir, lockDir} {
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range ProgramNames() {
+		resourceDir, mode := dir, os.FileMode(0755)
+		if name == "peerimeter-agent.NOTICES.txt" {
+			resourceDir, mode = docDir, 0644
+		}
+		if err := os.WriteFile(filepath.Join(resourceDir, name), []byte("fixture "+name), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := RegisterWithDirectories(dir, docDir, dataDir, lockDir, false); err != nil {
+		t.Fatal(err)
+	}
+	before, _, err := readInventory(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := json.Marshal(installReference{DataDir: filepath.Join(root, "missing-data")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WritePrivate(filepath.Join(dir, ReferenceFilename), ref); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RegisterWithDirectories(dir, docDir, dataDir, lockDir, false); err == nil {
+		t.Fatal("registration accepted a reference to a missing inventory")
+	}
+	after, _, err := readInventory(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("registration replaced the existing inventory after finding a stale reference")
+	}
 }
 
 func TestLoadRejectsInventoryWithoutCommandAlias(t *testing.T) {
