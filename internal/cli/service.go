@@ -1,12 +1,9 @@
 package cli
 
-import (
-	"errors"
-	"github.com/spf13/cobra"
-)
+import "github.com/spf13/cobra"
 
 func newServiceCommand(app *application) *cobra.Command {
-	cmd := &cobra.Command{Use: "service", Short: "Manage the native system service", Args: noArguments, RunE: app.handle(func(*cobra.Command) error { return errors.New("service action required; use service --help") })}
-	cmd.AddCommand(newServiceInstallCommand(app), newServiceStartCommand(app), newServiceStopCommand(app), newServiceUninstallCommand(app))
+	cmd := &cobra.Command{Use: "service", Short: "Manage the native system service", Args: cobra.MinimumNArgs(1)}
+	cmd.AddCommand(newServiceInstallCommand(app), newServiceStartCommand(app), newServiceStopCommand(app), newServiceStatusCommand(app), newServiceUninstallCommand(app))
 	return cmd
 }

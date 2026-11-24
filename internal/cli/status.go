@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/peerimeter/peerimeter-agent/internal/paths"
+	"github.com/peerimeter/peerimeter-agent/internal/service"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -22,15 +23,22 @@ func newStatusCommand(app *application) *cobra.Command {
 		Args:  noArguments,
 	}
 	normalRun := app.handleResponse(func(cmd *cobra.Command) error {
+		serviceStatus, err := service.Inspect()
+		if err != nil {
+			return err
+		}
 		layout, err := paths.Resolve(options)
 		if err != nil {
 			return err
 		}
 		snapshots, readErr := readNetworkSnapshots(cmd.Context(), layout, networkID)
 		if len(snapshots) == 0 {
+			if err := writeStatusSnapshots(app.out, snapshots, serviceStatus); err != nil {
+				return err
+			}
 			return readErr
 		}
-		if err := writeNetworkSnapshots(app.out, snapshots); err != nil {
+		if err := writeStatusSnapshots(app.out, snapshots, serviceStatus); err != nil {
 			return err
 		}
 		return readErr

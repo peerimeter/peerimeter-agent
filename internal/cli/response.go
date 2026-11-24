@@ -35,7 +35,7 @@ func renderResponse(out io.Writer, raw []byte, color bool, width int) error {
 				return err
 			}
 		}
-		return nil
+		return writeServiceStatusIfPresent(out, fields)
 	}
 	if _, ok := fields["network_id"]; ok {
 		if _, ok := fields["peers"]; ok {
@@ -43,8 +43,14 @@ func renderResponse(out io.Writer, raw []byte, color bool, width int) error {
 			if err := json.Unmarshal(raw, &snapshot); err != nil {
 				return err
 			}
-			return presentation.StatusOverview(out, snapshot, time.Now(), color, width)
+			if err := presentation.StatusOverview(out, snapshot, time.Now(), color, width); err != nil {
+				return err
+			}
+			return writeServiceStatusIfPresent(out, fields)
 		}
+	}
+	if _, ok := fields["service_installed"]; ok {
+		return writeServiceStatus(out, fields)
 	}
 	if state, ok := fields["state"]; ok {
 		var status string
@@ -118,6 +124,35 @@ func renderResponse(out io.Writer, raw []byte, color bool, width int) error {
 		rows = append(rows, []string{responseLabel(key), consoleValue(value)})
 	}
 	return presentation.Table(out, nil, rows, color, width)
+}
+
+func writeServiceStatus(out io.Writer, fields map[string]json.RawMessage) error {
+	var status struct {
+		Installed bool `json:"service_installed"`
+		Running   bool `json:"service_running"`
+	}
+	if err := json.Unmarshal(fields["service_installed"], &status.Installed); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(fields["service_running"], &status.Running); err != nil {
+		return err
+	}
+	installed, running := "no", "no"
+	if status.Installed {
+		installed = "yes"
+	}
+	if status.Running {
+		running = "yes"
+	}
+	_, err := fmt.Fprintf(out, "Service installed: %s\nService running: %s\n", installed, running)
+	return err
+}
+
+func writeServiceStatusIfPresent(out io.Writer, fields map[string]json.RawMessage) error {
+	if _, ok := fields["service_installed"]; !ok {
+		return nil
+	}
+	return writeServiceStatus(out, fields)
 }
 
 func responseLabel(key string) string {

@@ -20,6 +20,15 @@ import (
 
 type Config struct{ ConfigPath, ConfigDirectory, StateDirectory, RuntimeDirectory, Operator string }
 
+type Status struct {
+	Installed bool `json:"service_installed"`
+	Running   bool `json:"service_running"`
+}
+
+func Inspect() (Status, error) {
+	return nativeStatus()
+}
+
 func normalized(cfg Config) (Config, error) {
 	layout, err := paths.Resolve(paths.Options{ConfigDir: cfg.ConfigDirectory, StateDir: cfg.StateDirectory, RuntimeDir: cfg.RuntimeDirectory})
 	if err != nil {

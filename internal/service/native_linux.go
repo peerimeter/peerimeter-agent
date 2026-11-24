@@ -181,6 +181,29 @@ func nativeManage(action string, cfg Config) error {
 	}
 }
 
+func nativeStatus() (Status, error) {
+	if _, err := readLinuxService(linuxServicePath); err != nil {
+		if os.IsNotExist(err) {
+			return Status{}, nil
+		}
+		return Status{}, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "systemctl", "is-active", linuxServiceName).CombinedOutput()
+	state := strings.TrimSpace(string(output))
+	if err != nil && state == "" {
+		return Status{}, fmt.Errorf("inspect systemd service state: %w", err)
+	}
+	switch state {
+	case "active", "inactive", "failed", "activating", "deactivating", "reloading", "maintenance", "unknown":
+	default:
+		return Status{}, errors.New("cannot determine systemd service state")
+	}
+	return Status{Installed: true, Running: state == "active"}, nil
+}
+
 func RemoveOwned(ctx context.Context, expectedExe string, cfg Config) error {
 	if err := ctx.Err(); err != nil {
 		return err

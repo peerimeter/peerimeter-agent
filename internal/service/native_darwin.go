@@ -65,6 +65,28 @@ func darwinInstalled() error {
 	}
 	return nil
 }
+
+func nativeStatus() (Status, error) {
+	info, err := os.Lstat(darwinServicePlist)
+	if os.IsNotExist(err) {
+		return Status{}, nil
+	}
+	if err != nil {
+		return Status{}, errors.New("cannot inspect Peerimeter launchd service")
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 {
+		return Status{}, errors.New("refusing to use an insecure or non-regular launchd service plist")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "/bin/launchctl", "print", "system/"+darwinServiceLabel).CombinedOutput()
+	if err != nil && len(output) == 0 {
+		return Status{}, errors.New("cannot inspect Peerimeter launchd service state")
+	}
+	return Status{Installed: true, Running: strings.Contains(string(output), "state = running")}, nil
+}
+
 func nativeManage(action string, cfg Config) error {
 	if os.Geteuid() != 0 {
 		return errors.New("system launchd service management requires root privileges")

@@ -215,6 +215,28 @@ func nativeManage(action string, cfg Config) error {
 	}
 }
 
+func nativeStatus() (Status, error) {
+	manager, err := mgr.Connect()
+	if err != nil {
+		return Status{}, fmt.Errorf("connect to Windows Service Control Manager: %w", err)
+	}
+	defer manager.Disconnect()
+
+	service, err := manager.OpenService(windowsServiceName)
+	if err != nil {
+		if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+			return Status{}, nil
+		}
+		return Status{}, fmt.Errorf("inspect Windows agent service: %w", err)
+	}
+	defer service.Close()
+	status, err := service.Query()
+	if err != nil {
+		return Status{}, fmt.Errorf("query Windows agent service: %w", err)
+	}
+	return Status{Installed: true, Running: status.State == svc.Running}, nil
+}
+
 type windowsHandler struct {
 	ctx context.Context
 	run func(context.Context) error
