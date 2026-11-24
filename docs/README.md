@@ -462,7 +462,9 @@ configuration, key and persistent state, uninstall the old service, then install
 v0.40.0 with separate config, state and runtime directories. Restore the backed
 up configuration, key and data files with restrictive permissions, but exclude
 the old state directory's `.profile` marker. The new registration creates a
-marker for the v0.40.0 installation.
+marker for the v0.40.0 installation. If reusing the old state directory, remove
+its existing `.profile` marker after backing it up and before installing or
+registering v0.40.0.
 
 Identical protected snapshots can be reused when reinstalling; different config
 or key material requires an explicit migration. Failed registration rolls back
