@@ -445,6 +445,19 @@ func resolveInventoryDataDir(canonical, requestedDataDir string) (string, error)
 			dataDir, err = Canonical(requestedDataDir)
 		} else {
 			dataDir, err = defaultInstallDataDir(canonical)
+			if err == nil {
+				if data, _, readErr := readInventory(dataDir); readErr == nil {
+					var owner Inventory
+					if yaml.Unmarshal(data, &owner) != nil || owner.InstallDir == "" {
+						return "", errors.New("installation inventory is invalid")
+					}
+					if owner.InstallDir != canonical {
+						dataDir = canonical
+					}
+				} else if !os.IsNotExist(readErr) {
+					return "", readErr
+				}
+			}
 		}
 		if err != nil {
 			return "", err
