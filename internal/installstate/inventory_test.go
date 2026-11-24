@@ -265,63 +265,6 @@ func TestRegistrationUpgradePreservesStoredInsecureDirectoryPolicy(t *testing.T)
 	}
 }
 
-func TestRegistrationFailureRestoresInstallReferenceAndInventory(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlink rejection behavior differs on Windows")
-	}
-	dir := fixtureInstall(t)
-	dataDir := t.TempDir()
-	lockDir := t.TempDir()
-	if err := RegisterWithDirectories(dir, dir, dataDir, lockDir, false); err != nil {
-		t.Fatal(err)
-	}
-	referencePath := filepath.Join(dir, ReferenceFilename)
-	formattedReference, err := json.MarshalIndent(installReference{DataDir: dataDir}, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	formattedReference = append(formattedReference, '\n')
-	if err := os.WriteFile(referencePath, formattedReference, 0600); err != nil {
-		t.Fatal(err)
-	}
-	previousReference, err := os.ReadFile(referencePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	inventoryPath := filepath.Join(dataDir, Filename)
-	legacyInventoryPath := filepath.Join(dataDir, LegacyJSONFilename)
-	if err := os.Rename(inventoryPath, legacyInventoryPath); err != nil {
-		t.Fatal(err)
-	}
-	previousInventory, err := os.ReadFile(legacyInventoryPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(t.TempDir(), "target"), filepath.Join(dir, LegacyReferenceFilename)); err != nil {
-		t.Fatal(err)
-	}
-	if err := RegisterWithDirectories(dir, dir, dataDir, lockDir, false); err == nil {
-		t.Fatal("registration succeeded despite an unsafe legacy reference")
-	}
-	restoredReference, err := os.ReadFile(referencePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(restoredReference) != string(previousReference) {
-		t.Fatal("failed registration left the install reference changed")
-	}
-	if _, err := os.Lstat(inventoryPath); !os.IsNotExist(err) {
-		t.Fatalf("failed registration left a migrated inventory at the current path: %v", err)
-	}
-	restoredInventory, err := os.ReadFile(legacyInventoryPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(restoredInventory) != string(previousInventory) {
-		t.Fatal("failed registration left the inventory changed")
-	}
-}
-
 func TestUpdateProgramHashesPreservesProfileAndDirectories(t *testing.T) {
 	dir := fixtureInstall(t)
 	p := fixtureProfile(t)
@@ -375,37 +318,6 @@ func TestForeignProfileAndChangedLayoutRefused(t *testing.T) {
 	}
 	if err := RegisterProfile(first, p); err == nil {
 		t.Fatal("implicit runtime migration accepted")
-	}
-}
-func TestExplicitLegacyMigrationPreservesMarkerAndOldResources(t *testing.T) {
-	dir := fixtureInstall(t)
-	p := fixtureProfile(t)
-	p.ConfigDir = p.StateDir
-	p.RuntimeDir = p.StateDir
-	p.Service = true
-	if err := RegisterProfile(dir, p); err != nil {
-		t.Fatal(err)
-	}
-	before, err := Load(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	next := fixtureProfile(t)
-	next.StateDir = p.StateDir
-	next.Service = true
-	if err := MigrateProfile(dir, p, next); err != nil {
-		t.Fatal(err)
-	}
-	after, err := Load(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldCanonical, _ := Canonical(p.StateDir)
-	if after.Profiles[0].ID != before.Profiles[0].ID || after.Profiles[0].LegacyConfigDir != oldCanonical {
-		t.Fatal("migration lost stable ownership or legacy snapshot inventory")
-	}
-	if err := VerifyProfile(after, after.Profiles[0]); err != nil {
-		t.Fatal(err)
 	}
 }
 func TestSourceBuildRegistrationDoesNotCreateInventory(t *testing.T) {
@@ -559,52 +471,5 @@ func TestConfigOwnershipCannotBeClaimedByPlannedForeignProfile(t *testing.T) {
 	}
 	if owned, e := VerifyConfig(ib, ib.Profiles[0]); e != nil || owned {
 		t.Fatal("second planned installation owns foreign config")
-	}
-}
-
-func TestMigrationClaimTracksProvisionalConfigWithoutChangingActivePaths(t *testing.T) {
-	dir := fixtureInstall(t)
-	old := fixtureProfile(t)
-	if err := RegisterProfile(dir, old); err != nil {
-		t.Fatal(err)
-	}
-	before, _ := Load(dir)
-	next := fixtureProfile(t)
-	next.StateDir = old.StateDir
-	for _, name := range []string{"service.yaml", "service.key"} {
-		if err := os.WriteFile(filepath.Join(next.ConfigDir, name), []byte("private migrated snapshot"), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	startup, err := CaptureStartup(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer startup.Close()
-	if err := startup.ClaimMigrationConfig(next); err != nil {
-		t.Fatal(err)
-	}
-	after, err := Load(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	p := after.Profiles[0]
-	cfg, _ := Canonical(next.ConfigDir)
-	runtime, _ := Canonical(next.RuntimeDir)
-	if p.ID != before.Profiles[0].ID || p.ConfigDir != before.Profiles[0].ConfigDir || p.RuntimeDir != before.Profiles[0].RuntimeDir || p.PendingConfigDir != cfg || p.PendingRuntimeDir != runtime {
-		t.Fatal("provisional claim changed the active profile or lost its pending target")
-	}
-	if owned, err := VerifyConfigDirectory(after, p, p.PendingConfigDir); err != nil || !owned {
-		t.Fatalf("pending config is not bound to the existing profile: %v", err)
-	}
-	if err := MarkRemoving(after); err != nil {
-		t.Fatal(err)
-	}
-	if err := startup.Close(); err != nil {
-		t.Fatal(err)
-	}
-	next.ClaimConfig = true
-	if err := MigrateProfile(dir, old, next); err == nil {
-		t.Fatal("migration changed a removing installation")
 	}
 }

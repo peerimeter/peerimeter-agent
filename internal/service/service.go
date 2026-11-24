@@ -2,7 +2,6 @@
 package service
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,7 +9,6 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/installstate"
@@ -43,7 +41,7 @@ func Manage(action string, cfg Config) error {
 		return err
 	}
 	switch action {
-	case "install", "migrate":
+	case "install":
 		if err := local.ValidateOperator(cfg.Operator); err != nil {
 			return err
 		}
@@ -55,21 +53,11 @@ func Manage(action string, cfg Config) error {
 				return err
 			}
 		}
-		if action == "migrate" {
-			return migrate(cfg, func(legacy Config) error { return RemoveOwned(context.Background(), currentExecutable(), legacy) }, func(next Config) error { return registerMigratedService(next) }, nativeSecureFiles)
-		}
-		if runtime.GOOS != "windows" && cfg.ConfigDirectory != cfg.StateDirectory {
-			if _, err := legacySnapshotPath(cfg.StateDirectory); err == nil {
-				return errors.New("legacy combined service layout requires explicit service migrate before installation")
-			} else if !os.IsNotExist(err) {
-				return err
-			}
-		}
 		return install(cfg, registerService, nativeSecureFiles)
 	case "start", "stop", "uninstall":
 		return nativeManage(action, cfg)
 	default:
-		return errors.New("service action must be install, migrate, start, stop or uninstall")
+		return errors.New("service action must be install, start, stop or uninstall")
 	}
 }
 func currentExecutable() string {
@@ -90,17 +78,6 @@ func snapshotDirectory(cfg Config) string {
 	return cfg.StateDirectory
 }
 
-func legacySnapshotPath(directory string) (string, error) {
-	for _, name := range []string{"service.yaml", "service.json"} {
-		path := filepath.Join(directory, name)
-		if _, err := os.Lstat(path); err == nil {
-			return path, nil
-		} else if !os.IsNotExist(err) {
-			return "", err
-		}
-	}
-	return "", os.ErrNotExist
-}
 func registerService(cfg Config) error {
 	if err := nativeManage("install", cfg); err != nil {
 		return err
@@ -204,7 +181,7 @@ func verifyExistingServiceSnapshot(destination, keyPath string, desired config.C
 	expected := desired
 	expected.Interface.PrivateKeyFile = keyPath
 	if !reflect.DeepEqual(installed, expected) {
-		return errors.New("existing protected service configuration differs; use the installed configuration or make an explicit migration")
+		return errors.New("existing protected service configuration differs; use the installed configuration or reinstall it explicitly")
 	}
 	if err := installstate.CheckPrivateFile(keyPath); err != nil {
 		return fmt.Errorf("existing protected service key %s is not secure: %w", keyPath, err)
@@ -275,195 +252,9 @@ func rollbackIfCreated(err error, created bool, cfg Config) error {
 	return errors.Join(err, rollbackSnapshots(cfg))
 }
 
-// migrate keeps the durable identity in place. It removes old snapshots only
-// after replacement registration succeeds; failed attempts retain recoverable
-// legacy credentials and never overwrite a conflicting destination.
-func migrate(cfg Config, unregister func(Config) error, register func(Config) error, secure func(...string) error) error {
-	return migrateWithContext(context.Background(), cfg, unregister, register, secure)
-}
-
-func migrateWithContext(ctx context.Context, cfg Config, unregister func(Config) error, register func(Config) error, secure func(...string) error) error {
-	if runtime.GOOS == "windows" {
-		return errors.New("Windows retains its existing storage layout; no Unix layout migration is required")
-	}
-	startup, err := captureServiceStartup()
-	if err != nil {
-		return err
-	}
-	defer startup.Close()
-	legacyConfig, legacyKey, old, err := validateLegacyMigrationSource(cfg)
-	if err != nil {
-		return err
-	}
-	if err := startup.Check(); err != nil {
-		return err
-	}
-	// Stop must not wait on a supervisor process whose own startup needs this
-	// installation lease. No state is changed before the inventory gate passes.
-	if err := startup.Close(); err != nil {
-		return err
-	}
-	if err := unregister(old); err != nil {
-		return err
-	}
-	// Reacquire the startup lease across state acquisition after supervisor stop;
-	// the original captured ID still detects removal/replacement during the gap.
-	lease, err := captureServiceStartup()
-	if err != nil {
-		return err
-	}
-	defer lease.Close()
-	if err := startup.Check(); err != nil {
-		return err
-	}
-	guard, err := acquireMigrationState(ctx, cfg.StateDirectory)
-	if err != nil {
-		return err
-	}
-	defer guard.Close()
-	legacyManagerLock, err := acquireLegacyManagerLock(ctx, cfg.StateDirectory)
-	if err != nil {
-		return err
-	}
-	if legacyManagerLock != nil {
-		defer legacyManagerLock.Close()
-	}
-	if err := startup.Check(); err != nil {
-		return err
-	}
-	// Only after native registration ownership was verified and the old
-	// supervisor stopped may this installation adopt the protected legacy data.
-	if err := planAndClaimLegacy(lease, old); err != nil {
-		return err
-	}
-	cfg.ConfigPath = legacyConfig
-	created, err := provision(&cfg, secure)
-	if err != nil {
-		return err
-	}
-	if err := lease.ClaimMigrationConfig(installstate.Profile{ConfigDir: snapshotDirectory(cfg), StateDir: cfg.StateDirectory, RuntimeDir: serviceRuntime(cfg)}); err != nil {
-		return rollbackIfCreated(err, created, cfg)
-	}
-	if err := lease.Close(); err != nil {
-		return rollbackIfCreated(err, created, cfg)
-	}
-	if err := register(cfg); err != nil {
-		return rollbackIfCreated(err, created, cfg)
-	}
-	return cleanupMigratedLegacyFiles(cfg, legacyConfig, legacyKey)
-}
-
-func validateLegacyMigrationSource(cfg Config) (string, string, Config, error) {
-	legacyConfig, err := legacySnapshotPath(cfg.StateDirectory)
-	if err != nil {
-		return "", "", Config{}, errors.New("legacy service snapshot is unavailable")
-	}
-	legacyKey := filepath.Join(cfg.StateDirectory, "service.key")
-	if snapshotDirectory(cfg) == cfg.StateDirectory || cfg.RuntimeDirectory == cfg.StateDirectory {
-		return "", "", Config{}, errors.New("migration requires separate config, persistent state and runtime directories")
-	}
-	if err := validateLegacySnapshot(legacyConfig); err != nil {
-		return "", "", Config{}, err
-	}
-	legacy, err := config.Load(legacyConfig)
-	if err != nil {
-		return "", "", Config{}, err
-	}
-	expected, err := filepath.EvalSymlinks(legacyKey)
-	if err != nil {
-		return "", "", Config{}, errors.New("legacy service key is unavailable")
-	}
-	actual, err := filepath.EvalSymlinks(legacy.Interface.PrivateKeyFile)
-	if err != nil || actual != expected {
-		return "", "", Config{}, errors.New("legacy service configuration must reference its protected installed service.key")
-	}
-	if _, err := secret.Load(legacyKey); err != nil {
-		return "", "", Config{}, err
-	}
-	// Validate destination ownership and conflicts before stopping a working service.
-	if err := validateConfigOwnership(cfg); err != nil {
-		return "", "", Config{}, err
-	}
-	for _, name := range []string{"service.yaml", "service.json", "service.key"} {
-		if _, err := os.Lstat(filepath.Join(snapshotDirectory(cfg), name)); err == nil {
-			return "", "", Config{}, errors.New("migration destination already contains service configuration or keys; refusing to overwrite")
-		} else if !os.IsNotExist(err) {
-			return "", "", Config{}, err
-		}
-	}
-	old := cfg
-	old.ConfigDirectory = cfg.StateDirectory
-	old.ConfigPath = legacyConfig
-	old.RuntimeDirectory = cfg.StateDirectory
-	if err := validateConfigOwnership(old); err != nil {
-		return "", "", Config{}, err
-	}
-	return legacyConfig, legacyKey, old, nil
-}
-
-func cleanupMigratedLegacyFiles(cfg Config, legacyConfig, legacyKey string) error {
-	// The directory lock proves the current manager released the legacy state.
-	// Persistent network/ownership files are untouched.
-	var cleanup []error
-	for _, path := range []string{legacyConfig, legacyKey, filepath.Join(cfg.StateDirectory, "agent.lock")} {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			cleanup = append(cleanup, err)
-		}
-	}
-	if len(cleanup) == 0 {
-		if err := releaseConfigMarker(cfg, cfg.StateDirectory); err != nil {
-			cleanup = append(cleanup, err)
-		}
-	}
-	if len(cleanup) != 0 {
-		return errors.Join(append([]error{errors.New("new service installed but legacy snapshot cleanup is incomplete")}, cleanup...)...)
-	}
-	return nil
-}
-
 func serviceRuntime(cfg Config) string {
 	if cfg.RuntimeDirectory != "" {
 		return cfg.RuntimeDirectory
 	}
 	return cfg.StateDirectory
-}
-
-type profilePlanner interface {
-	RegisterProfile(installstate.Profile) error
-}
-
-func planAndClaimLegacy(startup profilePlanner, legacy Config) error {
-	planned := installstate.Profile{ConfigDir: legacy.ConfigDirectory, StateDir: legacy.StateDirectory, RuntimeDir: legacy.RuntimeDirectory}
-	if err := startup.RegisterProfile(planned); err != nil {
-		return err
-	}
-	planned.ClaimConfig = true
-	return startup.RegisterProfile(planned)
-}
-
-// Native supervisor removal can return before the old process releases its
-// kernel lock (notably launchd bootout). Wait for proof instead of unlinking or
-// bypassing the live legacy lock; malformed paths fail immediately.
-func acquireMigrationState(ctx context.Context, directory string) (*local.Guard, error) {
-	bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		guard, err := local.TryAcquireExisting(directory)
-		if err == nil {
-			if guard == nil {
-				return nil, errors.New("legacy persistent state disappeared during supervisor shutdown")
-			}
-			return guard, nil
-		}
-		if !errors.Is(err, local.ErrBusy) {
-			return nil, err
-		}
-		select {
-		case <-bounded.Done():
-			return nil, errors.Join(errors.New("legacy manager shutdown was not established; migration data was preserved"), bounded.Err(), err)
-		case <-ticker.C:
-		}
-	}
 }

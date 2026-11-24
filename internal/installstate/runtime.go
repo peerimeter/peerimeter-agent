@@ -35,27 +35,11 @@ func expectedRuntime(inv Inventory, p Profile) runtimeMarker {
 func claimRuntime(inv Inventory, p Profile) error {
 	path := filepath.Join(p.RuntimeDir, RuntimeMarkerFilename)
 	data, err := readPrivate(path)
-	legacyMarkerPath := filepath.Join(p.RuntimeDir, LegacyRuntimeMarkerFilename)
-	legacyMarker := false
-	if os.IsNotExist(err) {
-		// TODO(next major): remove reads of the previous runtime marker filename.
-		data, err = readPrivate(legacyMarkerPath)
-		legacyMarker = err == nil
-	}
 	expected := expectedRuntime(inv, p)
 	if err == nil {
 		var got runtimeMarker
 		if json.Unmarshal(data, &got) != nil || got != expected {
 			return errors.New("runtime directory belongs to another installation profile")
-		}
-		if legacyMarker {
-			// TODO(next major): remove migration of the previous runtime marker filename.
-			if err := WritePrivateWithPolicy(path, data, inv.AllowInsecureInstallDir); err != nil {
-				return err
-			}
-			if err := os.Remove(legacyMarkerPath); err != nil && !os.IsNotExist(err) {
-				return err
-			}
 		}
 		return nil
 	}
@@ -73,10 +57,6 @@ func claimRuntime(inv Inventory, p Profile) error {
 // marker does not own the socket/directory, even if it names the same path.
 func VerifyRuntime(inv Inventory, p Profile) (bool, error) {
 	data, err := readPrivate(filepath.Join(p.RuntimeDir, RuntimeMarkerFilename))
-	if os.IsNotExist(err) {
-		// TODO(next major): remove reads of the previous runtime marker filename.
-		data, err = readPrivate(filepath.Join(p.RuntimeDir, LegacyRuntimeMarkerFilename))
-	}
 	if os.IsNotExist(err) {
 		return false, nil
 	}
@@ -97,10 +77,6 @@ func VerifyRuntime(inv Inventory, p Profile) (bool, error) {
 
 func validateSourceRuntime(p Profile) error {
 	data, err := readPrivate(filepath.Join(p.RuntimeDir, RuntimeMarkerFilename))
-	if os.IsNotExist(err) {
-		// TODO(next major): remove reads of the previous runtime marker filename.
-		data, err = readPrivate(filepath.Join(p.RuntimeDir, LegacyRuntimeMarkerFilename))
-	}
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -154,10 +130,6 @@ func ReleaseRuntime(dir, stateDir, runtimeDir string) error {
 		return errors.New("owned runtime socket remains after close; ownership marker was preserved")
 	}
 	if err := os.Remove(filepath.Join(runtimeDir, RuntimeMarkerFilename)); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	// TODO(next major): remove cleanup of the previous runtime marker filename.
-	if err := os.Remove(filepath.Join(runtimeDir, LegacyRuntimeMarkerFilename)); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	entries, err := os.ReadDir(runtimeDir)

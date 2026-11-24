@@ -23,7 +23,6 @@ the full command list.
 | `stop` | Stop all configured tunnels or select one with `--network` |
 | `service install` | Install and register the native OS service |
 | `service start` / `service stop` | Start or stop the installed service |
-| `service migrate` | Migrate the legacy Unix service layout |
 | `service uninstall` | Remove service registration, keeping config and keys |
 | `uninstall` | Remove the tracked agent installation and managed data |
 | `stun [local-udp-port]` | Probe the public UDP mapping with STUN |

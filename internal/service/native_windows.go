@@ -378,7 +378,6 @@ func nativeValidateStatePath(path string) error {
 	return serviceSecureAncestors(path)
 }
 
-func validateLegacySnapshot(path string) error { return serviceSecureObject(path, false, true) }
 func RemoveOwned(ctx context.Context, expectedExe string, cfg Config) error {
 	if err := ctx.Err(); err != nil {
 		return err

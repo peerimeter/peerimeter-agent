@@ -456,6 +456,12 @@ config/key into protected `service.yaml` and `service.key` under the
 configuration directory; the original files stay unchanged. Edit the protected
 installed config and use `sync` for later updates.
 
+The `service migrate` command for the earlier combined Unix directory layout is
+removed in v0.40.0. Before upgrading from v0.39.0, stop the service, back up its
+configuration, key and persistent state, uninstall the old service, then install
+v0.40.0 with separate config, state and runtime directories. Restore the backed
+up data into the corresponding current locations with restrictive permissions.
+
 Identical protected snapshots can be reused when reinstalling; different config
 or key material requires an explicit migration. Failed registration rolls back
 only snapshots created by that attempt. Installed secrets are never silently
@@ -463,23 +469,6 @@ overwritten. `service uninstall` preserves config, keys and interface selection.
 Boot activation and restart on failure use the native OS supervisor; foreground
 and service modes use the same tunnel runtime. One named system service is
 currently supported per machine.
-
-### Migrate the earlier combined Unix layout
-
-After upgrading the executable in its protected stable path, migrate an older
-combined state directory explicitly:
-
-```sh
-sudo peerimeter-agent service migrate --state-dir /var/lib/peerimeter-agent \
-  --config-dir /etc/peerimeter --runtime-dir /run/peerimeter-agent --operator alice
-sudo peerimeter-agent service start
-```
-
-Migration validates ownership and destination conflicts before stopping the old
-service. It preserves keys, interface selection and ownership identity;
-successful registration moves only the old installed snapshots. Original
-operator configs stay outside this migration. On failure old credentials remain
-available for retry.
 
 ### Full removal versus service removal
 

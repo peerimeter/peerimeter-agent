@@ -40,7 +40,7 @@ func TestDefaultLayouts(t *testing.T) {
 		}
 	}
 }
-func TestCustomLayoutAndWindowsCombinedCompatibility(t *testing.T) {
+func TestCustomLayoutAndWindowsCombinedLayout(t *testing.T) {
 	root := t.TempDir()
 	opts := Options{filepath.Join(root, "config space"), filepath.Join(root, "state space"), filepath.Join(root, "runtime space")}
 	layout, err := Resolve(opts)

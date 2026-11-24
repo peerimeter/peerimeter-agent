@@ -52,10 +52,11 @@ func verifyServiceArguments(args []string, executable string, cfg Config) error 
 		if !equalServicePath(value, serviceRuntime(cfg)) {
 			return errors.New("registered service runtime belongs to another installation")
 		}
-	} else if serviceRuntime(cfg) != cfg.StateDirectory {
-		return errors.New("registered service uses a legacy runtime directory; explicit migration is required")
+	} else {
+		return errors.New("registered service has no runtime directory")
 	}
-	if value, exists := flags["--config-dir"]; exists && !equalServicePath(value, snapshotDirectory(cfg)) {
+	value, exists := flags["--config-dir"]
+	if !exists || !equalServicePath(value, snapshotDirectory(cfg)) {
 		return errors.New("registered service configuration directory belongs to another installation")
 	}
 	return nil

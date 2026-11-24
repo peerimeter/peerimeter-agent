@@ -28,16 +28,12 @@ func TestServiceRemovalRequiresMatchingInstallationAndLayout(t *testing.T) {
 	if err := verifyServiceArguments(duplicated, exe, cfg); err == nil {
 		t.Fatal("ambiguous state registration accepted")
 	}
-	legacy := cfg
-	legacy.ConfigDirectory = cfg.StateDirectory
-	legacy.ConfigPath = filepath.Join(cfg.StateDirectory, "service.yaml")
-	legacy.RuntimeDirectory = cfg.StateDirectory
-	legacyArgs := []string{exe, "run", "--config", legacy.ConfigPath, "--state-dir", legacy.StateDirectory}
-	if err := verifyServiceArguments(legacyArgs, exe, legacy); err != nil {
-		t.Fatal("legacy registration cannot be explicitly migrated", err)
+	withoutRuntime := []string{exe, "run", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory, "--config-dir", cfg.ConfigDirectory}
+	if err := verifyServiceArguments(withoutRuntime, exe, cfg); err == nil {
+		t.Fatal("registration without runtime directory accepted")
 	}
-	legacy.RuntimeDirectory = cfg.RuntimeDirectory
-	if err := verifyServiceArguments(legacyArgs, exe, legacy); err == nil {
-		t.Fatal("legacy registration mistaken for separate runtime layout")
+	withoutConfig := []string{exe, "run", "--config", cfg.ConfigPath, "--state-dir", cfg.StateDirectory, "--runtime-dir", cfg.RuntimeDirectory}
+	if err := verifyServiceArguments(withoutConfig, exe, cfg); err == nil {
+		t.Fatal("registration without configuration directory accepted")
 	}
 }

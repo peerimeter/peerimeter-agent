@@ -223,12 +223,14 @@ func RemoveOwned(ctx context.Context, expectedExe string, cfg Config) error {
 		runtimeFlag := " --runtime-dir " + linuxSystemdQuote(serviceRuntime(cfg))
 		if strings.HasPrefix(remainder, runtimeFlag) {
 			remainder = strings.TrimPrefix(remainder, runtimeFlag)
-		} else if serviceRuntime(cfg) != cfg.StateDirectory {
-			return errors.New("systemd runtime belongs to another installation")
+		} else {
+			return errors.New("systemd unit has no runtime directory")
 		}
 		configFlag := " --config-dir " + linuxSystemdQuote(snapshotDirectory(cfg))
 		if strings.HasPrefix(remainder, configFlag) {
 			remainder = strings.TrimPrefix(remainder, configFlag)
+		} else {
+			return errors.New("systemd unit has no configuration directory")
 		}
 		if remainder != "" && !strings.HasPrefix(remainder, " --operator ") {
 			return errors.New("systemd service has unverifiable arguments")
@@ -250,7 +252,7 @@ func installLinuxService(path string, contents []byte) ([]byte, bool, error) {
 	before, err := readLinuxService(path)
 	if err == nil {
 		if !bytes.Equal(before, contents) {
-			return before, true, errors.New("existing Peerimeter systemd unit has different executable, paths or options; explicitly uninstall or migrate that service first")
+			return before, true, errors.New("existing Peerimeter systemd unit has different executable, paths or options; explicitly uninstall that service first")
 		}
 		return before, true, nil
 	}

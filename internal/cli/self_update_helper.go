@@ -36,9 +36,6 @@ type windowsUpdateResult struct {
 	StoppedProfileSet bool                  `json:"stopped_profile_set,omitempty"`
 }
 
-// TODO(next major): remove fallback for update manifests staged by older agents.
-const legacyUpdateManifestName = ".peerimeter-agent.update.json"
-
 type helperManifest struct {
 	Version   string                  `json:"version"`
 	InstallID string                  `json:"installation_id"`
@@ -491,10 +488,7 @@ func restartAfterWindowsReplacementFailure(err error, profile *installstate.Prof
 
 func loadAndVerifyHelperManifest(transactionDir string, inv installstate.Inventory) (helperManifest, map[string][]byte, *installstate.Profile, error) {
 	manifestPath := filepath.Join(transactionDir, updateManifestName)
-	if _, err := os.Lstat(manifestPath); os.IsNotExist(err) {
-		// TODO(next major): remove fallback for the previous update manifest name.
-		manifestPath = filepath.Join(transactionDir, legacyUpdateManifestName)
-	} else if err != nil {
+	if _, err := os.Lstat(manifestPath); err != nil {
 		return helperManifest{}, nil, nil, err
 	}
 	if err := installstate.CheckPrivateFile(manifestPath); err != nil {
