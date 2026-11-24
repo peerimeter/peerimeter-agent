@@ -460,7 +460,9 @@ The `service migrate` command for the earlier combined Unix directory layout is
 removed in v0.40.0. Before upgrading from v0.39.0, stop the service, back up its
 configuration, key and persistent state, uninstall the old service, then install
 v0.40.0 with separate config, state and runtime directories. Restore the backed
-up data into the corresponding current locations with restrictive permissions.
+up configuration, key and data files with restrictive permissions, but exclude
+the old state directory's `.profile` marker. The new registration creates a
+marker for the v0.40.0 installation.
 
 Identical protected snapshots can be reused when reinstalling; different config
 or key material requires an explicit migration. Failed registration rolls back
