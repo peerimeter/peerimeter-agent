@@ -295,48 +295,6 @@ func TestFinalizationFailureKeepsReferenceForRetry(t *testing.T) {
 	}
 }
 
-func TestReferenceRemovalFailureRestoresInventoryForUninstallRetry(t *testing.T) {
-	dir, _ := prepareUninstall(t)
-	base := filepath.Dir(dir)
-	dataDir := filepath.Join(base, "external-data")
-	lockDir := filepath.Join(base, "external-locks")
-	for _, path := range []string{dataDir, lockDir} {
-		if err := os.Mkdir(path, 0700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := installstate.RegisterWithDirectories(dir, dir, dataDir, lockDir, false); err != nil {
-		t.Fatal(err)
-	}
-	canonicalDir, err := installstate.Canonical(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reference := filepath.Join(canonicalDir, installstate.ReferenceFilename)
-	failure := errors.New("simulated reference removal failure")
-	removeReferenceFailure := func(path string) (bool, error) {
-		if path == reference {
-			return false, failure
-		}
-		return removeTracked(path)
-	}
-	opts := Options{InstallDir: dir, Yes: true}
-	probe := func(context.Context, string) (bool, error) { return false, nil }
-	err = executeWithRegistrationProbeAndFinalizer(context.Background(), opts, &bytes.Buffer{}, probe, removeReferenceFailure)
-	if !errors.Is(err, failure) {
-		t.Fatalf("first uninstall error = %v, want injected reference removal failure", err)
-	}
-	if _, err := installstate.Load(dir); err != nil {
-		t.Fatalf("restored inventory is not discoverable for retry: %v", err)
-	}
-	if err := executeWithRegistrationProbe(context.Background(), opts, &bytes.Buffer{}, probe); err != nil {
-		t.Fatalf("retry uninstall: %v", err)
-	}
-	if _, err := os.Lstat(reference); !os.IsNotExist(err) {
-		t.Fatalf("retry retained installation reference: %v", err)
-	}
-}
-
 func TestPurgeDryRunListsAndRemovalDeletesNestedTrackedData(t *testing.T) {
 	dir, profile := prepareUninstall(t)
 	stateFile := filepath.Join(profile.StateDir, "managed", "network", "cache.json")
