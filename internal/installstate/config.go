@@ -9,9 +9,6 @@ import (
 
 const ConfigMarkerFilename = ".config"
 
-// TODO(next major): remove reads and cleanup of the previous config marker filename.
-const LegacyConfigMarkerFilename = ".peerimeter-agent.config"
-
 // ValidateConfigClaim performs no writes. Service provisioning calls it before reading/reusing/creating snapshots.
 // Exclusive marker creation plus owner-checked rollback resolves competing claims.
 func ValidateConfigClaim(dir, stateDir, configDir string) error {
@@ -20,9 +17,6 @@ func ValidateConfigClaim(dir, stateDir, configDir string) error {
 		return err
 	}
 	data, markerErr := readPrivate(filepath.Join(target, ConfigMarkerFilename))
-	if os.IsNotExist(markerErr) {
-		data, markerErr = readPrivate(filepath.Join(target, LegacyConfigMarkerFilename))
-	}
 	if os.IsNotExist(markerErr) {
 		return nil
 	}
@@ -114,9 +108,6 @@ func VerifyConfigDirectory(inv Inventory, p Profile, dir string) (bool, error) {
 	}
 	data, err := readPrivate(filepath.Join(dir, ConfigMarkerFilename))
 	if os.IsNotExist(err) {
-		data, err = readPrivate(filepath.Join(dir, LegacyConfigMarkerFilename))
-	}
-	if os.IsNotExist(err) {
 		return false, nil
 	}
 	if err != nil {
@@ -129,8 +120,7 @@ func VerifyConfigDirectory(inv Inventory, p Profile, dir string) (bool, error) {
 	return json.Unmarshal(data, &got) == nil && got == expectedRuntime(inv, p), nil
 }
 
-// ReleaseConfig drops only a matching marker after its protected snapshots have
-// been removed. Migration uses it for legacy combined-directory cleanup.
+// ReleaseConfig drops a matching marker after its protected snapshots have been removed.
 func ReleaseConfig(dir, stateDir, configDir string) error {
 	inv, err := Load(dir)
 	if os.IsNotExist(err) {
@@ -160,13 +150,10 @@ func ReleaseConfig(dir, stateDir, configDir string) error {
 		}
 		for _, name := range []string{"service.yaml", "service.key"} {
 			if _, e := os.Lstat(filepath.Join(configDir, name)); !os.IsNotExist(e) {
-				return errors.New("legacy configuration snapshots remain; ownership marker was preserved")
+				return errors.New("protected configuration snapshots remain; ownership marker was preserved")
 			}
 		}
 		if e := os.Remove(filepath.Join(configDir, ConfigMarkerFilename)); e != nil && !os.IsNotExist(e) {
-			return e
-		}
-		if e := os.Remove(filepath.Join(configDir, LegacyConfigMarkerFilename)); e != nil && !os.IsNotExist(e) {
 			return e
 		}
 		entries, e := os.ReadDir(configDir)

@@ -37,25 +37,21 @@ type removalFile struct {
 	Marker bool   `json:"marker,omitempty"`
 }
 type removalPlan struct {
-	Version           int                    `json:"version"`
-	InstallID         string                 `json:"installation_id"`
-	InstallDir        string                 `json:"install_dir"`
-	ParentPID         int                    `json:"parent_pid"`
-	Inventory         string                 `json:"inventory"`
-	Lock              string                 `json:"lock"`
-	UpdateLock        string                 `json:"update_lock,omitempty"`
-	DataLock          string                 `json:"data_lock,omitempty"`
-	LegacyLock        string                 `json:"legacy_lock,omitempty"`
-	LegacyDataLock    string                 `json:"legacy_data_lock,omitempty"`
-	LegacyUpdateLock  string                 `json:"legacy_update_lock,omitempty"`
-	LegacyInventories []string               `json:"legacy_inventories,omitempty"`
-	Files             []removalFile          `json:"files"`
-	Directories       []string               `json:"directories"`
-	PurgeDirs         []string               `json:"purge_directories,omitempty"`
-	PurgeContents     map[string][]string    `json:"purge_contents,omitempty"`
-	PurgePreserve     []string               `json:"purge_preserve,omitempty"`
-	Profiles          []installstate.Profile `json:"profiles"`
-	ResultFile        string                 `json:"result_file"`
+	Version       int                    `json:"version"`
+	InstallID     string                 `json:"installation_id"`
+	InstallDir    string                 `json:"install_dir"`
+	ParentPID     int                    `json:"parent_pid"`
+	Inventory     string                 `json:"inventory"`
+	Lock          string                 `json:"lock"`
+	UpdateLock    string                 `json:"update_lock,omitempty"`
+	DataLock      string                 `json:"data_lock,omitempty"`
+	Files         []removalFile          `json:"files"`
+	Directories   []string               `json:"directories"`
+	PurgeDirs     []string               `json:"purge_directories,omitempty"`
+	PurgeContents map[string][]string    `json:"purge_contents,omitempty"`
+	PurgePreserve []string               `json:"purge_preserve,omitempty"`
+	Profiles      []installstate.Profile `json:"profiles"`
+	ResultFile    string                 `json:"result_file"`
 }
 type report struct {
 	State      string   `json:"state"`
@@ -69,64 +65,35 @@ type report struct {
 
 func resources(p installstate.Profile) []removalFile {
 	var files []removalFile
-	if p.LegacyConfigOwned && p.LegacyConfigDir != "" && p.LegacyConfigDir != p.ConfigDir {
-		files = append(files, serviceSnapshotFiles(p.LegacyConfigDir)...)
-	}
-	if p.PendingConfigOwned && p.PendingConfigDir != "" && p.PendingConfigDir != p.ConfigDir {
-		files = append(files, serviceSnapshotFiles(p.PendingConfigDir)...)
-		files = append(files, markerFiles(p.PendingConfigDir, installstate.ConfigMarkerFilename, installstate.LegacyConfigMarkerFilename)...)
-	}
 	if p.ConfigOwned && p.ConfigDir != "" {
 		files = append(files, serviceSnapshotFiles(p.ConfigDir)...)
-	}
-	if p.ConfigOwned {
-		files = append(files, markerFiles(p.ConfigDir, installstate.ConfigMarkerFilename, installstate.LegacyConfigMarkerFilename)...)
-	}
-	if p.LegacyConfigOwned && p.LegacyConfigDir != p.ConfigDir {
-		files = append(files, markerFiles(p.LegacyConfigDir, installstate.ConfigMarkerFilename, installstate.LegacyConfigMarkerFilename)...)
+		files = append(files, removalFile{Path: filepath.Join(p.ConfigDir, installstate.ConfigMarkerFilename), Marker: true})
 	}
 	for _, name := range []string{"network.yaml", "ownership", "agent.lock"} {
 		files = append(files, removalFile{Path: filepath.Join(p.StateDir, name)})
 	}
 	if p.RuntimeOwned {
-		files = append(files, removalFile{Path: filepath.Join(p.RuntimeDir, "control.sock")}, removalFile{Path: filepath.Join(p.RuntimeDir, installstate.RuntimeMarkerFilename), Marker: true}, removalFile{Path: filepath.Join(p.RuntimeDir, installstate.LegacyRuntimeMarkerFilename), Marker: true})
+		files = append(files, removalFile{Path: filepath.Join(p.RuntimeDir, "control.sock")}, removalFile{Path: filepath.Join(p.RuntimeDir, installstate.RuntimeMarkerFilename), Marker: true})
 	}
-	files = append(files, removalFile{Path: filepath.Join(p.StateDir, installstate.MarkerFilename), Marker: true}, removalFile{Path: filepath.Join(p.StateDir, installstate.LegacyMarkerFilename), Marker: true})
+	files = append(files, removalFile{Path: filepath.Join(p.StateDir, installstate.MarkerFilename), Marker: true})
 	return files
 }
-
 func serviceSnapshotFiles(dir string) []removalFile {
-	var files []removalFile
-	for _, name := range []string{"service.yaml", "service.json", "service.key"} {
-		files = append(files, removalFile{Path: filepath.Join(dir, name)})
-	}
-	return files
-}
-
-func markerFiles(dir, current, legacy string) []removalFile {
 	return []removalFile{
-		{Path: filepath.Join(dir, current), Marker: true},
-		{Path: filepath.Join(dir, legacy), Marker: true},
+		{Path: filepath.Join(dir, "service.yaml")},
+		{Path: filepath.Join(dir, "service.key")},
 	}
 }
-
 func ownedProfileDirs(profile installstate.Profile) []string {
 	dirs := []string{profile.StateDir}
-	if profile.PendingConfigOwned {
-		dirs = append(dirs, profile.PendingConfigDir)
-	}
 	if profile.ConfigOwned {
 		dirs = append(dirs, profile.ConfigDir)
-	}
-	if profile.LegacyConfigOwned {
-		dirs = append(dirs, profile.LegacyConfigDir)
 	}
 	if profile.RuntimeOwned {
 		dirs = append(dirs, profile.RuntimeDir)
 	}
 	return dirs
 }
-
 func collectPlannedPaths(plan removalPlan, purge bool) ([]string, map[string][]string, error) {
 	paths := make([]string, 0, len(plan.Files)+len(plan.Directories)+len(plan.PurgeDirs))
 	seen := make(map[string]bool)
@@ -142,10 +109,7 @@ func collectPlannedPaths(plan removalPlan, purge bool) ([]string, map[string][]s
 	for _, dir := range plan.Directories {
 		add(dir)
 	}
-	for _, path := range []string{plan.Lock, plan.LegacyLock, plan.Inventory, plan.UpdateLock, plan.LegacyUpdateLock, plan.DataLock, plan.LegacyDataLock} {
-		add(path)
-	}
-	for _, path := range plan.LegacyInventories {
+	for _, path := range []string{plan.Lock, plan.Inventory, plan.UpdateLock, plan.DataLock} {
 		add(path)
 	}
 	purgeContents := make(map[string][]string)
@@ -166,7 +130,7 @@ func collectPlannedPaths(plan removalPlan, purge bool) ([]string, map[string][]s
 
 func reportAlreadyAbsentOrUntracked(dir string, out io.Writer) error {
 	programNames := installstate.ProgramNames()
-	for _, name := range append(append(programNames, installstate.Filename, installstate.LegacyYAMLFilename, installstate.LegacyJSONFilename), installstate.ReferenceFilename, installstate.LegacyReferenceFilename) {
+	for _, name := range append(programNames, installstate.Filename, installstate.ReferenceFilename) {
 		if _, err := os.Lstat(filepath.Join(dir, name)); !os.IsNotExist(err) {
 			return errors.New("installation inventory is absent; existing files are untracked and were preserved")
 		}
@@ -237,14 +201,9 @@ func confirmUninstall(opts Options, plan removalPlan) (map[string][]string, erro
 	return purgeContents, nil
 }
 func makePlan(inv installstate.Inventory, purge bool) removalPlan {
-	inventoryName := installstate.Filename
-	if name, err := installstate.ExistingInventoryFilename(inv.DataDir); err == nil {
-		inventoryName = name
-	}
-	p := removalPlan{Version: 1, InstallID: inv.ID, InstallDir: inv.InstallDir, ParentPID: os.Getpid(), Inventory: filepath.Join(inv.DataDir, inventoryName), Lock: filepath.Join(inv.LockDir, installstate.LockFilename), UpdateLock: filepath.Join(inv.LockDir, selfupdate.UpdateLockFilename), LegacyLock: filepath.Join(inv.LockDir, installstate.LegacyLockFilename), LegacyUpdateLock: filepath.Join(inv.LockDir, selfupdate.LegacyUpdateLockFilename), LegacyInventories: []string{filepath.Join(inv.DataDir, installstate.LegacyYAMLFilename), filepath.Join(inv.DataDir, installstate.LegacyJSONFilename)}, Profiles: inv.Profiles}
+	p := removalPlan{Version: 1, InstallID: inv.ID, InstallDir: inv.InstallDir, ParentPID: os.Getpid(), Inventory: filepath.Join(inv.DataDir, installstate.Filename), Lock: filepath.Join(inv.LockDir, installstate.LockFilename), UpdateLock: filepath.Join(inv.LockDir, selfupdate.UpdateLockFilename), Profiles: inv.Profiles}
 	if inv.DataDir != inv.LockDir {
 		p.DataLock = filepath.Join(inv.DataDir, installstate.LockFilename)
-		p.LegacyDataLock = filepath.Join(inv.DataDir, installstate.LegacyLockFilename)
 	}
 	seen := map[string]bool{}
 	dirs := map[string]bool{inv.InstallDir: true, inv.DocDir: true, inv.DataDir: true, inv.LockDir: true}
@@ -295,7 +254,7 @@ func makePlan(inv installstate.Inventory, purge bool) removalPlan {
 	}
 	// Keep discovery metadata until every managed resource is gone, so a
 	// partial removal can load the same inventory and resume safely.
-	p.Files = append(p.Files, removalFile{Path: filepath.Join(inv.InstallDir, installstate.ReferenceFilename), Marker: true}, removalFile{Path: filepath.Join(inv.InstallDir, installstate.LegacyReferenceFilename), Marker: true})
+	p.Files = append(p.Files, removalFile{Path: filepath.Join(inv.InstallDir, installstate.ReferenceFilename), Marker: true})
 	for d := range dirs {
 		p.Directories = append(p.Directories, d)
 	}
@@ -313,17 +272,8 @@ func makePlan(inv installstate.Inventory, purge bool) removalPlan {
 }
 
 func finalizationResources(plan removalPlan) []string {
-	return append([]string{
-		plan.Lock,
-		plan.LegacyLock,
-		plan.DataLock,
-		plan.LegacyDataLock,
-		plan.UpdateLock,
-		plan.LegacyUpdateLock,
-		plan.Inventory,
-	}, plan.LegacyInventories...)
+	return []string{plan.Lock, plan.DataLock, plan.UpdateLock, plan.Inventory}
 }
-
 func windowsInstallerResourceRoot(inv installstate.Inventory) string {
 	if runtime.GOOS != "windows" {
 		return ""
@@ -357,9 +307,8 @@ func windowsInstallerResourceRoot(inv installstate.Inventory) string {
 }
 
 type confirmedProfile struct {
-	ID, ConfigDir, LegacyConfigDir, PendingConfigDir, PendingRuntimeDir string
-	StateDir, RuntimeDir                                                string
-	Service                                                             bool
+	ID, ConfigDir, StateDir, RuntimeDir string
+	Service                             bool
 }
 
 func samePathSet(a, b []string) bool {
@@ -407,7 +356,7 @@ func sameConfirmedPlan(a, b removalPlan) bool {
 }
 
 func profileForConfirmation(p installstate.Profile) confirmedProfile {
-	return confirmedProfile{p.ID, p.ConfigDir, p.LegacyConfigDir, p.PendingConfigDir, p.PendingRuntimeDir, p.StateDir, p.RuntimeDir, p.Service}
+	return confirmedProfile{p.ID, p.ConfigDir, p.StateDir, p.RuntimeDir, p.Service}
 }
 
 func listTree(root string) ([]string, error) {
@@ -467,18 +416,8 @@ func verifyProfileOwnership(inv *installstate.Inventory) error {
 		if err != nil {
 			return err
 		}
-		legacyConfigOwned, err := installstate.VerifyConfigDirectory(*inv, profile, profile.LegacyConfigDir)
-		if err != nil {
-			return err
-		}
-		pendingConfigOwned, err := installstate.VerifyConfigDirectory(*inv, profile, profile.PendingConfigDir)
-		if err != nil {
-			return err
-		}
 		inv.Profiles[i].RuntimeOwned = runtimeOwned
 		inv.Profiles[i].ConfigOwned = configOwned
-		inv.Profiles[i].LegacyConfigOwned = legacyConfigOwned
-		inv.Profiles[i].PendingConfigOwned = pendingConfigOwned
 	}
 	return nil
 }
@@ -560,10 +499,8 @@ func verifyProfile(inv installstate.Inventory, p installstate.Profile) error {
 	}
 	// A previous removal can finish a profile before failing on another file.
 	// Missing markers are accepted only when every other tracked leaf is absent.
-	for _, name := range []string{installstate.MarkerFilename, installstate.LegacyMarkerFilename} {
-		if _, e := os.Lstat(filepath.Join(p.StateDir, name)); !os.IsNotExist(e) {
-			return err
-		}
+	if _, e := os.Lstat(filepath.Join(p.StateDir, installstate.MarkerFilename)); !os.IsNotExist(e) {
+		return err
 	}
 	for _, f := range resources(p) {
 		if f.Marker {
@@ -626,30 +563,13 @@ func preflight(inv installstate.Inventory, p removalPlan) error {
 	return nil
 }
 func serviceConfig(p installstate.Profile) service.Config {
-	configPath := filepath.Join(p.ConfigDir, "service.yaml")
-	if _, err := os.Lstat(configPath); os.IsNotExist(err) {
-		legacyPath := filepath.Join(p.ConfigDir, "service.json")
-		if _, legacyErr := os.Lstat(legacyPath); legacyErr == nil {
-			configPath = legacyPath
-		}
-	}
-	return service.Config{ConfigPath: configPath, ConfigDirectory: p.ConfigDir, StateDirectory: p.StateDir, RuntimeDirectory: p.RuntimeDir}
+	return service.Config{ConfigPath: filepath.Join(p.ConfigDir, "service.yaml"), ConfigDirectory: p.ConfigDir, StateDirectory: p.StateDir, RuntimeDirectory: p.RuntimeDir}
 }
 func removeServices(ctx context.Context, exe string, profiles []installstate.Profile) error {
 	var failed []installstate.Profile
 	var problems []error
 	removed := false
 	candidates := append([]installstate.Profile{}, profiles...)
-	for _, p := range profiles {
-		if p.Service && p.PendingConfigOwned && p.PendingConfigDir != "" {
-			pending := p
-			pending.ConfigDir = p.PendingConfigDir
-			if p.PendingRuntimeDir != "" {
-				pending.RuntimeDir = p.PendingRuntimeDir
-			}
-			candidates = append(candidates, pending)
-		}
-	}
 	for _, p := range candidates {
 		if !p.Service {
 			continue
@@ -775,7 +695,7 @@ func executeWithRegistrationProbeAndFinalizer(ctx context.Context, opts Options,
 	}
 	confirmedPlan := plan
 	// Refuse an untracked native registration before any tombstone or lock-file
-	// mutation, so legacy service migration remains available after refusal.
+	// mutation, so retry remains available after refusal.
 	if !hasTrackedService(inv.Profiles) {
 		if err := requireNoOwnedRegistration(ctx, registrationExecutable(dir), probe); err != nil {
 			return err
@@ -1029,7 +949,7 @@ func isCommandAlias(path string) bool {
 }
 
 func isInstallationReference(path, installDir string) bool {
-	return path == filepath.Join(installDir, installstate.ReferenceFilename) || path == filepath.Join(installDir, installstate.LegacyReferenceFilename)
+	return path == filepath.Join(installDir, installstate.ReferenceFilename)
 }
 
 type trackedFileRemover func(string) (bool, error)
@@ -1039,8 +959,7 @@ func removeFinalizationResources(plan removalPlan, installDir string, remove tra
 	if err != nil {
 		return nil, fmt.Errorf("read uninstall inventory before finalization: %w", err)
 	}
-	paths := finalizationResources(plan)
-	paths = append(paths, filepath.Join(installDir, installstate.ReferenceFilename), filepath.Join(installDir, installstate.LegacyReferenceFilename))
+	paths := append(finalizationResources(plan), filepath.Join(installDir, installstate.ReferenceFilename))
 	var removed []string
 	inventoryRemoved := false
 	for _, path := range paths {
@@ -1128,7 +1047,7 @@ func requireNoOwnedRegistration(ctx context.Context, executable string, probe re
 		return fmt.Errorf("incomplete uninstall: native registration could not be verified; managed data and program files were preserved: %w", err)
 	}
 	if owned {
-		return errors.New("incomplete uninstall: an untracked native service still references this executable; migrate its legacy profile or remove its registration before retrying; managed data and program files were preserved")
+		return errors.New("incomplete uninstall: an untracked native service still references this executable; remove its registration before retrying; managed data and program files were preserved")
 	}
 	return nil
 }

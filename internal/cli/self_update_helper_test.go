@@ -82,13 +82,12 @@ func TestReadWindowsUpdateResultRetainsStoppedProfile(t *testing.T) {
 	}
 }
 
-func TestStoppedProfileForHelperDistinguishesNoneFromLegacyResult(t *testing.T) {
-	registered := &installstate.Profile{ID: "registered-service", Service: true, ConfigDir: "config", StateDir: "state", RuntimeDir: "runtime"}
-	inv := installstate.Inventory{Profiles: []installstate.Profile{*registered}}
+func TestStoppedProfileForHelperDistinguishesExplicitNoneFromUnset(t *testing.T) {
+	inv := installstate.Inventory{}
 	if got := stoppedProfileForHelper(windowsUpdateResult{StoppedProfileSet: true}, inv); got != nil {
 		t.Fatalf("explicitly empty stopped profile = %+v, want nil", got)
 	}
-	if got := stoppedProfileForHelper(windowsUpdateResult{}, inv); got == nil || got.ID != registered.ID {
-		t.Fatalf("legacy stopped profile fallback = %+v, want %+v", got, registered)
+	if got := stoppedProfileForHelper(windowsUpdateResult{}, inv); got != nil {
+		t.Fatalf("unset stopped profile = %+v, want nil", got)
 	}
 }

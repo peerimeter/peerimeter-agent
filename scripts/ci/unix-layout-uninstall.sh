@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Real native installation, separate directories, live legacy migration and full
+# Real native installation, separate directories, restart behavior and full
 # removal. Run only on an isolated CI runner: it exercises machine-wide defaults.
 set -Eeuo pipefail
 umask 077

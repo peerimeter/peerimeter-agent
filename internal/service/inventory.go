@@ -15,19 +15,6 @@ func recordProfile(cfg Config) error {
 	return installstate.RegisterProfile(filepath.Dir(executable), installstate.Profile{ConfigDir: snapshotDirectory(cfg), StateDir: cfg.StateDirectory, RuntimeDir: serviceRuntime(cfg), Service: true, ClaimConfig: true})
 }
 
-func registerMigratedService(cfg Config) error {
-	if err := nativeManage("install", cfg); err != nil {
-		return err
-	}
-	executable := currentExecutable()
-	old := installstate.Profile{ConfigDir: cfg.StateDirectory, StateDir: cfg.StateDirectory, RuntimeDir: cfg.StateDirectory, Service: true}
-	next := installstate.Profile{ConfigDir: snapshotDirectory(cfg), StateDir: cfg.StateDirectory, RuntimeDir: serviceRuntime(cfg), Service: true, ClaimConfig: true}
-	if err := installstate.MigrateProfile(filepath.Dir(executable), old, next); err != nil {
-		return errors.Join(err, nativeManage("uninstall", cfg))
-	}
-	return nil
-}
-
 func captureServiceStartup() (*installstate.Startup, error) {
 	executable := currentExecutable()
 	if executable == "" {

@@ -103,12 +103,10 @@ func (s *Startup) RegisterProfile(p Profile) error {
 		return err
 	}
 	if !s.registered {
-		for _, name := range []string{MarkerFilename, LegacyMarkerFilename} {
-			if _, err := os.Lstat(filepath.Join(p.StateDir, name)); err == nil {
-				return errors.New("persistent state belongs to an installed agent; source builds cannot adopt it")
-			} else if !os.IsNotExist(err) {
-				return err
-			}
+		if _, err := os.Lstat(filepath.Join(p.StateDir, MarkerFilename)); err == nil {
+			return errors.New("persistent state belongs to an installed agent; source builds cannot adopt it")
+		} else if !os.IsNotExist(err) {
+			return err
 		}
 		return nil
 	}
@@ -116,55 +114,4 @@ func (s *Startup) RegisterProfile(p Profile) error {
 		return errors.New("startup inventory lease is already closed")
 	}
 	return registerProfileLocked(s.dir, p)
-}
-
-// ClaimMigrationConfig authorizes provisional snapshots without switching the
-// active profile paths before native service registration succeeds. Recording
-// the pending target also makes a crash before MigrateProfile fully removable.
-func (s *Startup) ClaimMigrationConfig(next Profile) error {
-	if err := s.Check(); err != nil {
-		return err
-	}
-	if !s.registered {
-		return ValidateConfigClaim(s.dir, next.StateDir, next.ConfigDir)
-	}
-	if s.lease == nil {
-		return errors.New("migration configuration claim requires the startup lease")
-	}
-	inv, err := Load(s.dir)
-	if err != nil {
-		return err
-	}
-	state, err := Canonical(next.StateDir)
-	if err != nil {
-		return err
-	}
-	cfg, err := Canonical(next.ConfigDir)
-	if err != nil {
-		return err
-	}
-	run, err := Canonical(next.RuntimeDir)
-	if err != nil {
-		return err
-	}
-	for i, p := range inv.Profiles {
-		if p.StateDir != state {
-			continue
-		}
-		candidate := p
-		candidate.ConfigDir = cfg
-		if err := ValidateConfigClaim(s.dir, state, cfg); err != nil {
-			return err
-		}
-		inv.Profiles[i].PendingConfigDir = cfg
-		inv.Profiles[i].PendingRuntimeDir = run
-		if err := save(inv); err != nil {
-			return err
-		}
-		if err := claimConfig(inv, candidate); err != nil {
-			return err
-		}
-		return nil
-	}
-	return errors.New("migration requires a planned legacy persistent-state profile")
 }

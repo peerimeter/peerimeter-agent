@@ -15,10 +15,7 @@ import (
 
 const JournalFilename = ".update-journal.json"
 
-// TODO(next major): remove recovery and locking support for the former filenames.
-const LegacyJournalFilename = ".peerimeter-agent.update-journal.json"
 const UpdateLockFilename = ".update.lock"
-const LegacyUpdateLockFilename = ".peerimeter-agent.update.lock"
 
 // LockUpdate owns an update transaction across inventory-lock release windows
 // such as service restart and readiness verification.
@@ -27,33 +24,17 @@ func LockUpdate(inv installstate.Inventory) (io.Closer, error) {
 	if err != nil {
 		return nil, err
 	}
-	locks := lockGroup{lock}
-	// TODO(next major): remove locking compatibility for the previous filename.
-	legacyPath := filepath.Join(inv.LockDir, LegacyUpdateLockFilename)
-	if _, err := os.Lstat(legacyPath); err == nil {
-		legacyLock, lockErr := installstate.LockNamed(inv.LockDir, LegacyUpdateLockFilename, inv.AllowInsecureInstallDir)
-		if lockErr != nil {
-			_ = locks.Close()
-			return nil, lockErr
-		}
-		locks = append(locks, legacyLock)
-	} else if !os.IsNotExist(err) {
-		_ = locks.Close()
-		return nil, err
-	}
-	return locks, nil
+	return lock, nil
 }
 
 func FindJournal(inv installstate.Inventory) (string, bool, error) {
-	for _, name := range []string{JournalFilename, LegacyJournalFilename} {
-		path := filepath.Join(inv.LockDir, name)
-		if _, err := os.Lstat(path); err == nil {
-			return path, true, nil
-		} else if !os.IsNotExist(err) {
-			return "", false, err
-		}
+	path := filepath.Join(inv.LockDir, JournalFilename)
+	if _, err := os.Lstat(path); err == nil {
+		return path, true, nil
+	} else if !os.IsNotExist(err) {
+		return "", false, err
 	}
-	return filepath.Join(inv.LockDir, JournalFilename), false, nil
+	return path, false, nil
 }
 
 type lockGroup []io.Closer
@@ -96,12 +77,10 @@ func Apply(inv installstate.Inventory, packageFiles map[string][]byte) (map[stri
 		}
 	}
 	journalPath := filepath.Join(inv.LockDir, JournalFilename)
-	for _, name := range []string{JournalFilename, LegacyJournalFilename} {
-		if _, err := os.Lstat(filepath.Join(inv.LockDir, name)); err == nil {
-			return nil, nil, nil, errors.New("an interrupted update must be recovered before starting another update")
-		} else if !os.IsNotExist(err) {
-			return nil, nil, nil, err
-		}
+	if _, err := os.Lstat(journalPath); err == nil {
+		return nil, nil, nil, errors.New("an interrupted update must be recovered before starting another update")
+	} else if !os.IsNotExist(err) {
+		return nil, nil, nil, err
 	}
 	j := journal{Version: 1, InstallID: inv.ID, State: "applying"}
 	hashes := make(map[string]string, len(inv.Files))
@@ -271,10 +250,6 @@ func writeTempSiblingFile(targetPath, prefix string, info os.FileInfo, writeFn f
 // update ownership lock and installstate lock; profile paths are preserved.
 func RecoverLocked(inv installstate.Inventory) error {
 	path := filepath.Join(inv.LockDir, JournalFilename)
-	if _, err := os.Lstat(path); os.IsNotExist(err) {
-		// TODO(next major): remove recovery of the previous update journal filename.
-		path = filepath.Join(inv.LockDir, LegacyJournalFilename)
-	}
 	if err := installstate.CheckPrivateFile(path); err != nil {
 		if os.IsNotExist(err) {
 			return nil

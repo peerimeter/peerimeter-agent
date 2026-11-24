@@ -358,6 +358,6 @@ service_installed=false
 if ip link show dev pm-service >/dev/null 2>&1; then echo 'systemd uninstall left its interface behind.' >&2; exit 1; fi
 echo 'Passed: systemd install, boot enable, start, stop, second start and uninstall; protected keys/config preserved until test cleanup.'
 
-# Fresh default/custom installs, live combined-layout migration and complete
+# Fresh default/custom installs and complete
 # removal use the actual operator installer and its protected inventory.
 bash "$(dirname "$0")/unix-layout-uninstall.sh" "$AGENT"

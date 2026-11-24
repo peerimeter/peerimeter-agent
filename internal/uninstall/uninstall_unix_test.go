@@ -62,32 +62,6 @@ func prepareUninstall(t *testing.T) (string, installstate.Profile) {
 	return dir, p
 }
 
-func TestLegacyJSONSnapshotIsRemovedAndUsedForOwnership(t *testing.T) {
-	_, p := prepareUninstall(t)
-	if err := os.Remove(filepath.Join(p.ConfigDir, "service.yaml")); err != nil {
-		t.Fatal(err)
-	}
-	legacyPath := filepath.Join(p.ConfigDir, "service.json")
-	if err := os.WriteFile(legacyPath, []byte("{}"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if got := serviceConfig(p).ConfigPath; got != legacyPath {
-		t.Fatalf("service config path = %q, want %q", got, legacyPath)
-	}
-	found := false
-	owned := p
-	owned.ConfigOwned = true
-	for _, file := range resources(owned) {
-		if file.Path == legacyPath {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatal("legacy JSON snapshot missing from owned removal plan")
-	}
-}
-
 func snapshotTree(t *testing.T, root string) map[string]string {
 	t.Helper()
 	canonicalRoot, err := filepath.EvalSymlinks(root)
@@ -415,14 +389,14 @@ func TestPurgeDryRunListsAndRemovalDeletesNestedTrackedData(t *testing.T) {
 
 func TestPurgePreservesOnlyScheduledMarkersUntilMarkerPhase(t *testing.T) {
 	root := t.TempDir()
-	markers := []string{installstate.MarkerFilename, installstate.LegacyMarkerFilename}
-	untrackedMarkers := []string{installstate.ConfigMarkerFilename, installstate.LegacyConfigMarkerFilename, installstate.RuntimeMarkerFilename, installstate.LegacyRuntimeMarkerFilename}
+	markers := []string{installstate.MarkerFilename}
+	untrackedMarkers := []string{installstate.ConfigMarkerFilename, installstate.RuntimeMarkerFilename}
 	for _, name := range append(append(markers, untrackedMarkers...), "agent.lock", "untracked.txt") {
 		if err := os.WriteFile(filepath.Join(root, name), []byte("fixture"), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	planned := []removalFile{{Path: filepath.Join(root, installstate.MarkerFilename), Marker: true}, {Path: filepath.Join(root, installstate.LegacyMarkerFilename), Marker: true}}
+	planned := []removalFile{{Path: filepath.Join(root, installstate.MarkerFilename), Marker: true}}
 	if _, err := removeDirectoryContents(root, plannedMarkersForRoot(root, removalPlan{Files: planned})); err != nil {
 		t.Fatal(err)
 	}
@@ -872,7 +846,7 @@ func TestUntrackedNativeRegistrationBlocksProgramAndIdentityDeletion(t *testing.
 	}
 	pending, err := installstate.Load(dir)
 	if err != nil || pending.Removing {
-		t.Fatal("read-only untracked-service refusal blocked later migration")
+		t.Fatal("read-only untracked-service refusal blocked later uninstall retry")
 	}
 	after, _ := os.ReadFile(filepath.Join(dir, installstate.Filename))
 	if !bytes.Equal(after, originalManifest) {
