@@ -34,15 +34,15 @@ type File struct {
 	SHA256 string `json:"sha256" yaml:"sha256"`
 }
 type Profile struct {
-	ID                 string `json:"id,omitempty" yaml:"id,omitempty"`
-	ConfigDir          string `json:"config_dir,omitempty" yaml:"config_dir,omitempty"`
-	StateDir           string `json:"state_dir" yaml:"state_dir"`
-	RuntimeDir         string `json:"runtime_dir" yaml:"runtime_dir"`
-	Service            bool   `json:"service,omitempty" yaml:"service,omitempty"`
-	RuntimeOwned       bool   `json:"runtime_owned,omitempty" yaml:"runtime_owned,omitempty"`
-	ConfigOwned        bool   `json:"config_owned,omitempty" yaml:"config_owned,omitempty"`
-	ClaimConfig        bool   `json:"-" yaml:"-"`
-	ClaimRuntime       bool   `json:"-" yaml:"-"`
+	ID           string `json:"id,omitempty" yaml:"id,omitempty"`
+	ConfigDir    string `json:"config_dir,omitempty" yaml:"config_dir,omitempty"`
+	StateDir     string `json:"state_dir" yaml:"state_dir"`
+	RuntimeDir   string `json:"runtime_dir" yaml:"runtime_dir"`
+	Service      bool   `json:"service,omitempty" yaml:"service,omitempty"`
+	RuntimeOwned bool   `json:"runtime_owned,omitempty" yaml:"runtime_owned,omitempty"`
+	ConfigOwned  bool   `json:"config_owned,omitempty" yaml:"config_owned,omitempty"`
+	ClaimConfig  bool   `json:"-" yaml:"-"`
+	ClaimRuntime bool   `json:"-" yaml:"-"`
 }
 type Inventory struct {
 	Version                 int       `json:"version" yaml:"version"`
@@ -844,7 +844,7 @@ func registerProfileLocked(dir string, p Profile) error {
 			return err
 		}
 	}
-		for _, path := range []string{p.ConfigDir, p.StateDir, p.RuntimeDir} {
+	for _, path := range []string{p.ConfigDir, p.StateDir, p.RuntimeDir} {
 		if path != "" {
 			if err := CheckDirectoryWithPolicy(path, inv.AllowInsecureInstallDir); err != nil {
 				return err

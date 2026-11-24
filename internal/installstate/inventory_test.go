@@ -1,7 +1,6 @@
 package installstate
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
