@@ -52,6 +52,9 @@ func renderResponse(out io.Writer, raw []byte, color bool, width int) error {
 	if _, ok := fields["service_installed"]; ok {
 		return writeServiceStatus(out, fields)
 	}
+	if _, ok := fields["service_status_error"]; ok {
+		return writeServiceStatus(out, fields)
+	}
 	if state, ok := fields["state"]; ok {
 		var status string
 		if err := json.Unmarshal(state, &status); err == nil && status == "registered" {
@@ -128,29 +131,52 @@ func renderResponse(out io.Writer, raw []byte, color bool, width int) error {
 
 func writeServiceStatus(out io.Writer, fields map[string]json.RawMessage) error {
 	var status struct {
-		Installed bool `json:"service_installed"`
-		Running   bool `json:"service_running"`
+		Installed *bool  `json:"service_installed"`
+		Running   *bool  `json:"service_running"`
+		Error     string `json:"service_status_error"`
 	}
-	if err := json.Unmarshal(fields["service_installed"], &status.Installed); err != nil {
+	if raw, ok := fields["service_installed"]; ok {
+		if err := json.Unmarshal(raw, &status.Installed); err != nil {
+			return err
+		}
+	}
+	if raw, ok := fields["service_running"]; ok {
+		if err := json.Unmarshal(raw, &status.Running); err != nil {
+			return err
+		}
+	}
+	if raw, ok := fields["service_status_error"]; ok {
+		if err := json.Unmarshal(raw, &status.Error); err != nil {
+			return err
+		}
+	}
+	installed := serviceStatusValue(status.Installed)
+	running := serviceStatusValue(status.Running)
+	if _, err := fmt.Fprintf(out, "Service installed: %s\nService running: %s\n", installed, running); err != nil {
 		return err
 	}
-	if err := json.Unmarshal(fields["service_running"], &status.Running); err != nil {
+	if status.Error != "" {
+		_, err := fmt.Fprintf(out, "Service status error: %s\n", presentation.Safe(status.Error))
 		return err
 	}
-	installed, running := "no", "no"
-	if status.Installed {
-		installed = "yes"
+	return nil
+}
+
+func serviceStatusValue(value *bool) string {
+	if value == nil {
+		return "unknown"
 	}
-	if status.Running {
-		running = "yes"
+	if *value {
+		return "yes"
 	}
-	_, err := fmt.Fprintf(out, "Service installed: %s\nService running: %s\n", installed, running)
-	return err
+	return "no"
 }
 
 func writeServiceStatusIfPresent(out io.Writer, fields map[string]json.RawMessage) error {
 	if _, ok := fields["service_installed"]; !ok {
-		return nil
+		if _, ok := fields["service_status_error"]; !ok {
+			return nil
+		}
 	}
 	return writeServiceStatus(out, fields)
 }

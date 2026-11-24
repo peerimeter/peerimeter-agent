@@ -130,18 +130,30 @@ func writeNetworkSnapshots(out io.Writer, snapshots []platform.Snapshot) error {
 	return json.NewEncoder(out).Encode(networkSnapshots{Networks: snapshots})
 }
 
-func writeStatusSnapshots(out io.Writer, snapshots []platform.Snapshot, serviceStatus service.Status) error {
+func writeStatusSnapshots(out io.Writer, snapshots []platform.Snapshot, serviceStatus service.Status, inspectionErr error) error {
 	encoder := json.NewEncoder(out)
+	installed, running, statusError := statusFields(serviceStatus, inspectionErr)
 	if len(snapshots) == 1 {
 		return encoder.Encode(struct {
 			platform.Snapshot
-			service.Status
-		}{Snapshot: snapshots[0], Status: serviceStatus})
+			ServiceInstalled   *bool  `json:"service_installed,omitempty"`
+			ServiceRunning     *bool  `json:"service_running,omitempty"`
+			ServiceStatusError string `json:"service_status_error,omitempty"`
+		}{Snapshot: snapshots[0], ServiceInstalled: installed, ServiceRunning: running, ServiceStatusError: statusError})
 	}
 	return encoder.Encode(struct {
-		Networks []platform.Snapshot `json:"networks"`
-		service.Status
-	}{Networks: snapshots, Status: serviceStatus})
+		Networks           []platform.Snapshot `json:"networks"`
+		ServiceInstalled   *bool               `json:"service_installed,omitempty"`
+		ServiceRunning     *bool               `json:"service_running,omitempty"`
+		ServiceStatusError string              `json:"service_status_error,omitempty"`
+	}{Networks: snapshots, ServiceInstalled: installed, ServiceRunning: running, ServiceStatusError: statusError})
+}
+
+func statusFields(status service.Status, inspectionErr error) (*bool, *bool, string) {
+	if inspectionErr != nil {
+		return nil, nil, inspectionErr.Error()
+	}
+	return &status.Installed, &status.Running, ""
 }
 
 func requestAllNetworks(ctx context.Context, layout paths.Layout, requestedID, operation string, out io.Writer) error {
