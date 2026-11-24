@@ -10,7 +10,6 @@ import (
 
 	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"github.com/peerimeter/peerimeter-agent/internal/local"
-	"github.com/peerimeter/peerimeter-agent/internal/logging"
 	"github.com/peerimeter/peerimeter-agent/internal/paths"
 	"github.com/spf13/cobra"
 )
@@ -49,15 +48,11 @@ func runDaemon(cmd *cobra.Command, app *application, opts daemonOptions) error {
 	if opts.interval <= 0 {
 		return errors.New("--sync-interval must be greater than zero")
 	}
-	if app.jsonOutput {
-		handler, err := logging.NewHandler("json", os.Stderr)
-		if err != nil {
-			return err
-		}
-		previous := slog.Default()
-		slog.SetDefault(slog.New(handler))
-		defer slog.SetDefault(previous)
+	restoreLogger, err := withJSONStderrLogger(app.jsonOutput)
+	if err != nil {
+		return err
 	}
+	defer restoreLogger()
 	layout, err := paths.Resolve(opts.paths)
 	if err != nil {
 		return err
@@ -79,11 +74,7 @@ func runDaemon(cmd *cobra.Command, app *application, opts daemonOptions) error {
 		}
 		return staticCommandWithBackground(cmd.Context(), cmd.Name(), opts.path, opts.override, layout, opts.operator, app.out, app.backend, nil, 0, background)
 	}
-	configs, err := discoverManagedConfigs(layout)
-	if err != nil {
-		return err
-	}
-	configs, err = matchingConfig(configs, opts.networkID)
+	configs, err := loadSelectedManagedConfigs(layout, opts.networkID)
 	if err != nil {
 		return err
 	}

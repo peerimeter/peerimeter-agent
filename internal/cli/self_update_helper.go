@@ -205,34 +205,7 @@ func runWindowsRecoveryHelper(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	var recoveryErr error
-	profileCheckFailed := false
-	transactionDeadline := time.Now().Add(45 * time.Second)
-	for time.Now().Before(transactionDeadline) {
-		if err := ctx.Err(); err != nil {
-			recoveryErr = err
-			break
-		}
-		current, loadErr := installstate.Load(installDir)
-		if loadErr != nil {
-			recoveryErr = loadErr
-			break
-		}
-		if recoveryErr = ensureNoActiveUpdateProfiles(current); recoveryErr != nil {
-			profileCheckFailed = true
-			break
-		}
-		recoveryErr = selfupdate.RecoverLocked(current)
-		if recoveryErr == nil {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			recoveryErr = ctx.Err()
-			break
-		case <-time.After(250 * time.Millisecond):
-		}
-	}
+	profileCheckFailed, recoveryErr := retryWindowsRecoveryLocked(ctx, installDir)
 	if profileCheckFailed {
 		return restartServiceAfterRecoveryAbort(ctx, profile, lock, recoveryErr, startManagedService, waitForService)
 	}
@@ -248,6 +221,33 @@ func runWindowsRecoveryHelper(ctx context.Context, args []string) error {
 		}
 	}
 	return nil
+}
+
+func retryWindowsRecoveryLocked(ctx context.Context, installDir string) (bool, error) {
+	var recoveryErr error
+	transactionDeadline := time.Now().Add(45 * time.Second)
+	for time.Now().Before(transactionDeadline) {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		current, err := installstate.Load(installDir)
+		if err != nil {
+			return false, err
+		}
+		if err := ensureNoActiveUpdateProfiles(current); err != nil {
+			return true, err
+		}
+		recoveryErr = selfupdate.RecoverLocked(current)
+		if recoveryErr == nil {
+			return false, nil
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	return false, recoveryErr
 }
 
 func restartServiceAfterRecoveryAbort(ctx context.Context, profile *installstate.Profile, lock io.Closer, cause error, start func(installstate.Profile) error, wait func(context.Context, string) error) error {
@@ -325,22 +325,29 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) (resultErr error
 		return err
 	}
 	defer func() { _ = scheduleWindowsCleanup(transactionDir) }()
+	updatedVersion, updatedProfile, serviceRestartAttempted, err := applyWindowsHelperUpdate(ctx, installDir, transactionDir, inv, profile)
+	profile = updatedProfile
+	return err
+}
+
+func applyWindowsHelperUpdate(ctx context.Context, installDir, transactionDir string, inv installstate.Inventory, profile *installstate.Profile) (string, *installstate.Profile, bool, error) {
 	manifest, files, manifestProfile, err := loadAndVerifyHelperManifest(transactionDir, inv)
 	if err != nil {
-		return err
+		return "", profile, false, err
 	}
-	updatedVersion = manifest.Version
+	updatedVersion := manifest.Version
 	if manifestProfile != nil {
 		profile = manifestProfile
 	}
 	_, rollback, commit, lock, err := applyHelperUpdateWithRetry(ctx, installDir, manifest, files)
+	serviceRestartAttempted := false
 	if err != nil {
 		err, serviceRestartAttempted = restartAfterWindowsReplacementFailure(err, profile, startManagedService)
-		return err
+		return updatedVersion, profile, serviceRestartAttempted, err
 	}
 	if err := lock.Close(); err != nil {
 		serviceRestartAttempted = profile != nil
-		return helperRollback(installDir, rollback, profileValue(profile), err)
+		return updatedVersion, profile, serviceRestartAttempted, helperRollback(installDir, rollback, profileValue(profile), err)
 	}
 	if profile != nil {
 		serviceRestartAttempted = true
@@ -355,18 +362,17 @@ func runWindowsUpdateHelper(ctx context.Context, args []string) (resultErr error
 		)
 		if err != nil {
 			if rollbackMustWaitForRecovery(err) {
-				return windowsHelperRecoveryPending(err)
+				return updatedVersion, profile, serviceRestartAttempted, windowsHelperRecoveryPending(err)
 			}
-			return helperRollback(installDir, rollback, profileValue, err)
+			return updatedVersion, profile, serviceRestartAttempted, helperRollback(installDir, rollback, profileValue, err)
 		}
 	} else if err := verifyUpdatedBinary(ctx, filepath.Join(installDir, "peerimeter-agent.exe"), manifest.Version); err != nil {
-		return helperRollback(installDir, rollback, installstate.Profile{}, err)
+		return updatedVersion, profile, serviceRestartAttempted, helperRollback(installDir, rollback, installstate.Profile{}, err)
 	}
 	if err := commit(); err != nil {
-		return err
+		return updatedVersion, profile, serviceRestartAttempted, err
 	}
-	resultErr = nil
-	return nil
+	return updatedVersion, profile, serviceRestartAttempted, nil
 }
 
 func applyHelperUpdateWithRetry(ctx context.Context, installDir string, manifest helperManifest, files map[string][]byte) (map[string]string, func() error, func() error, io.Closer, error) {

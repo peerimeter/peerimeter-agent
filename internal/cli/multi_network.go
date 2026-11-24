@@ -31,6 +31,11 @@ type managedConfig struct {
 	profileScoped bool
 }
 
+const (
+	defaultWireGuardPortStart = 51820
+	maxUDPPort                = 65535
+)
+
 func discoverManagedConfigs(layout paths.Layout) ([]managedConfig, error) {
 	networkIDs, err := managedNetworkIDs(layout.StateDir)
 	if err != nil {
@@ -62,17 +67,9 @@ func discoverManagedConfigs(layout paths.Layout) ([]managedConfig, error) {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
 			continue
 		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("network configuration %q must not be a symlink", entry.Name())
-		}
-		info, err := entry.Info()
-		if err != nil || !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("network configuration %q is not a regular file", entry.Name())
-		}
-		path := filepath.Join(layout.ConfigDir, entry.Name())
-		cfg, err := config.Load(path)
+		cfg, path, err := loadManagedConfigEntry(layout.ConfigDir, entry)
 		if err != nil {
-			return nil, fmt.Errorf("load network configuration %q: %w", entry.Name(), err)
+			return nil, err
 		}
 		if entry.Name() != "service.yaml" && strings.TrimSuffix(entry.Name(), ".yaml") != cfg.Network.ID {
 			return nil, fmt.Errorf("configuration %q filename must match its network ID %q", path, cfg.Network.ID)
@@ -97,6 +94,30 @@ func discoverManagedConfigs(layout paths.Layout) ([]managedConfig, error) {
 		return nil, errors.New("no network YAML configurations found in config-dir")
 	}
 	return configs, nil
+}
+
+func loadManagedConfigEntry(configDir string, entry os.DirEntry) (config.Config, string, error) {
+	path := filepath.Join(configDir, entry.Name())
+	if entry.Type()&os.ModeSymlink != 0 {
+		return config.Config{}, "", fmt.Errorf("network configuration %q must not be a symlink", entry.Name())
+	}
+	info, err := entry.Info()
+	if err != nil || !info.Mode().IsRegular() {
+		return config.Config{}, "", fmt.Errorf("network configuration %q is not a regular file", entry.Name())
+	}
+	loaded, err := config.Load(path)
+	if err != nil {
+		return config.Config{}, "", fmt.Errorf("load network configuration %q: %w", entry.Name(), err)
+	}
+	return loaded, path, nil
+}
+
+func loadSelectedManagedConfigs(layout paths.Layout, networkID string) ([]managedConfig, error) {
+	configs, err := discoverManagedConfigs(layout)
+	if err != nil {
+		return nil, err
+	}
+	return matchingConfig(configs, networkID)
 }
 
 func networkLayout(layout paths.Layout, networkID string) paths.Layout {
@@ -178,35 +199,47 @@ func runManagedConfigs(ctx context.Context, commandName, override, operator stri
 }
 
 func validateNetworkConflicts(configs []managedConfig) error {
-	for i := range configs {
-		firstName := ""
+	prepared := make([]preparedNetworkConfig, 0, len(configs))
+	for _, managed := range configs {
+		item := preparedNetworkConfig{managed: managed, prefixes: networkPrefixes(managed.config)}
 		if runtime.GOOS == "linux" {
-			var err error
-			firstName, err = ifname.Resolve(configs[i].networkID, configs[i].config.Network.Name, configs[i].config.Interface.Name)
+			name, err := ifname.Resolve(managed.networkID, managed.config.Network.Name, managed.config.Interface.Name)
 			if err != nil {
-				return fmt.Errorf("network %q interface: %w", configs[i].networkID, err)
+				return fmt.Errorf("network %q interface: %w", managed.networkID, err)
+			}
+			item.interfaceName = name
+		}
+		prepared = append(prepared, item)
+	}
+	for i := range prepared {
+		for j := i + 1; j < len(prepared); j++ {
+			if err := checkPairwiseConflict(prepared[i], prepared[j]); err != nil {
+				return err
 			}
 		}
-		firstRoutes := networkPrefixes(configs[i].config)
-		for j := i + 1; j < len(configs); j++ {
-			if runtime.GOOS == "linux" {
-				secondName, err := ifname.Resolve(configs[j].networkID, configs[j].config.Network.Name, configs[j].config.Interface.Name)
-				if err != nil {
-					return fmt.Errorf("network %q interface: %w", configs[j].networkID, err)
-				}
-				if firstName == secondName {
-					return fmt.Errorf("networks %q and %q use the same Linux interface name %q", configs[i].networkID, configs[j].networkID, firstName)
-				}
-			}
-			if configs[i].config.Interface.ListenPort == configs[j].config.Interface.ListenPort {
-				return fmt.Errorf("networks %q and %q use the same WireGuard listen port %d", configs[i].networkID, configs[j].networkID, configs[i].config.Interface.ListenPort)
-			}
-			for _, firstPrefix := range firstRoutes {
-				for _, secondPrefix := range networkPrefixes(configs[j].config) {
-					if firstPrefix.Overlaps(secondPrefix) {
-						return fmt.Errorf("networks %q and %q have overlapping routes", configs[i].networkID, configs[j].networkID)
-					}
-				}
+	}
+	return nil
+}
+
+type preparedNetworkConfig struct {
+	managed       managedConfig
+	interfaceName string
+	prefixes      []netip.Prefix
+}
+
+func checkPairwiseConflict(first, second preparedNetworkConfig) error {
+	firstID, secondID := first.managed.networkID, second.managed.networkID
+	if runtime.GOOS == "linux" && first.interfaceName == second.interfaceName {
+		return fmt.Errorf("networks %q and %q use the same Linux interface name %q", firstID, secondID, first.interfaceName)
+	}
+	firstPort := first.managed.config.Interface.ListenPort
+	if firstPort == second.managed.config.Interface.ListenPort {
+		return fmt.Errorf("networks %q and %q use the same WireGuard listen port %d", firstID, secondID, firstPort)
+	}
+	for _, firstPrefix := range first.prefixes {
+		for _, secondPrefix := range second.prefixes {
+			if firstPrefix.Overlaps(secondPrefix) {
+				return fmt.Errorf("networks %q and %q have overlapping routes", firstID, secondID)
 			}
 		}
 	}
@@ -247,7 +280,7 @@ func allocateListenPort(configDir, stateDir, networkID string) (int, error) {
 	if existingPort != 0 {
 		return existingPort, nil
 	}
-	for port := 51820; port <= 65535; port++ {
+	for port := defaultWireGuardPortStart; port <= maxUDPPort; port++ {
 		if _, used := usedPorts[port]; !used {
 			return port, nil
 		}

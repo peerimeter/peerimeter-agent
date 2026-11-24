@@ -56,26 +56,37 @@ func darwinLaunchctl(args ...string) error {
 	return nil
 }
 func darwinInstalled() error {
-	info, err := os.Lstat(darwinServicePlist)
+	installed, err := inspectDarwinInstallation()
 	if err != nil {
-		return errors.New("Peerimeter launchd service is not installed")
+		return err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 {
-		return errors.New("refusing to use an insecure or non-regular launchd service plist")
+	if !installed {
+		return errors.New("Peerimeter launchd service is not installed")
 	}
 	return nil
 }
 
-func nativeStatus() (Status, error) {
+func inspectDarwinInstallation() (bool, error) {
 	info, err := os.Lstat(darwinServicePlist)
 	if os.IsNotExist(err) {
-		return Status{}, nil
+		return false, nil
 	}
 	if err != nil {
-		return Status{}, errors.New("cannot inspect Peerimeter launchd service")
+		return false, errors.New("cannot inspect Peerimeter launchd service")
 	}
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0022 != 0 {
-		return Status{}, errors.New("refusing to use an insecure or non-regular launchd service plist")
+		return false, errors.New("refusing to use an insecure or non-regular launchd service plist")
+	}
+	return true, nil
+}
+
+func nativeStatus() (Status, error) {
+	installed, err := inspectDarwinInstallation()
+	if err != nil {
+		return Status{}, err
+	}
+	if !installed {
+		return Status{}, nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

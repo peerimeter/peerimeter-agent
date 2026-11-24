@@ -63,11 +63,6 @@ func networkRuntimeLayouts(ctx context.Context, layout paths.Layout, requestedID
 		if root != nil && root.networkID == requestedID {
 			return []networkRuntime{*root}, nil
 		}
-		for _, profile := range profiles {
-			if profile.networkID == requestedID {
-				return []networkRuntime{profile}, nil
-			}
-		}
 		return nil, fmt.Errorf("network %q has no known runtime profile", requestedID)
 	}
 	if root != nil {
@@ -121,13 +116,6 @@ func readNetworkSnapshots(ctx context.Context, layout paths.Layout, requestedID 
 		snapshots = append(snapshots, snapshot)
 	}
 	return snapshots, errors.Join(failures...)
-}
-
-func writeNetworkSnapshots(out io.Writer, snapshots []platform.Snapshot) error {
-	if len(snapshots) == 1 {
-		return json.NewEncoder(out).Encode(snapshots[0])
-	}
-	return json.NewEncoder(out).Encode(networkSnapshots{Networks: snapshots})
 }
 
 func writeStatusSnapshots(out io.Writer, snapshots []platform.Snapshot, serviceStatus service.Status, inspectionErr error) error {
@@ -184,7 +172,7 @@ func requestAllNetworks(ctx context.Context, layout paths.Layout, requestedID, o
 			return err
 		}
 	}
-	return errors.Join(failures...)
+	return nil
 }
 
 type bufferWriter struct{ data []byte }

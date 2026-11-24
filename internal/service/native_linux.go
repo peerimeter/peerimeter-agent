@@ -218,6 +218,16 @@ func RemoveOwned(ctx context.Context, expectedExe string, cfg Config) error {
 	if err != nil {
 		return err
 	}
+	if err := verifyLinuxServiceUnitOwnership(data, expectedExe, cfg); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nativeManage("uninstall", cfg)
+}
+
+func verifyLinuxServiceUnitOwnership(data []byte, expectedExe string, cfg Config) error {
 	expectedConfig := cfg.ConfigPath
 	if expectedConfig == "" {
 		expectedConfig = filepath.Join(snapshotDirectory(cfg), "service.yaml")
@@ -262,10 +272,7 @@ func RemoveOwned(ctx context.Context, expectedExe string, cfg Config) error {
 	if !found {
 		return errors.New("systemd executable registration is missing")
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return nativeManage("uninstall", cfg)
+	return nil
 }
 
 // installLinuxService refuses to repurpose even a Peerimeter-marked unit when

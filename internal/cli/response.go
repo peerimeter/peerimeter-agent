@@ -21,21 +21,7 @@ func renderResponse(out io.Writer, raw []byte, color bool, width int) error {
 		return fmt.Errorf("decode command result: %w", err)
 	}
 	if rawNetworks, ok := fields["networks"]; ok {
-		var result networkSnapshots
-		if err := json.Unmarshal(rawNetworks, &result.Networks); err != nil {
-			return err
-		}
-		for i, snapshot := range result.Networks {
-			if i > 0 {
-				if _, err := io.WriteString(out, "\n"); err != nil {
-					return err
-				}
-			}
-			if err := presentation.StatusOverview(out, snapshot, time.Now(), color, width); err != nil {
-				return err
-			}
-		}
-		return writeServiceStatusIfPresent(out, fields)
+		return renderMultiNetworkSnapshots(out, fields, rawNetworks, color, width)
 	}
 	if _, ok := fields["network_id"]; ok {
 		if _, ok := fields["peers"]; ok {
@@ -46,54 +32,15 @@ func renderResponse(out io.Writer, raw []byte, color bool, width int) error {
 			if err := presentation.StatusOverview(out, snapshot, time.Now(), color, width); err != nil {
 				return err
 			}
-			return writeServiceStatusIfPresent(out, fields)
-		}
-	}
-	if _, ok := fields["service_installed"]; ok {
-		return writeServiceStatus(out, fields)
-	}
-	if _, ok := fields["service_status_error"]; ok {
-		return writeServiceStatus(out, fields)
-	}
-	if state, ok := fields["state"]; ok {
-		var status string
-		if err := json.Unmarshal(state, &status); err == nil && status == "registered" {
-			var result struct {
-				NetworkID     string `json:"network_id"`
-				NodeID        string `json:"node_id"`
-				TunnelAddress string `json:"tunnel_address"`
-				PeerCount     int    `json:"peer_count"`
-			}
-			if err := json.Unmarshal(raw, &result); err != nil {
-				return err
-			}
-			_, err := fmt.Fprintf(out, "Joined network %s as %s (%s); %d peers configured.\n", presentation.Safe(result.NetworkID), presentation.Safe(result.NodeID), presentation.Safe(result.TunnelAddress), result.PeerCount)
+			_, err := writeServiceStatusIfPresent(out, fields)
 			return err
 		}
-		if err := json.Unmarshal(state, &status); err == nil && status == "example_generated" {
-			_, err := io.WriteString(out, "Example configuration generated. Credentials: protected local key files; keep private.\n")
-			return err
-		}
-		if err := json.Unmarshal(state, &status); err == nil && status == "removed" {
-			var paths []string
-			if rawPaths, ok := fields["paths"]; ok {
-				if err := json.Unmarshal(rawPaths, &paths); err != nil {
-					return err
-				}
-			}
-			if len(paths) == 0 {
-				_, err := io.WriteString(out, "Installation removed; there were no remaining files to delete.\n")
-				return err
-			}
-			if _, err := fmt.Fprintf(out, "Installation removed. Deleted %d files:\n", len(paths)); err != nil {
-				return err
-			}
-			rows := make([][]string, len(paths))
-			for i, path := range paths {
-				rows[i] = []string{path}
-			}
-			return presentation.Table(out, []string{"Deleted files"}, rows, color, width)
-		}
+	}
+	if wrote, err := writeServiceStatusIfPresent(out, fields); wrote || err != nil {
+		return err
+	}
+	if handled, err := renderActionSummary(out, raw, fields, color, width); handled || err != nil {
+		return err
 	}
 	if len(fields) == 1 {
 		for key, rawValue := range fields {
@@ -127,6 +74,78 @@ func renderResponse(out io.Writer, raw []byte, color bool, width int) error {
 		rows = append(rows, []string{responseLabel(key), consoleValue(value)})
 	}
 	return presentation.Table(out, nil, rows, color, width)
+}
+
+func renderActionSummary(out io.Writer, raw []byte, fields map[string]json.RawMessage, color bool, width int) (bool, error) {
+	state, ok := fields["state"]
+	if !ok {
+		return false, nil
+	}
+	var status string
+	if err := json.Unmarshal(state, &status); err != nil {
+		return false, nil
+	}
+	switch status {
+	case "registered":
+		var result struct {
+			NetworkID     string `json:"network_id"`
+			NodeID        string `json:"node_id"`
+			TunnelAddress string `json:"tunnel_address"`
+			PeerCount     int    `json:"peer_count"`
+		}
+		if err := json.Unmarshal(raw, &result); err != nil {
+			return true, err
+		}
+		_, err := fmt.Fprintf(out, "Joined network %s as %s (%s); %d peers configured.\n", presentation.Safe(result.NetworkID), presentation.Safe(result.NodeID), presentation.Safe(result.TunnelAddress), result.PeerCount)
+		return true, err
+	case "example_generated":
+		_, err := io.WriteString(out, "Example configuration generated. Credentials: protected local key files; keep private.\n")
+		return true, err
+	case "removed":
+		return renderRemovedSummary(out, fields, color, width)
+	default:
+		return false, nil
+	}
+}
+
+func renderRemovedSummary(out io.Writer, fields map[string]json.RawMessage, color bool, width int) (bool, error) {
+	var paths []string
+	if rawPaths, ok := fields["paths"]; ok {
+		if err := json.Unmarshal(rawPaths, &paths); err != nil {
+			return true, err
+		}
+	}
+	if len(paths) == 0 {
+		_, err := io.WriteString(out, "Installation removed; there were no remaining files to delete.\n")
+		return true, err
+	}
+	if _, err := fmt.Fprintf(out, "Installation removed. Deleted %d files:\n", len(paths)); err != nil {
+		return true, err
+	}
+	rows := make([][]string, len(paths))
+	for index, path := range paths {
+		rows[index] = []string{path}
+	}
+	return true, presentation.Table(out, []string{"Deleted files"}, rows, color, width)
+}
+
+func renderMultiNetworkSnapshots(out io.Writer, fields map[string]json.RawMessage, rawNetworks json.RawMessage, color bool, width int) error {
+	var result networkSnapshots
+	if err := json.Unmarshal(rawNetworks, &result.Networks); err != nil {
+		return err
+	}
+	for index, snapshot := range result.Networks {
+		if index > 0 {
+			if _, err := io.WriteString(out, "\n"); err != nil {
+				return err
+			}
+		}
+		if err := presentation.StatusOverview(out, snapshot, time.Now(), color, width); err != nil {
+			return err
+		}
+	}
+	_, err := writeServiceStatusIfPresent(out, fields)
+	return err
 }
 
 func writeServiceStatus(out io.Writer, fields map[string]json.RawMessage) error {
@@ -172,13 +191,13 @@ func serviceStatusValue(value *bool) string {
 	return "no"
 }
 
-func writeServiceStatusIfPresent(out io.Writer, fields map[string]json.RawMessage) error {
+func writeServiceStatusIfPresent(out io.Writer, fields map[string]json.RawMessage) (bool, error) {
 	if _, ok := fields["service_installed"]; !ok {
 		if _, ok := fields["service_status_error"]; !ok {
-			return nil
+			return false, nil
 		}
 	}
-	return writeServiceStatus(out, fields)
+	return true, writeServiceStatus(out, fields)
 }
 
 func responseLabel(key string) string {

@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,9 +28,6 @@ func newUpdateCommand(app *application) *cobra.Command {
 		Short: "Check whether a newer agent version is available",
 		Args:  noArguments,
 		RunE: app.handle(func(cmd *cobra.Command) error {
-			if app.color != "auto" && app.color != "always" && app.color != "never" {
-				return errors.New("color must be auto, always or never")
-			}
 			return checkForUpgrade(cmd.Context(), app.out, app.color, true, app.jsonOutput)
 		}),
 	}
