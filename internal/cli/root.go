@@ -89,7 +89,11 @@ func executeWithEnvironment(ctx context.Context, args []string, out, errOut io.W
 		return 0
 	}
 	if !app.ran {
-		showCommandHelpForMissingInput(root, args, err)
+		if isMissingRequiredInput(err) {
+			showCommandHelpForMissingInput(root, args, err)
+		} else {
+			err = errors.New("invalid command or arguments; use --help")
+		}
 	}
 	format := settings.LogFormat
 	if app.jsonOutput {
@@ -206,7 +210,29 @@ Use "peerimeter-agent info" to view environment variables and resolved directori
 	helpCommand.Flags().BoolVar(&showHidden, "all", false, "List all commands, including hidden commands")
 	root.SetHelpCommand(helpCommand)
 	root.AddCommand(newVersionCommand(app), newInfoCommand(app), newUpdateCommand(app), newSelfUpdateCommand(app), newUpdateHelperCommand(app), newUpdateRecoveryHelperCommand(app), newGenerateExampleCommand(app), newJoinCommand(app), newRunCommand(app), newDaemonCommand(app), newValidateConfigCommand(app), newStatusCommand(app), newWGCommand(app), newSyncCommand(app), newStopCommand(app), newServiceCommand(app), newUninstallCommand(app), newRegisterInstallationCommand(app), newStunCommand(app))
+	requireSubcommandActions(root, app)
 	return root
+}
+
+func requireSubcommandActions(root *cobra.Command, app *application) {
+	for _, command := range root.Commands() {
+		requireSubcommandAction(command, app)
+	}
+}
+
+func requireSubcommandAction(command *cobra.Command, app *application) {
+	if command.HasAvailableSubCommands() && !command.Runnable() {
+		command.Args = cobra.MinimumNArgs(1)
+		command.RunE = app.handle(func(cmd *cobra.Command) error {
+			if err := cmd.Help(); err != nil {
+				return err
+			}
+			return fmt.Errorf("%s requires a subcommand", cmd.CommandPath())
+		})
+	}
+	for _, child := range command.Commands() {
+		requireSubcommandAction(child, app)
+	}
 }
 
 func showHiddenCommands(root *cobra.Command) func() {
