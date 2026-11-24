@@ -49,7 +49,7 @@ func managedNetworkIDs(stateDir string) ([]string, error) {
 func readManagedNetworkMetadata(stateDir, networkID string) (managedNetworkMetadata, error) {
 	var metadata managedNetworkMetadata
 	metadataPath := filepath.Join(stateDir, "managed", networkID+".yaml")
-	data, err := secret.ReadProtectedText(metadataPath, 16<<10)
+	data, err := secret.ReadProtectedText(metadataPath, maxCredentialFileBytes)
 	if err != nil {
 		return metadata, errors.New("managed service metadata is unavailable; rejoin this network or supply --api-url")
 	}
@@ -73,7 +73,7 @@ func managedServiceClient(options serviceConfigOptions, layout paths.Layout) (*s
 		apiURL = metadata.APIURL
 		allowInsecureHTTP = allowInsecureHTTP || metadata.AllowInsecureHTTP
 	}
-	token, err := secret.ReadProtectedText(filepath.Join(layout.StateDir, "managed", options.networkID+".token"), 16<<10)
+	token, err := secret.ReadProtectedText(filepath.Join(layout.StateDir, "managed", options.networkID+".token"), maxCredentialFileBytes)
 	if err != nil {
 		return nil, errors.New("managed network credential is unavailable; run join before syncing")
 	}

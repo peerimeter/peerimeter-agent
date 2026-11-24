@@ -145,51 +145,7 @@ func nativeManage(action string, cfg Config) error {
 	}
 	defer manager.Disconnect()
 	if action == "install" {
-		exe, err := os.Executable()
-		if err != nil {
-			return errors.New("cannot locate Windows agent executable")
-		}
-		for _, path := range []string{exe, cfg.ConfigPath, cfg.StateDirectory} {
-			if err := serviceSecureAncestors(path); err != nil {
-				return err
-			}
-		}
-		static, err := config.Load(cfg.ConfigPath)
-		if err != nil {
-			return err
-		}
-		for _, object := range []struct {
-			path      string
-			directory bool
-			private   bool
-		}{
-			{filepath.Dir(exe), true, false}, {exe, false, false},
-			{filepath.Dir(cfg.ConfigPath), true, false}, {cfg.ConfigPath, false, false},
-			{filepath.Dir(static.Interface.PrivateKeyFile), true, true}, {static.Interface.PrivateKeyFile, false, true},
-			{cfg.StateDirectory, true, true},
-		} {
-			if err := serviceSecureObject(object.path, object.directory, object.private); err != nil {
-				return fmt.Errorf("validate Windows service resource %s: %w", object.path, err)
-			}
-		}
-		s, err := manager.CreateService(windowsServiceName, exe, mgr.Config{
-			DisplayName: "Peerimeter Agent", Description: "Offline static WireGuard mesh agent",
-			StartType: mgr.StartAutomatic, ErrorControl: mgr.ErrorNormal,
-			ServiceStartName: "LocalSystem", Dependencies: []string{"Tcpip"},
-		}, serviceArguments(cfg)...)
-		if err != nil {
-			return fmt.Errorf("install Windows agent service: %w", err)
-		}
-		defer s.Close()
-		if err := s.SetRecoveryActions([]mgr.RecoveryAction{{Type: mgr.ServiceRestart, Delay: 5 * time.Second}, {Type: mgr.ServiceRestart, Delay: 15 * time.Second}, {Type: mgr.ServiceRestart, Delay: 30 * time.Second}}, 24*60*60); err != nil {
-			_ = s.Delete()
-			return fmt.Errorf("configure Windows service restart policy: %w", err)
-		}
-		if err := s.SetRecoveryActionsOnNonCrashFailures(true); err != nil {
-			_ = s.Delete()
-			return fmt.Errorf("configure Windows service failure policy: %w", err)
-		}
-		return nil
+		return installWindowsService(manager, cfg)
 	}
 	s, err := manager.OpenService(windowsServiceName)
 	if err != nil {
@@ -215,30 +171,92 @@ func nativeManage(action string, cfg Config) error {
 	}
 }
 
-func nativeStatus() (Status, error) {
-	manager, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
+func installWindowsService(manager *mgr.Mgr, cfg Config) error {
+	exe, err := os.Executable()
 	if err != nil {
-		return Status{}, fmt.Errorf("connect to Windows Service Control Manager: %w", err)
+		return errors.New("cannot locate Windows agent executable")
 	}
-	defer windows.CloseServiceHandle(manager)
-
-	serviceName, err := windows.UTF16PtrFromString(windowsServiceName)
-	if err != nil {
-		return Status{}, errors.New("invalid Windows service name")
-	}
-	service, err := windows.OpenService(manager, serviceName, windows.SERVICE_QUERY_STATUS)
-	if err != nil {
-		if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
-			return Status{}, nil
+	for _, path := range []string{exe, cfg.ConfigPath, cfg.StateDirectory} {
+		if err := serviceSecureAncestors(path); err != nil {
+			return err
 		}
+	}
+	static, err := config.Load(cfg.ConfigPath)
+	if err != nil {
+		return err
+	}
+	for _, object := range []struct {
+		path      string
+		directory bool
+		private   bool
+	}{
+		{filepath.Dir(exe), true, false}, {exe, false, false},
+		{filepath.Dir(cfg.ConfigPath), true, false}, {cfg.ConfigPath, false, false},
+		{filepath.Dir(static.Interface.PrivateKeyFile), true, true}, {static.Interface.PrivateKeyFile, false, true},
+		{cfg.StateDirectory, true, true},
+	} {
+		if err := serviceSecureObject(object.path, object.directory, object.private); err != nil {
+			return fmt.Errorf("validate Windows service resource %s: %w", object.path, err)
+		}
+	}
+	s, err := manager.CreateService(windowsServiceName, exe, mgr.Config{
+		DisplayName: "Peerimeter Agent", Description: "Offline static WireGuard mesh agent",
+		StartType: mgr.StartAutomatic, ErrorControl: mgr.ErrorNormal,
+		ServiceStartName: "LocalSystem", Dependencies: []string{"Tcpip"},
+	}, serviceArguments(cfg)...)
+	if err != nil {
+		return fmt.Errorf("install Windows agent service: %w", err)
+	}
+	defer s.Close()
+	if err := s.SetRecoveryActions([]mgr.RecoveryAction{{Type: mgr.ServiceRestart, Delay: 5 * time.Second}, {Type: mgr.ServiceRestart, Delay: 15 * time.Second}, {Type: mgr.ServiceRestart, Delay: 30 * time.Second}}, 24*60*60); err != nil {
+		_ = s.Delete()
+		return fmt.Errorf("configure Windows service restart policy: %w", err)
+	}
+	if err := s.SetRecoveryActionsOnNonCrashFailures(true); err != nil {
+		_ = s.Delete()
+		return fmt.Errorf("configure Windows service failure policy: %w", err)
+	}
+	return nil
+
+}
+
+func nativeStatus() (Status, error) {
+	manager, handle, exists, err := openWindowsServiceHandle(windows.SERVICE_QUERY_STATUS)
+	if err != nil {
 		return Status{}, fmt.Errorf("inspect Windows agent service: %w", err)
 	}
-	defer windows.CloseServiceHandle(service)
+	defer windows.CloseServiceHandle(manager)
+	if !exists {
+		return Status{}, nil
+	}
+	defer windows.CloseServiceHandle(handle)
 	var status windows.SERVICE_STATUS
-	if err := windows.QueryServiceStatus(service, &status); err != nil {
+	if err := windows.QueryServiceStatus(handle, &status); err != nil {
 		return Status{}, fmt.Errorf("query Windows agent service: %w", err)
 	}
 	return Status{Installed: true, Running: status.CurrentState == windows.SERVICE_RUNNING}, nil
+}
+
+func openWindowsServiceHandle(access uint32) (windows.Handle, windows.Handle, bool, error) {
+	manager, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	serviceName, err := windows.UTF16PtrFromString(windowsServiceName)
+	if err != nil {
+		windows.CloseServiceHandle(manager)
+		return 0, 0, false, errors.New("invalid Windows service name")
+	}
+	handle, err := windows.OpenService(manager, serviceName, access)
+	if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+		windows.CloseServiceHandle(manager)
+		return 0, 0, false, nil
+	}
+	if err != nil {
+		windows.CloseServiceHandle(manager)
+		return 0, 0, false, err
+	}
+	return manager, handle, true, nil
 }
 
 type windowsHandler struct {
@@ -445,22 +463,11 @@ func HasOwnedRegistration(ctx context.Context, expectedExe string) (bool, error)
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	manager, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
-	if err != nil {
+	manager, handle, exists, err := openWindowsServiceHandle(windows.SERVICE_QUERY_CONFIG)
+	if err != nil || !exists {
 		return false, err
 	}
 	defer windows.CloseServiceHandle(manager)
-	name, err := windows.UTF16PtrFromString(windowsServiceName)
-	if err != nil {
-		return false, err
-	}
-	handle, err := windows.OpenService(manager, name, windows.SERVICE_QUERY_CONFIG)
-	if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
 	registered := &mgr.Service{Name: windowsServiceName, Handle: handle}
 	defer registered.Close()
 	settings, err := registered.Config()

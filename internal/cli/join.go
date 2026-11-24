@@ -24,6 +24,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	defaultPersistentKeepaliveSeconds = 25
+	maxCredentialFileBytes            = 16 << 10
+)
+
 type registeredPeer struct {
 	Version        int      `json:"version"`
 	NodeID         string   `json:"node_id"`
@@ -91,7 +96,7 @@ func refreshManagedPeers(ctx context.Context, client *serviceapi.Client, network
 				continue
 			}
 		}
-		desired.Peers = append(desired.Peers, config.Peer{PublicKey: peer.PublicKey, AllowedIPs: []string{peer.TunnelAddress + "/32"}, Endpoint: endpoint, PersistentKeepaliveSeconds: 25})
+		desired.Peers = append(desired.Peers, config.Peer{PublicKey: peer.PublicKey, AllowedIPs: []string{peer.TunnelAddress + "/32"}, Endpoint: endpoint, PersistentKeepaliveSeconds: defaultPersistentKeepaliveSeconds})
 	}
 	return desired, nil
 }
@@ -162,18 +167,9 @@ func runJoin(ctx context.Context, app *application, opts joinOptions) error {
 		return fmt.Errorf("cannot serialize network enrollment: %w", err)
 	}
 	defer joinLock.Close()
-	if opts.listenPortSet {
-		if opts.listenPort < 1 || opts.listenPort > 65535 {
-			return errors.New("--listen-port must be between 1 and 65535")
-		}
-		if err := ensureListenPortAvailable(layout.ConfigDir, layout.StateDir, networkID, opts.listenPort); err != nil {
-			return err
-		}
-	} else {
-		opts.listenPort, err = allocateListenPort(layout.ConfigDir, layout.StateDir, networkID)
-		if err != nil {
-			return err
-		}
+	opts.listenPort, err = resolveOrAllocateJoinPort(opts, layout, networkID)
+	if err != nil {
+		return err
 	}
 	network, err := client.GetNetwork(ctx, networkID)
 	if err != nil {
@@ -211,12 +207,34 @@ func runJoin(ctx context.Context, app *application, opts joinOptions) error {
 	if err != nil || prefixErr != nil || !prefix.Contains(address) {
 		return errors.New("service assigned a tunnel address outside the network CIDR")
 	}
-	configPath := filepath.Join(layout.ConfigDir, networkID+".yaml")
 	desired := config.Config{Version: 1, Mode: "static", Network: config.Network{ID: network.ID, Name: network.Name, CIDR: network.CIDR}, Interface: config.Interface{PrivateKeyFile: keyPath, Address: []string{address.String() + "/32"}, ListenPort: opts.listenPort}}
 	initial, err := refreshManagedPeers(ctx, client, networkID, nodeID, underlay.Addresses, desired)
 	if err != nil {
 		return err
 	}
+	if err := persistJoinedNetworkState(layout, bundle, nodeID, opts.allowInsecureHTTP, initial); err != nil {
+		return err
+	}
+	if err := json.NewEncoder(app.out).Encode(map[string]any{"state": "registered", "network_id": networkID, "node_id": nodeID, "tunnel_address": registered.TunnelAddress, "peer_count": len(initial.Peers)}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func resolveOrAllocateJoinPort(opts joinOptions, layout paths.Layout, networkID string) (int, error) {
+	if !opts.listenPortSet {
+		return allocateListenPort(layout.ConfigDir, layout.StateDir, networkID)
+	}
+	if opts.listenPort < 1 || opts.listenPort > maxUDPPort {
+		return 0, errors.New("--listen-port must be between 1 and 65535")
+	}
+	if err := ensureListenPortAvailable(layout.ConfigDir, layout.StateDir, networkID, opts.listenPort); err != nil {
+		return 0, err
+	}
+	return opts.listenPort, nil
+}
+
+func persistJoinedNetworkState(layout paths.Layout, bundle serviceapi.JoinBundle, nodeID string, allowInsecureHTTP bool, initial config.Config) error {
 	encoded, err := config.MarshalYAML(initial)
 	if err != nil {
 		return err
@@ -224,19 +242,17 @@ func runJoin(ctx context.Context, app *application, opts joinOptions) error {
 	if err := config.Validate(initial, runtime.GOOS); err != nil {
 		return err
 	}
+	configPath := filepath.Join(layout.ConfigDir, initial.Network.ID+".yaml")
 	if err := writeConfigFile(configPath, encoded); err != nil {
 		return errors.New("cannot securely update managed network configuration")
 	}
-	if err := saveManagedToken(filepath.Join(layout.StateDir, "managed", networkID+".token"), bundle.EnrollmentToken); err != nil {
+	if err := saveManagedToken(filepath.Join(layout.StateDir, "managed", initial.Network.ID+".token"), bundle.EnrollmentToken); err != nil {
 		return err
 	}
-	if err := saveManagedNetworkMetadata(layout.StateDir, managedNetworkMetadata{Version: 1, APIURL: bundle.APIURL, NetworkID: networkID, NodeID: nodeID, AllowInsecureHTTP: opts.allowInsecureHTTP}); err != nil {
-		return err
-	}
-	if err := json.NewEncoder(app.out).Encode(map[string]any{"state": "registered", "network_id": networkID, "node_id": nodeID, "tunnel_address": registered.TunnelAddress, "peer_count": len(initial.Peers)}); err != nil {
-		return err
-	}
-	return nil
+	return saveManagedNetworkMetadata(layout.StateDir, managedNetworkMetadata{
+		Version: 1, APIURL: bundle.APIURL, NetworkID: initial.Network.ID, NodeID: nodeID,
+		AllowInsecureHTTP: allowInsecureHTTP,
+	})
 }
 
 func readJoinToken(token, tokenFile string, stdin io.Reader) (string, error) {
@@ -256,8 +272,8 @@ func readJoinToken(token, tokenFile string, stdin io.Reader) (string, error) {
 		defer file.Close()
 		reader = file
 	}
-	data, err := io.ReadAll(io.LimitReader(reader, 16<<10+1))
-	if err != nil || len(data) > 16<<10 {
+	data, err := io.ReadAll(io.LimitReader(reader, maxCredentialFileBytes+1))
+	if err != nil || len(data) > maxCredentialFileBytes {
 		return "", errors.New("could not read join token from stdin or token is too large")
 	}
 	token = strings.TrimSpace(string(data))
@@ -311,7 +327,7 @@ func localJoinDirectory(path string) error {
 }
 
 func saveManagedToken(path, token string) error {
-	if existing, err := secret.ReadProtectedText(path, 16<<10); err == nil {
+	if existing, err := secret.ReadProtectedText(path, maxCredentialFileBytes); err == nil {
 		if strings.TrimSpace(existing) == token {
 			return nil
 		}

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/peerimeter/peerimeter-agent/internal/presentation"
 	"github.com/spf13/cobra"
@@ -26,9 +25,6 @@ const versionLogo = `        .---o---.
 
 func newVersionCommand(app *application) *cobra.Command {
 	cmd := &cobra.Command{Use: "version", Short: "Show the Peerimeter logo and version (or --json)", Args: noArguments, RunE: app.handle(func(*cobra.Command) error {
-		if app.color != "auto" && app.color != "always" && app.color != "never" {
-			return errors.New("color must be auto, always or never")
-		}
 		if app.jsonOutput {
 			return json.NewEncoder(app.out).Encode(map[string]string{"version": Version, "go_version": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH})
 		}

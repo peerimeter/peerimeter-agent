@@ -724,17 +724,14 @@ func RegisterWithDirectories(dir, docDir, dataDir, lockDir string, allowInsecure
 		return err
 	}
 	inv.Files = nil
-	for _, name := range ProgramNames() {
-		resourceDir := dir
-		if name == "peerimeter-agent.NOTICES.txt" {
-			resourceDir = docDir
-		}
-		hash, e := Hash(filepath.Join(resourceDir, name))
-		if e != nil {
-			return fmt.Errorf("inspect installed program resource %s: %w", name, e)
-		}
-		inv.Files = append(inv.Files, File{Name: name, Dir: resourceDir, SHA256: hash})
+	inv.Files, err = hashProgramFiles(dir, docDir)
+	if err != nil {
+		return err
 	}
+	return persistInventoryWithReference(inv, dir, dataDir, allowInsecure)
+}
+
+func persistInventoryWithReference(inv Inventory, dir, dataDir string, allowInsecure bool) error {
 	previousInventory, previousInventoryName, previousInventoryErr := readInventory(dataDir)
 	if previousInventoryErr != nil && !os.IsNotExist(previousInventoryErr) {
 		return fmt.Errorf("read previous installation inventory: %w", previousInventoryErr)
@@ -752,6 +749,22 @@ func RegisterWithDirectories(dir, docDir, dataDir, lockDir string, allowInsecure
 		return errors.Join(fmt.Errorf("update installation reference: %w", err), rollbackErr, referenceErr)
 	}
 	return nil
+}
+
+func hashProgramFiles(dir, docDir string) ([]File, error) {
+	files := make([]File, 0, len(ProgramNames()))
+	for _, name := range ProgramNames() {
+		resourceDir := dir
+		if name == "peerimeter-agent.NOTICES.txt" {
+			resourceDir = docDir
+		}
+		hash, err := Hash(filepath.Join(resourceDir, name))
+		if err != nil {
+			return nil, fmt.Errorf("inspect installed program resource %s: %w", name, err)
+		}
+		files = append(files, File{Name: name, Dir: resourceDir, SHA256: hash})
+	}
+	return files, nil
 }
 
 func restoreInstallReference(dir string, previous []byte, previousErr error, allowInsecure bool) error {

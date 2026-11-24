@@ -30,12 +30,6 @@ func newStatusCommand(app *application) *cobra.Command {
 			return err
 		}
 		snapshots, readErr := readNetworkSnapshots(cmd.Context(), layout, networkID)
-		if len(snapshots) == 0 {
-			if err := writeStatusSnapshots(app.out, snapshots, serviceStatus, serviceStatusErr); err != nil {
-				return err
-			}
-			return errors.Join(readErr, serviceStatusErr)
-		}
 		if err := writeStatusSnapshots(app.out, snapshots, serviceStatus, serviceStatusErr); err != nil {
 			return err
 		}
