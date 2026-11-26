@@ -29,9 +29,8 @@ jobs:
               .jobs[]
               | select(
                   .name == "darwin / Test, integration & package"
-                  and .conclusion == "failure"
-                  and .runner_name == null
-                  and .started_at == null
+                  and .conclusion == "cancelled"
+                  and (.runner_name == null or .runner_name == "")
                   and (.labels | index("macos-15") != null)
                 )
             ]
