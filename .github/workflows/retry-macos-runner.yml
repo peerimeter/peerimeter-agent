@@ -1,0 +1,47 @@
+name: Retry macOS runner acquisition failures
+
+on:
+  workflow_run:
+    workflows: [Peerimeter CI and Release]
+    types: [completed]
+
+permissions:
+  actions: write
+
+jobs:
+  retry-macos-runner:
+    name: Retry unacquired macOS arm64 job
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.run_attempt == 1 &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Rerun only the unacquired macOS arm64 job
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          jobs=$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100")
+          job_id=$(jq -r '
+            [
+              .jobs[]
+              | select(
+                  .name == "darwin / Test, integration & package"
+                  and .conclusion == "failure"
+                  and .runner_name == null
+                  and .started_at == null
+                  and (.labels | index("macos-15") != null)
+                )
+            ]
+            | if length == 1 then .[0].id else empty end
+          ' <<< "$jobs")
+
+          if [ -z "$job_id" ]; then
+            echo "No unacquired macOS arm64 job found; nothing to retry."
+            exit 0
+          fi
+
+          echo "Rerunning macOS arm64 job $job_id from workflow run $RUN_ID."
+          gh api --method POST "repos/$REPOSITORY/actions/jobs/$job_id/rerun"

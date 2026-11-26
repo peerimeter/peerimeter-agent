@@ -10,6 +10,7 @@ workflows:
         - 'actions/upload-artifact@v7.0.2'
         - 'goreleaser/goreleaser-action@v7.3.0'
         - 'ietf-tools/semver-action@v1.12.0'
+    '.github/workflows/retry-macos-runner.yml': []
 dependencies:
     'actions/checkout@v7.0.1':
         ref: 'v7.0.1'
