@@ -7,6 +7,7 @@ on:
 
 permissions:
   actions: write
+  checks: read
 
 jobs:
   retry-macos-runner:
@@ -24,23 +25,39 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           jobs=$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100")
-          job_id=$(jq -r '
+          job=$(jq -c '
             [
               .jobs[]
               | select(
                   .name == "darwin / Test, integration & package"
                   and .conclusion == "cancelled"
+                  and .runner_id == 0
                   and (.runner_name == null or .runner_name == "")
+                  and (.steps | length) == 0
                   and (.labels | index("macos-15") != null)
                 )
             ]
-            | if length == 1 then .[0].id else empty end
+            | if length == 1 then .[0] else empty end
           ' <<< "$jobs")
 
-          if [ -z "$job_id" ]; then
+          if [ -z "$job" ]; then
             echo "No unacquired macOS arm64 job found; nothing to retry."
             exit 0
           fi
 
+          check_run_url=$(jq -r '.check_run_url' <<< "$job")
+          annotations=$(gh api --paginate "$check_run_url/annotations")
+          if ! jq -e '
+            any(
+              .[];
+              .annotation_level == "failure"
+              and (.message | contains("The job was not acquired by Runner of type hosted even after multiple attempts"))
+            )
+          ' <<< "$annotations" >/dev/null; then
+            echo "The macOS job has no runner-acquisition failure annotation; nothing to retry."
+            exit 0
+          fi
+
+          job_id=$(jq -r '.id' <<< "$job")
           echo "Rerunning macOS arm64 job $job_id from workflow run $RUN_ID."
           gh api --method POST "repos/$REPOSITORY/actions/jobs/$job_id/rerun"
