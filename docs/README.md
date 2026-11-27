@@ -274,7 +274,8 @@ starting a tunnel. To start every registered network, run
 Starting the tunnels requires administrator/root privileges. An installed
 service continues using its `service.yaml` snapshot and does not load these
 per-network files. Install or update the native service to run the daemon,
-which syncs each active joined network every five minutes by default.
+which syncs each active joined network at startup and every five minutes
+afterward by default.
 The `.key` file is the peer's long-lived WireGuard private key; the `.token`
 file is the network-scoped credential used to authenticate sync requests. The
 YAML file records the network and points to the private key. To refresh
@@ -328,11 +329,11 @@ sudo peerimeter-agent stop       # stop all configured tunnels and clean up rout
 On Windows, run the same commands from an elevated terminal.
 
 Use `run` instead of `daemon` when you want the tunnels without scheduled sync.
-The daemon runs each configured network in its own runtime and calls `sync`
-every five minutes by default. Change the period with `--sync-interval` (for example,
-`--sync-interval 2m`). A failed sync is logged and retried at the next interval;
-it does not stop the tunnel. The native service installed by `service install`
-uses `daemon` automatically.
+The daemon runs each configured network in its own runtime, calls `sync` once
+when that network starts, then every five minutes by default. Change the period
+with `--sync-interval` (for example, `--sync-interval 2m`). A failed sync is
+logged and retried at the next interval; it does not stop the tunnel. The
+native service installed by `service install` uses `daemon` automatically.
 
 For a network joined with `join`, `sync` refreshes this node's primary physical
 interface and local addresses in its service registration, then downloads the
@@ -361,7 +362,7 @@ does not guarantee reachability.
 | `wg` / `wg show` | WireGuard interface and peer listing for all configured networks; `--network` selects one |
 | `stop` | Stop all configured tunnels; `--network` selects one |
 | `sync` | Refresh all joined network registrations and peer lists; `--network-id` selects one |
-| `daemon` | Run configured tunnels and sync each joined network periodically (default: every five minutes) |
+| `daemon` | Run configured tunnels, sync joined networks at startup and periodically (default: every five minutes) |
 
 `status` reads actual local adapter state through a protected Unix socket or
 Windows named pipe and reports whether the native service is installed and
