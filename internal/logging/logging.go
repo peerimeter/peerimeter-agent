@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync/atomic"
 
 	"github.com/peerimeter/peerimeter-agent/internal/config"
 	"golang.org/x/term"
@@ -31,6 +32,39 @@ func NewHandler(format string, out io.Writer) (slog.Handler, error) {
 	default:
 		return nil, fmt.Errorf("%s must be console, text, or json", FormatEnv)
 	}
+}
+
+// NewWireGuardDriverWriter adapts WireGuardNT's standard-library logs to the
+// agent logger. The Windows binding drops the native log level, so known
+// failures need to be classified from their messages.
+func NewWireGuardDriverWriter(logger *slog.Logger) io.Writer {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &wireGuardDriverWriter{logger: logger}
+}
+
+type wireGuardDriverWriter struct {
+	logger  *slog.Logger
+	writing atomic.Bool
+}
+
+func (w *wireGuardDriverWriter) Write(p []byte) (int, error) {
+	if !w.writing.CompareAndSwap(false, true) {
+		return os.Stderr.Write(p)
+	}
+	defer w.writing.Store(false)
+
+	message := strings.TrimSpace(string(p))
+	if message == "" {
+		return len(p), nil
+	}
+	if strings.Contains(message, "Failed to remove adapter") {
+		w.logger.Error(message, "component", "WireGuardNT")
+	} else {
+		w.logger.Info(message, "component", "WireGuardNT")
+	}
+	return len(p), nil
 }
 
 type coloredLevels struct{ out io.Writer }
