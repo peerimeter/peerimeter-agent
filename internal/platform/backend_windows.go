@@ -545,11 +545,11 @@ func (s *windowsSession) Close(context.Context) error {
 	s.closed = true
 	var problems []error
 	for prefix := range s.routes {
-		if err := s.luid.DeleteRoute(prefix, windowsNextHop(prefix)); err != nil && !errors.Is(err, windows.ERROR_NOT_FOUND) && !errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
+		if err := s.luid.DeleteRoute(prefix, windowsNextHop(prefix)); err != nil && !isMissingWindowsDevice(err) && !errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
 			problems = append(problems, fmt.Errorf("remove owned Windows tunnel route: %w", err))
 		}
 	}
-	if err := s.adapter.SetAdapterState(driver.AdapterStateDown); err != nil {
+	if err := s.adapter.SetAdapterState(driver.AdapterStateDown); err != nil && !isMissingWindowsDevice(err) {
 		problems = append(problems, fmt.Errorf("stop WireGuardNT adapter: %w", err))
 	}
 	// The native WireGuardCloseAdapter API is VOID. The official Go binding
@@ -558,4 +558,8 @@ func (s *windowsSession) Close(context.Context) error {
 	_ = s.adapter.Close()
 	s.desired.PrivateKey = [32]byte{}
 	return errors.Join(problems...)
+}
+
+func isMissingWindowsDevice(err error) bool {
+	return errors.Is(err, windows.ERROR_NOT_FOUND) || errors.Is(err, windows.ERROR_NO_SUCH_DEVINST)
 }
