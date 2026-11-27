@@ -402,6 +402,9 @@ relocates it. Without `--config`, `run` and `daemon` load every YAML config in
 remains supported for an installed single-network profile. Each discovered
 network gets its own state and runtime subdirectory under `state-dir/networks/`
 and `runtime-dir/networks/`. Pass `--network <network-id>` to run one network.
+On Unix, when run as root through `sudo` with `SUDO_HOME` set and
+`$SUDO_HOME/.config/peerimeter-agent` present, `run` uses that directory by
+default; `--config-dir` overrides it.
 The commands read the directory at startup; restart the process after joining
 another network so it loads the new configuration.
 `status`, `wg`, and `stop` default to all configured networks. `status --watch`
