@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/peerimeter/peerimeter-agent/internal/agent"
@@ -28,6 +29,8 @@ type reloadOptions struct {
 	ownership     string
 	remote        func(context.Context) (config.Config, error)
 }
+
+var profileRegistrationMu sync.Mutex
 
 func staticCommand(ctx context.Context, commandName, path, override string, layout paths.Layout, operator string, out io.Writer, backend platform.Backend) error {
 	return staticCommandWithRefresh(ctx, commandName, path, override, layout, operator, out, backend, nil, 0)
@@ -83,6 +86,13 @@ func staticCommandWithBackground(ctx context.Context, commandName, path, overrid
 	if err != nil {
 		return err
 	}
+	profileRegistrationMu.Lock()
+	registrationLocked := true
+	defer func() {
+		if registrationLocked {
+			profileRegistrationMu.Unlock()
+		}
+	}()
 	startup, err := installstate.CaptureStartup(filepath.Dir(exe))
 	if err != nil {
 		return err
@@ -102,6 +112,8 @@ func staticCommandWithBackground(ctx context.Context, commandName, path, overrid
 	if err := startup.Close(); err != nil {
 		return err
 	}
+	profileRegistrationMu.Unlock()
+	registrationLocked = false
 	if runtime.GOOS == "linux" {
 		name, err = guard.InterfaceChoice(cfg.Network.ID, cfg.Network.Name, cfg.Interface.Name)
 		if err != nil {
@@ -118,6 +130,8 @@ func staticCommandWithBackground(ctx context.Context, commandName, path, overrid
 		if err := startup.Check(); err != nil {
 			return err
 		}
+		profileRegistrationMu.Lock()
+		defer profileRegistrationMu.Unlock()
 		return installstate.RegisterProfile(filepath.Dir(exe), installstate.Profile{StateDir: layout.StateDir, RuntimeDir: layout.RuntimeDir, ClaimRuntime: true})
 	}
 	replaceConfig := func(data []byte) (func() error, error) {
