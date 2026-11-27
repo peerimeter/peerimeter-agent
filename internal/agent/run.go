@@ -122,6 +122,7 @@ func RunManagedWithBackground(ctx context.Context, options ManagedOptions) (resu
 		}()
 	}
 	<-ctx.Done()
+	slog.Info("stopping native tunnel", "network_id", desired.Config.Network.ID)
 	return nil
 }
 
