@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"log/slog"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -19,6 +21,7 @@ import (
 	"unsafe"
 
 	"github.com/peerimeter/peerimeter-agent/internal/config"
+	"github.com/peerimeter/peerimeter-agent/internal/logging"
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/windows/driver"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
@@ -50,6 +53,8 @@ var windowsDriver struct {
 	sync.Mutex
 	handle windows.Handle
 }
+
+var wireGuardLogger sync.Once
 
 func windowsAdapterName(networkID string) string {
 	sum := sha256.Sum256([]byte(networkID))
@@ -119,6 +124,11 @@ func loadWindowsDriver() error {
 			return errors.New("verified WireGuardNT DLL is missing a required API")
 		}
 	}
+	wireGuardLogger.Do(func() {
+		log.Default().SetFlags(0)
+		log.Default().SetPrefix("")
+		log.SetOutput(logging.NewWireGuardDriverWriter(slog.Default()))
+	})
 	windowsDriver.handle = handle
 	return nil
 }
