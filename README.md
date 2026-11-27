@@ -15,7 +15,7 @@ the full command list.
 | `generate-example` | Create example mesh configs and fresh keys |
 | `validate-config` | Validate a static YAML config and its key |
 | `run` | Run every network YAML in `--config-dir` (or one with `--network`/`--config`) |
-| `daemon` | Run configured networks and periodically sync joined networks |
+| `daemon` | Run configured networks, sync joined networks at startup, then periodically |
 | `join` | Enroll this agent in a service-managed network (`--token` or `--token-file`) |
 | `sync` | Refresh all joined networks or select one with `--network-id` |
 | `status` | Show all local network tunnels and native service installation/running state; use `--network` to select one |

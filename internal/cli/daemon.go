@@ -28,8 +28,8 @@ func newDaemonCommand(app *application) *cobra.Command {
 	var options paths.Options
 	cmd := &cobra.Command{
 		Use:   "daemon",
-		Short: "Run configured networks and periodically sync joined networks",
-		Long:  "Load every YAML network from config-dir and run each in its own local runtime. Refresh each joined network's service registration and peer list at a regular interval. Sync failures are logged and retried at the next interval.",
+		Short: "Run configured networks and sync joined networks at startup and periodically",
+		Long:  "Load every YAML network from config-dir and run each in its own local runtime. Refresh each joined network's service registration and peer list when the network starts, then at a regular interval. Sync failures are logged and retried at the next interval.",
 		Args:  noArguments,
 		RunE: app.handle(func(cmd *cobra.Command) error {
 			return runDaemon(cmd, app, daemonOptions{path: path, override: override, operator: operator, networkID: networkID, interval: interval, paths: options})
@@ -39,7 +39,7 @@ func newDaemonCommand(app *application) *cobra.Command {
 	cmd.Flags().StringVar(&networkID, "network", "", "Run only this configured network (defaults to all)")
 	cmd.Flags().StringVar(&override, "interface", "", "Linux-only initial local interface name override")
 	cmd.Flags().StringVar(&operator, "operator", "", "Authorized local username/UID or Windows account/SID")
-	cmd.Flags().DurationVar(&interval, "sync-interval", defaultDaemonSyncInterval, "How often to sync the joined network")
+	cmd.Flags().DurationVar(&interval, "sync-interval", defaultDaemonSyncInterval, "How often to sync the joined network after startup")
 	directoryFlags(cmd, &options)
 	return cmd
 }
@@ -109,6 +109,13 @@ func syncActiveDaemonNetwork(ctx context.Context, layout paths.Layout, options p
 }
 
 func runPeriodicSync(ctx context.Context, interval time.Duration, syncOnce func(context.Context) error) {
+	if ctx.Err() != nil {
+		return
+	}
+	if err := syncOnce(ctx); err != nil && ctx.Err() == nil {
+		slog.Warn("daemon sync failed", "error", err)
+	}
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -117,7 +124,7 @@ func runPeriodicSync(ctx context.Context, interval time.Duration, syncOnce func(
 			return
 		case <-ticker.C:
 			if err := syncOnce(ctx); err != nil && ctx.Err() == nil {
-				slog.Warn("scheduled sync failed", "error", err)
+				slog.Warn("daemon sync failed", "error", err)
 			}
 		}
 	}

@@ -53,3 +53,30 @@ func TestPeriodicSyncRepeatsAndStopsWithContext(t *testing.T) {
 		t.Fatal("periodic sync did not stop after cancellation")
 	}
 }
+
+func TestPeriodicSyncRunsImmediately(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go func() {
+		runPeriodicSync(ctx, time.Hour, func(context.Context) error {
+			calls <- struct{}{}
+			return nil
+		})
+		close(done)
+	}()
+
+	select {
+	case <-calls:
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("periodic sync did not run immediately")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("periodic sync did not stop after cancellation")
+	}
+}
