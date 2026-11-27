@@ -4,6 +4,8 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"runtime"
 
 	"github.com/peerimeter/peerimeter-agent/internal/logging"
 	"github.com/peerimeter/peerimeter-agent/internal/paths"
@@ -44,6 +46,11 @@ func runForeground(cmd *cobra.Command, app *application, opts daemonOptions) err
 	}
 	defer restoreLogger()
 
+	if opts.paths.ConfigDir == "" && runtime.GOOS != "windows" && os.Geteuid() == 0 && os.Getenv("SUDO_USER") != "" {
+		if configDir, ok := sudoUserConfigDir(os.Getenv("SUDO_HOME")); ok {
+			opts.paths.ConfigDir = configDir
+		}
+	}
 	layout, err := paths.Resolve(opts.paths)
 	if err != nil {
 		return err
@@ -59,4 +66,13 @@ func runForeground(cmd *cobra.Command, app *application, opts daemonOptions) err
 		return err
 	}
 	return runManagedConfigs(cmd.Context(), cmd.Name(), opts.override, opts.operator, layout, configs, 0, app.out, app.backend, nil)
+}
+
+func sudoUserConfigDir(home string) (string, bool) {
+	if !filepath.IsAbs(home) {
+		return "", false
+	}
+	configDir := filepath.Join(home, ".config", "peerimeter-agent")
+	info, err := os.Stat(configDir)
+	return configDir, err == nil && info.IsDir()
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,5 +30,22 @@ func TestRunJSONFormatsErrorsAsStructuredLogs(t *testing.T) {
 	}
 	if !strings.Contains(message, missingConfig) {
 		t.Fatalf("error record omitted config path: %#v", record)
+	}
+}
+
+func TestSudoUserConfigDirRequiresExistingDirectory(t *testing.T) {
+	home := t.TempDir()
+	configDir := filepath.Join(home, ".config", "peerimeter-agent")
+	if got, ok := sudoUserConfigDir(home); ok || got != configDir {
+		t.Fatalf("missing config directory returned %q, %t", got, ok)
+	}
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := sudoUserConfigDir(home); !ok || got != configDir {
+		t.Fatalf("existing config directory returned %q, %t", got, ok)
+	}
+	if got, ok := sudoUserConfigDir("relative"); ok || got != "" {
+		t.Fatalf("relative home returned %q, %t", got, ok)
 	}
 }
